@@ -64,11 +64,10 @@ node src/agent/agent.mjs --enqueue caminho/para/lote.json
 
 ## Windows (servidor 24 horas)
 
-1. Instale Node.js 20+ e mantenha o repositório em uma pasta de aplicativo, por exemplo `C:\TRIBUTO`. Escolha uma pasta persistente separada para `AGENT_STATE_DIR`, por exemplo `C:\ProgramData\TRIBUTO\agent`.
-2. Crie uma conta de serviço com acesso somente ao aplicativo, ao diretório de estado e aos certificados de que os conectores futuros precisarão. Restrinja as permissões NTFS dessa pasta e habilite criptografia de disco (por exemplo, BitLocker): os XMLs enfileirados são sensíveis e **o agente ainda não cifra os arquivos locais por conta própria**.
-3. Configure `API_BASE_URL`, `AGENT_TOKEN` e `AGENT_STATE_DIR` no ambiente da conta/processo de serviço. Para execução contínua, registre `node.exe` com o caminho absoluto de `src\agent\agent.mjs` como serviço usando NSSM ou outro gerenciador de serviço, com inicialização automática e reinício após falha. Uma tarefa “Ao iniciar o computador” no Agendador de Tarefas é outra opção; configure a conta, diretório inicial e reinício por falha.
-4. Coloque o token no ambiente protegido do serviço, com acesso administrativo restrito. **Não** coloque o token em `.cmd`, nos argumentos da tarefa, no Git ou em um arquivo `.env` público. Um administrador da máquina poderá ler variáveis de ambiente do serviço; trate a conta e o servidor como componentes sensíveis.
-5. Rode `--once` antes de habilitar o serviço e verifique o heartbeat e o horário da última comunicação no painel. Depois acompanhe reinícios automáticos e espaço livre do disco.
+1. Instale Node.js 20+ e crie um agente no painel com os CNPJs/fontes autorizados. Copie o token exibido uma vez.
+2. Execute o instalador descrito em [WINDOWS-INSTALL.md](WINDOWS-INSTALL.md), informando a origem HTTPS do painel e digitando o token quando solicitado. Ele valida a credencial, copia os arquivos para `C:\ProgramData\TRIBUTO` e cria uma tarefa com início automático e reinício após falhas.
+3. O token fica cifrado com DPAPI; fila, checkpoints e logs ficam fora da pasta do código, com ACL restrita. Habilite criptografia do disco (por exemplo, BitLocker), pois os XMLs enfileirados **ainda não têm criptografia própria**.
+4. Confira a última comunicação no painel e acompanhe logs, espaço livre e backup. O instalador atual usa `LocalService` para o transporte; antes de permitir acesso a A1, configure uma conta de serviço dedicada e a permissão específica da chave privada.
 
 ## Linux (alternativa)
 
