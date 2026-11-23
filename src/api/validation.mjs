@@ -12,6 +12,8 @@ const CNPJ = /^\d{14}$/;
 const NSU = /^(0|[1-9]\d{0,14})$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const SOURCES = new Set(['NFE', 'NFSE']);
+const STATUSES = new Set(['active', 'cancelled', 'substituted', 'unknown']);
+const EVENTS = new Set(['issued', 'cancelled', 'substituted', 'other']);
 
 export function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -34,13 +36,32 @@ export function validateBatch(body) {
 
   const documents = body.documents.map((entry, index) => {
     required(entry, entry && typeof entry === 'object' && !Array.isArray(entry), `documents[${index}]`);
+    const allowed = new Set(['nsu', 'documentKey', 'number', 'issuedAt', 'competence', 'providerCnpj', 'recipientCnpj', 'amountCents', 'status', 'municipalityCode', 'eventType']);
+    required(entry, Object.keys(entry).every(key => allowed.has(key)), `documents[${index}] (somente metadados; XML não é aceito)`);
     const nsu = required(entry.nsu, NSU.test(entry.nsu) && BigInt(entry.nsu) >= BigInt(firstNsu) && BigInt(entry.nsu) <= BigInt(lastNsu), `documents[${index}].nsu`);
-    const documentKey = required(entry.documentKey, typeof entry.documentKey === 'string' && /^[a-zA-Z0-9_-]{20,100}$/.test(entry.documentKey), `documents[${index}].documentKey`);
-    required(entry.xmlBase64, typeof entry.xmlBase64 === 'string' && entry.xmlBase64.length <= 400_000 && /^[A-Za-z0-9+/]+={0,2}$/.test(entry.xmlBase64) && entry.xmlBase64.length % 4 === 0, `documents[${index}].xmlBase64`);
-    const xml = Buffer.from(entry.xmlBase64, 'base64');
-    required(xml, xml.length > 0 && xml.length <= 300_000 && xml.toString('base64') === entry.xmlBase64, `documents[${index}].xmlBase64`);
-    const hash = required(entry.sha256, SHA256.test(entry.sha256) && sha256(xml) === entry.sha256, `documents[${index}].sha256`);
-    return { nsu, documentKey, xml, sha256: hash };
+    const documentKey = required(entry.documentKey, typeof entry.documentKey === 'string' && (source === 'NFSE' ? /^\d{50}$/ : /^\d{44}$/).test(entry.documentKey), `documents[${index}].documentKey`);
+    const eventType = required(entry.eventType, EVENTS.has(entry.eventType), `documents[${index}].eventType`);
+    // Distribution can deliver a cancellation event before the full invoice.
+    // Keep its NSU and key, but never invent the invoice's number or amount.
+    if (eventType !== 'issued') {
+      required(entry, Object.keys(entry).every(key => ['nsu', 'documentKey', 'eventType', 'status'].includes(key)), `documents[${index}] (evento sem dados da nota)`);
+      const status = eventType === 'cancelled' ? 'cancelled' : eventType === 'substituted' ? 'substituted' : 'unknown';
+      required(entry, entry.status === undefined || entry.status === status, `documents[${index}].status`);
+      const normalized = { nsu, documentKey, number: null, issuedAt: null, competence: null, providerCnpj: null, recipientCnpj: null, amountCents: null, status, municipalityCode: null, eventType };
+      return { ...normalized, metadataSha256: sha256(JSON.stringify(normalized)) };
+    }
+    const number = required(entry.number, typeof entry.number === 'string' && /^\d{1,30}$/.test(entry.number), `documents[${index}].number`);
+    const issuedAt = required(entry.issuedAt, typeof entry.issuedAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(entry.issuedAt) && !Number.isNaN(Date.parse(entry.issuedAt)), `documents[${index}].issuedAt`);
+    const competence = required(entry.competence, typeof entry.competence === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(entry.competence), `documents[${index}].competence`);
+    const party = (value, name) => required(value, value === null || (typeof value === 'string' && /^(\d{11}|\d{14})$/.test(value)), `documents[${index}].${name}`);
+    const providerCnpj = party(entry.providerCnpj, 'providerCnpj');
+    const recipientCnpj = party(entry.recipientCnpj, 'recipientCnpj');
+    required(entry, providerCnpj === companyCnpj || recipientCnpj === companyCnpj, `documents[${index}] (empresa fora da nota)`);
+    const amountCents = required(entry.amountCents, Number.isSafeInteger(entry.amountCents) && entry.amountCents >= 0, `documents[${index}].amountCents`);
+    const status = required(entry.status, STATUSES.has(entry.status), `documents[${index}].status`);
+    const municipalityCode = required(entry.municipalityCode, entry.municipalityCode === null || (typeof entry.municipalityCode === 'string' && /^\d{7}$/.test(entry.municipalityCode)), `documents[${index}].municipalityCode`);
+    const normalized = { nsu, documentKey, number, issuedAt, competence, providerCnpj, recipientCnpj, amountCents, status, municipalityCode, eventType };
+    return { ...normalized, metadataSha256: sha256(JSON.stringify(normalized)) };
   });
   const nsus = new Set(documents.map(item => item.nsu));
   required(nsus, nsus.size === documents.length, 'documents (NSU duplicado)');

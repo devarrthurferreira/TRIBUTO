@@ -1,50 +1,66 @@
-# Contrato inicial: painel/API ↔ coletor
+# API do painel e do agente
 
-## Topologia
+O agente no Windows abre conexões **HTTPS de saída** para a API do Web App Node.js. O painel consulta o MySQL da Hostinger por meio dessa API; a nuvem não inicia conexão ao Windows. O contrato recebe **somente chave e metadados estruturados**. XML, PDF, PFX, senha de certificado e URLs para buscar documentos não são aceitos nos lotes nem persistidos no MySQL.
 
-O serviço no Windows da Maximum abre conexões HTTPS de saída para a API. O painel lê dados no banco da API. Não há conexão iniciada pela nuvem para o Windows. Certificados A1, senhas e procurações não trafegam nesses endpoints.
+## Autenticação e escopo
 
-O MVP implementa **o transporte confiável**, sem consultar SEFAZ ou ADN. O coletor apenas lê tarefas e transmite lotes que um conector futuro colocar em sua fila local. Nenhum endpoint emite notas, cancela notas, manifesta destinatários, executa comandos ou recebe uma URL para acessar.
+Cada instalação recebe um token exclusivo, exibido uma vez ao administrador. O banco guarda apenas seu SHA-256, associado aos CNPJs e fontes permitidos; o agente envia `Authorization: Bearer <token>`. O painel usa login humano e cookie de sessão separados. Revogue o agente no painel se precisar interromper seu acesso. O instalador protege o token com DPAPI e ACL NTFS; consulte [WINDOWS-INSTALL.md](WINDOWS-INSTALL.md).
 
-## Autenticação
+Cada rota de NFS-e por empresa exige login, permissão no módulo Fiscal **e** acesso ao CNPJ consultado. A API valida novamente autorização e dados recebidos do agente; o token do agente não concede login no painel.
 
-Cada instalação recebe um segredo aleatório exclusivo criado no painel **Agentes**. A API guarda somente seu SHA-256 no MongoDB, associado a CNPJs e fontes permitidas; o segredo aparece uma única vez para o administrador e é digitado no instalador Windows. O coletor envia `Authorization: Bearer <segredo>` por HTTPS. O administrador pode revogar o agente no painel. Para trocar o segredo, crie outro agente, atualize a instalação e revogue o antigo. **O login do painel e o token do agente são credenciais diferentes.**
+## Endpoints do agente
 
-O instalador Windows guarda o token com DPAPI e permissões NTFS restritas; consulte [WINDOWS-INSTALL.md](WINDOWS-INSTALL.md). Nunca publique `AGENT_TOKEN`, `.env`, PFX ou senha no GitHub. A API requer uma chave `XML_ENCRYPTION_KEY` base64 de 32 bytes para cifrar XMLs com AES-256-GCM antes de gravar no MongoDB. Guarde e faça backup seguro dessa chave separadamente: perdê-la impede recuperar os XMLs já armazenados.
-
-## Endpoints
-
-| Método e rota | Corpo / resposta | Finalidade |
+| Método e rota | Resposta / corpo | Uso |
 | --- | --- | --- |
-| `GET /healthz` | `{ok:true}` | Estado básico da API, sem dados internos. |
-| `GET /v1/agent/jobs` | `{jobs:[{id,companyCnpj,source,startNsu,lastCommittedNsu,enabled}]}` | Tarefas de leitura autorizadas; não contém comandos arbitrários. |
-| `POST /v1/agent/heartbeat` | `{hostname,version,queuedBatches}` → `{ok,serverTime}` | Saúde do serviço, hora do servidor e fila. |
-| `POST /v1/agent/batches` | Lote abaixo → `{ok,batchId,committedThroughNsu}` | Grava XMLs e checkpoint em transação; HTTP 201 no primeiro envio e 200 na repetição idêntica. |
+| `GET /healthz` | `{ "ok": true }` | Saúde básica da aplicação. |
+| `GET /v1/agent/jobs` | `{ "jobs": [{ "id", "companyCnpj", "source", "startNsu", "lastCommittedNsu", "enabled" }] }` | Vínculos de coleta autorizados. Não são comandos arbitrários. |
+| `POST /v1/agent/heartbeat` | `{ "hostname", "version", "queuedBatches" }` | Último sinal e tamanho da fila. |
+| `POST /v1/agent/batches` | Lote abaixo → `{ "ok", "batchId", "committedThroughNsu" }` | Transação MySQL que grava metadados, eventos, lote e checkpoint. `201` novo, `200` reenvio idêntico. |
 
-Exemplo de lote (substituir por XML real, base64 e SHA-256 correspondentes):
+Exemplo **fictício** de lote NFS-e de emissão (substitua CNPJ/chave/dados por valores válidos da fonte autorizada):
 
 ```json
 {
   "batchId": "b7ec75a1-993e-4a36-a332-0507022f537d",
-  "companyCnpj": "12345678000190",
-  "source": "NFE",
+  "companyCnpj": "11222333000181",
+  "source": "NFSE",
   "firstNsu": "1",
   "lastNsu": "1",
   "documents": [
-    { "nsu": "1", "documentKey": "12345678901234567890123456789012345678901234", "xmlBase64": "PE5GZT5waWxvdG88L05GZT4=", "sha256": "CALCULE_O_HASH_REAL_DO_XML" }
+    {
+      "nsu": "1",
+      "documentKey": "00000000000000000000000000000000000000000000000000",
+      "number": "123",
+      "issuedAt": "2026-11-23T10:00:00-03:00",
+      "competence": "2026-11",
+      "providerCnpj": "11222333000181",
+      "recipientCnpj": null,
+      "amountCents": 125000,
+      "status": "active",
+      "municipalityCode": "3106200",
+      "eventType": "issued"
+    }
   ]
 }
 ```
 
-`source` aceita `NFE` ou `NFSE`. O servidor valida hash do XML, tarefa ativa para o par CNPJ/fonte, limites do lote (até 20 documentos, 1 MB no total) e tamanho de cada XML (até 300 kB nesta versão). Os NSUs no lote precisam cobrir **cada número consecutivo** de `firstNsu` a `lastNsu`, e o primeiro precisa ser exatamente `startNsu + 1` no primeiro lote ou o próximo ao checkpoint remoto nos seguintes. Lacunas geram erro; a captura oficial deverá adaptar a sequência real da fonte a esse contrato. `batchId` repetido com o mesmo conteúdo devolve o ACK anterior; com conteúdo diferente, `409 BATCH_CONFLICT`. Lotes são aceitos somente após commit majoritário da transação no MongoDB. A coleção `documents` mantém o XML cifrado; nesta etapa cada CNPJ/fonte/NSU é imutável. Atualizações do resumo para XML integral exigirão uma evolução explícita do protocolo antes de ativar o conector NF-e.
+`documentKey` deve ter **50 dígitos para `NFSE`** e **44 para `NFE`**. Para emissão, `number`, data ISO, competência `AAAA-MM`, partes, valor em centavos, situação e tipo de evento são campos validados; prestador ou tomador deve corresponder ao CNPJ do lote. `providerCnpj`/`recipientCnpj` podem ser CPF (11 dígitos), CNPJ (14) ou `null`, conforme a fonte. `status` aceita `active`, `cancelled`, `substituted` ou `unknown`. `eventType` aceita `issued`, `cancelled`, `substituted` ou `other`. Eventos sem dados da nota podem conter só `nsu`, `documentKey`, `eventType` e `status` coerente; um evento de cancelamento pode chegar antes da nota, sem que a API invente valor ou número.
 
-## Recuperação
+O lote aceita de 1 a 20 itens e até 1 MB de JSON; o NSU vai como string decimal, em sequência sem lacunas entre `firstNsu` e `lastNsu`, exatamente um item por NSU. O primeiro lote começa em `startNsu + 1`; os próximos começam após o último checkpoint confirmado. O conector deve adaptar os retornos da fonte a esse contrato e **não avançar** quando um item não puder ser interpretado. A mesma chave pode reaparecer em um evento posterior: o registro corrente é atualizado por chave/CNPJ/fonte e cada NSU mantém um evento próprio. `batchId` repetido com o mesmo conteúdo recebe o ACK anterior; conteúdo diferente recebe `409 BATCH_CONFLICT`. Se o ACK se perder, o agente reenvia sem perder a fila.
 
-O coletor conserva o lote localmente até receber `ok: true`, `batchId` igual e `committedThroughNsu` igual ou maior que `lastNsu`. Se o ACK se perder após o commit, o mesmo lote é reenviado e recebe resposta idempotente. A consulta futura às fontes fiscais precisa respeitar NSU e seus limites específicos; este contrato não determina sozinho que uma sequência fiscal esteja completa. Não se deve avançar o NSU na fonte antes de confirmar a persistência. Sem tarefa ativa no painel, o lote não será aceito, mesmo se já estiver na fila local.
+## Endpoints do painel para cada empresa
 
-## Operação e lacunas
+| Método e rota | Parâmetros | Resultado |
+| --- | --- | --- |
+| `GET /v1/platform/companies/:cnpj/nfse` | `month=AAAA-MM`, `role=issued\|received`, `status=active\|cancelled\|substituted\|unknown`, `page=1`, `limit=50` (até 100) | NFS-e da empresa com chave, dados, situação e paginação. |
+| `GET /v1/platform/companies/:cnpj/nfse/summary` | `from=AAAA-MM&to=AAAA-MM` opcionais | Totais de prestadas e tomadas, valores ativos e cancelamentos, consolidados e por competência. |
+| `GET /v1/platform/companies/:cnpj/nfse/coverage` | Nenhum | Último NSU e horário confirmado para a empresa/fonte, ou `never_collected`. |
 
-- API requer MongoDB com suporte a transações (por exemplo, Atlas replica set), conexão TLS ao banco em produção, backups e `XML_ENCRYPTION_KEY` estável. Rotação da chave exige migração dos XMLs antes de trocar o valor.
-- A API deve ficar atrás de HTTPS público; o agente rejeita HTTP fora de `localhost`.
-- O painel tem login humano separado e permissões por módulo/empresa; mantenha backup e política de retenção dos XMLs antes de operar com dados reais.
-- Ainda faltam conectores NF-e/NFS-e, validação fiscal de schema/assinatura, armazenamento externo de XML para escala e solicitação formal de cancelamento.
+Os filtros e o resumo permitem comparar competências, prestadas e tomadas **dentro dos dados recebidos**. `coverage` é um sinal de sincronização, não uma prova de que todos os municípios, períodos ou tipos de nota foram consultados. Não conclua que uma NFS-e não existe apenas porque ela não aparece no painel. Conciliação com uma segunda fonte, relatório do cliente ou sistema contábil ainda exige integração específica.
+
+## Operação
+
+- MySQL deve estar disponível para o Web App; o aplicativo cria as tabelas na inicialização inicial. Use usuário próprio e backups periódicos com restauração testada.
+- O agente só apaga o lote local após ACK que confirme `batchId` e `committedThroughNsu`. Fila inválida fica em quarentena para análise; não pule checkpoints manualmente.
+- NFS-e automática via ADN e municípios depende de conector habilitado e homologado, certificado/procuração com permissões reais e regras da fonte. O agente de transporte por si só não consulta portais nem emite/cancela notas.
+- O banco guarda metadados e histórico de eventos, não o documento fiscal completo. Se a operação exigir guardar XML/PDF ou cumprir outra obrigação de retenção documental, defina armazenamento e política próprios antes de usar este fluxo para esse fim.

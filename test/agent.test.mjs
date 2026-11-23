@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -22,13 +21,14 @@ async function runAgent(args, env) {
   });
 }
 
-function document(nsu) {
-  const xml = Buffer.from(`<TransportOnly nsu="${nsu}"/>`);
+function document(nsu, source = 'NFE', companyCnpj = '12345678000190') {
   return {
     nsu,
-    documentKey: `${nsu}`.padStart(44, '0'),
-    xmlBase64: xml.toString('base64'),
-    sha256: createHash('sha256').update(xml).digest('hex'),
+    documentKey: `${nsu}`.padStart(source === 'NFSE' ? 50 : 44, '0'),
+    number: nsu,
+    issuedAt: '2026-11-23T10:00:00-03:00', competence: '2026-11',
+    providerCnpj: companyCnpj, recipientCnpj: null,
+    amountCents: 1200, status: 'active', municipalityCode: '3106200', eventType: 'issued'
   };
 }
 
@@ -114,7 +114,7 @@ test('falha de uma empresa preserva sua sequência e não bloqueia outra empresa
   const batches = [
     { batchId: 'batch_A_first', companyCnpj: '12345678000190', source: 'NFE', firstNsu: '1', lastNsu: '1', documents: [document('1')] },
     { batchId: 'batch_A_second', companyCnpj: '12345678000190', source: 'NFE', firstNsu: '2', lastNsu: '2', documents: [document('2')] },
-    { batchId: 'batch_B_first', companyCnpj: '98765432000100', source: 'NFSE', firstNsu: '1', lastNsu: '1', documents: [document('1')] },
+    { batchId: 'batch_B_first', companyCnpj: '98765432000100', source: 'NFSE', firstNsu: '1', lastNsu: '1', documents: [document('1', 'NFSE', '98765432000100')] },
   ];
   const receivedIds = [];
   let failFirstA = true;
@@ -183,7 +183,7 @@ test('arquivo inválido é isolado em quarentena sem impedir lote válido', asyn
   const input = path.join(tempDir, 'batch.json');
   const batch = {
     batchId: 'batch_B_valid_002', companyCnpj: '98765432000100', source: 'NFSE',
-    firstNsu: '1', lastNsu: '1', documents: [document('1')],
+    firstNsu: '1', lastNsu: '1', documents: [document('1', 'NFSE', '98765432000100')],
   };
   const received = [];
   const server = http.createServer(async (req, res) => {

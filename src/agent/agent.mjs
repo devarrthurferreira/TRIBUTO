@@ -2,15 +2,14 @@
 
 // Transport for the TRIBUTO collector. It deliberately does not fetch fiscal
 // documents, execute jobs, manifest a recipient, or cancel an invoice.
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { validateBatch as validateMetadataBatch } from '../api/validation.mjs';
 
 const VERSION = '0.1.0';
 const MAX_BATCH_FILE_BYTES = 1_000_000;
-const MAX_DOCUMENT_XML_BYTES = 300_000;
-const MAX_DOCUMENTS = 20;
 const REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_POLL_MS = 60_000;
 const stateDir = path.resolve(process.env.AGENT_STATE_DIR || path.join(os.homedir(), '.tributo-agent'));
@@ -31,53 +30,9 @@ function decimal(value, label) {
 }
 
 function validateBatch(batch) {
-  if (!batch || typeof batch !== 'object' || Array.isArray(batch)) throw new Error('Lote inválido');
-  if (typeof batch.batchId !== 'string' || !/^[a-zA-Z0-9_-]{8,80}$/.test(batch.batchId)) {
-    throw new Error('batchId inválido');
-  }
-  if (typeof batch.companyCnpj !== 'string' || !/^[0-9]{14}$/.test(batch.companyCnpj)) {
-    throw new Error('companyCnpj deve conter 14 dígitos');
-  }
-  if (!['NFE', 'NFSE'].includes(batch.source)) {
-    throw new Error('source deve ser NFE ou NFSE');
-  }
-  const first = decimal(batch.firstNsu, 'firstNsu');
-  const last = decimal(batch.lastNsu, 'lastNsu');
-  if (last < first) throw new Error('lastNsu é anterior a firstNsu');
-  if (!Array.isArray(batch.documents) || batch.documents.length < 1 || batch.documents.length > MAX_DOCUMENTS) {
-    throw new Error(`documents deve conter entre 1 e ${MAX_DOCUMENTS} itens`);
-  }
-
-  const nsus = new Set();
-  for (const document of batch.documents) {
-    if (!document || typeof document !== 'object' || Array.isArray(document)) throw new Error('Documento inválido');
-    const nsu = decimal(document.nsu, 'documents[].nsu');
-    if (nsu < first || nsu > last) throw new Error('NSU de documento fora do intervalo do lote');
-    if (nsus.has(document.nsu)) throw new Error('NSU repetido no lote');
-    nsus.add(document.nsu);
-    if (typeof document.documentKey !== 'string' || !/^[a-zA-Z0-9_-]{20,100}$/.test(document.documentKey)) {
-      throw new Error('documentKey inválida');
-    }
-    if (typeof document.xmlBase64 !== 'string' ||
-        !/^(?:[a-zA-Z0-9+/]{4})*(?:[a-zA-Z0-9+/]{2}==|[a-zA-Z0-9+/]{3}=)?$/.test(document.xmlBase64)) {
-      throw new Error('xmlBase64 inválido');
-    }
-    if (typeof document.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(document.sha256)) {
-      throw new Error('sha256 inválido');
-    }
-    const xml = Buffer.from(document.xmlBase64, 'base64');
-    if (xml.length === 0 || xml.length > MAX_DOCUMENT_XML_BYTES || xml.toString('base64') !== document.xmlBase64) {
-      throw new Error(`XML inválido ou acima de ${MAX_DOCUMENT_XML_BYTES} bytes`);
-    }
-    if (createHash('sha256').update(xml).digest('hex') !== document.sha256) {
-      throw new Error('sha256 não confere com o XML');
-    }
-  }
-  // A connector must not acknowledge a later NSU while a document from this
-  // range is missing; the future fiscal connector can create smaller batches.
-  if (last - first + 1n !== BigInt(batch.documents.length)) {
-    throw new Error('Lote com lacuna de NSU: inclua exatamente um documento por NSU');
-  }
+  // The agent and API share the exact metadata validation contract. The
+  // connector must discard XML before it creates this durable queue file.
+  validateMetadataBatch(batch);
   if (Buffer.byteLength(JSON.stringify(batch)) > MAX_BATCH_FILE_BYTES) throw new Error('Lote acima do limite');
   return batch;
 }

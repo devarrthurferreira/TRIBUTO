@@ -1,10 +1,10 @@
 # Instalar o agente no servidor Windows
 
-O agente do TRIBUTO é o **motor local**: abre conexões HTTPS de saída para a API, informa saúde, recebe somente uma lista de tarefas de leitura e entrega lotes da fila. A tarefa agendada o inicia com o Windows, sem precisar manter uma janela CMD aberta nem abrir portas de entrada. A captura de NF-e/NFS-e ainda depende dos conectores fiscais a implementar; o instalador abaixo prepara apenas o transporte.
+O agente do TRIBUTO é o **transporte local**: abre conexões HTTPS de saída para a API, informa saúde, recebe somente uma lista de tarefas de leitura e entrega lotes de metadados da fila. A tarefa agendada o inicia com o Windows, sem precisar manter uma janela CMD aberta nem abrir portas de entrada. O instalador abaixo prepara apenas o transporte. A consulta automática a portais não é ativada pela instalação; o conector experimental do ADN exige configuração e homologação separadas, conforme [ADN.md](ADN.md).
 
 ## Antes da instalação
 
-1. Publique a API do TRIBUTO em uma origem **HTTPS**, configure o MongoDB e emita um token exclusivo para o agente, com escopo dos CNPJs autorizados.
+1. Publique a API do TRIBUTO em uma origem **HTTPS**, configure o MySQL na Hostinger e emita um token exclusivo para o agente, com escopo dos CNPJs autorizados.
 2. Instale Node.js 20 ou superior no Windows para todos os usuários. Abra um PowerShell como **Administrador**.
 3. Extraia/clone o repositório em uma pasta temporária. Não coloque A1, senha ou `.env` no repositório.
 4. Tenha o token em mãos. O instalador pede o valor de forma interativa, verifica a autenticação em `/v1/agent/jobs` e só então registra a tarefa.
@@ -19,7 +19,7 @@ Se o Windows bloquear o script extraído da internet, examine o arquivo e use `U
 
 `LocalService` é uma conta compartilhada entre serviços do Windows; ela oferece menos privilégios que SYSTEM, mas não isola este agente de outros processos que usem a mesma conta. Antes de integrar certificados A1 de clientes, considere uma conta exclusiva para o coletor e configure nela a permissão da chave privada. O instalador atual prepara o transporte e não acessa certificados.
 
-O diretório `state` contém fila, checkpoints e quarentena; `logs` contém o arquivo de registro iniciado no dia em que a tarefa entrou em execução. Ambos permitem escrita da conta do agente, ficam fora do código e devem ser incluídos em backup protegido. Arquivos XML enfileirados estão em base64 e **não possuem criptografia própria**: habilite BitLocker no disco e restrinja o acesso à máquina. Faça rotação dos logs durante as atualizações periódicas para evitar crescimento indefinido.
+O diretório `state` contém fila, checkpoints e quarentena; `logs` contém o arquivo de registro iniciado no dia em que a tarefa entrou em execução. Ambos permitem escrita da conta do agente, ficam fora do código e devem ser incluídos em backup protegido. A fila de transporte guarda **somente chave e metadados**, sem XML/PDF, mas ainda contém dados fiscais sensíveis: habilite BitLocker no disco e restrinja o acesso à máquina. Faça rotação dos logs durante as atualizações periódicas para evitar crescimento indefinido.
 
 ## Conferir funcionamento
 
@@ -38,4 +38,4 @@ No painel, confira a última comunicação do agente. O token pode ser revogado 
 
 A remoção apaga a tarefa, o token e os binários locais. Preserva `state` e `logs` para evitar perda de lotes ainda não transmitidos. Faça a reconciliação e backup antes de decidir apagar esses dados manualmente.
 
-**Limite atual:** o script foi escrito e revisado para Windows PowerShell 5.1, mas não foi executado em uma máquina Windows neste ambiente. O teste final de instalação e permissões precisa ocorrer no seu servidor antes de uso com XMLs reais.
+**Limite atual:** o script foi escrito e revisado para Windows PowerShell 5.1, mas não foi executado em uma máquina Windows neste ambiente. Teste instalação, permissões, token e retomada da fila no seu servidor antes de operar com dados reais. A1 e coleta automática não fazem parte desta instalação do transporte.

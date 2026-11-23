@@ -12,9 +12,9 @@ const modules = [
 const viewLabels = {
   overview: 'Início', fiscal: 'Fiscal', dp: 'Departamento Pessoal', contabil: 'Contábil',
   societario: 'Societário', financeiro: 'Financeiro', gestao: 'Gestão',
-  companies: 'Empresas', users: 'Equipe e acessos', agents: 'Agentes de coleta',
+  companies: 'Empresas', 'company-detail': 'Ficha da empresa', users: 'Equipe e acessos', agents: 'Agentes de coleta',
 };
-const state = { session: null, view: 'overview', companies: [], users: [], agents: [], modules: [] };
+const state = { session: null, view: 'overview', companies: [], users: [], agents: [], modules: [], selectedCompanyCnpj: null, nfsePage: 1, nfseHasMore: false, nfseRequest: 0 };
 
 function node(tag, className, value) {
   const element = document.createElement(tag);
@@ -97,6 +97,23 @@ function dateLabel(value) {
   const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00Z` : value);
   return Number.isNaN(date.getTime()) ? 'Data indisponível' : new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'America/Sao_Paulo' }).format(date);
 }
+function moneyLabel(cents) {
+  const value = Number(cents);
+  return Number.isFinite(value) ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value / 100) : '—';
+}
+function currentCompetence() {
+  const date = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
+  return `${date.find((part) => part.type === 'year').value}-${date.find((part) => part.type === 'month').value}`;
+}
+function monthsBefore(month, count) {
+  const [year, number] = month.split('-').map(Number);
+  const date = new Date(Date.UTC(year, number - 1 - count, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+function monthLabel(month) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(month))) return String(month || '—');
+  return new Intl.DateTimeFormat('pt-BR', { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${month}-01T12:00:00Z`));
+}
 function relativeTime(value) {
   if (!value) return 'Ainda não comunicou';
   const delta = Date.now() - new Date(value).getTime();
@@ -112,6 +129,7 @@ function companyName(cnpj) { return state.companies.find((company) => company.cn
 
 function showAuth(setupRequired, message = '') {
   state.session = null;
+  state.selectedCompanyCnpj = null;
   $('appView').hidden = true;
   $('authView').hidden = false;
   $('setupTokenRow').hidden = !setupRequired;
@@ -146,6 +164,7 @@ function applySession(session) {
   $('newCompanyButton').hidden = !isAdmin();
   $('newUserButton').hidden = !isAdmin();
   $('newAgentButton').hidden = !isAdmin();
+  $('storageOverview').hidden = !isAdmin();
   const agentLink = document.querySelector('[data-go="agents"]');
   if (agentLink) agentLink.hidden = !isAdmin();
   if (!isAdmin()) appendEmpty($('overviewAgentHealth'), 'Acesso reservado', 'O monitoramento do servidor fica disponível aos administradores.', '⌁');
@@ -154,7 +173,7 @@ function applySession(session) {
   navigate(location.hash.slice(1) || 'overview');
 }
 async function initialLoad() {
-  const results = await Promise.allSettled([loadDashboard(), loadCompanies(), ...(isAdmin() ? [loadAgents()] : [])]);
+  const results = await Promise.allSettled([loadDashboard(), loadCompanies(), ...(isAdmin() ? [loadAgents(), loadStorage()] : [])]);
   const failures = results.filter((result) => result.status === 'rejected');
   if (failures.length) displayError(failures[0].reason);
 }
@@ -190,22 +209,38 @@ async function logout() {
 }
 
 function navigate(view) {
-  const valid = Object.hasOwn(viewLabels, view) && (view === 'overview' || view === 'companies' || (['users', 'agents'].includes(view) ? isAdmin() : canView(view)));
-  state.view = valid ? view : 'overview';
+  const companyRoute = /^company-(\d{14})$/.exec(view);
+  const detail = !!companyRoute && canView('fiscal');
+  const valid = detail || (Object.hasOwn(viewLabels, view) && (view === 'overview' || view === 'companies' || (['users', 'agents'].includes(view) ? isAdmin() : canView(view))));
+  state.view = detail ? 'company-detail' : valid ? view : 'overview';
+  if (detail) {
+    if (state.selectedCompanyCnpj !== companyRoute[1]) {
+      state.nfsePage = 1;
+      $('nfseMonthFilter').value = '';
+      $('nfseRoleFilter').value = '';
+      $('nfseStatusFilter').value = '';
+      $('nfseSummaryTo').value = currentCompetence();
+      $('nfseSummaryFrom').value = monthsBefore(currentCompetence(), 5);
+    }
+    state.selectedCompanyCnpj = companyRoute[1];
+    updateCompanyHeading();
+  }
   for (const section of document.querySelectorAll('.view')) section.hidden = section.id !== `view-${state.view}`;
   for (const button of document.querySelectorAll('.nav-link')) {
-    const current = button.dataset.view === state.view;
+    const current = button.dataset.view === (state.view === 'company-detail' ? 'companies' : state.view);
     button.classList.toggle('active', current);
     if (current) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
-  $('breadcrumbCurrent').textContent = viewLabels[state.view];
-  if (location.hash.slice(1) !== state.view) history.replaceState(null, '', `#${state.view}`);
+  $('breadcrumbCurrent').textContent = state.view === 'company-detail' ? companyName(state.selectedCompanyCnpj) : viewLabels[state.view];
+  const route = state.view === 'company-detail' ? `company-${state.selectedCompanyCnpj}` : state.view;
+  if (location.hash.slice(1) !== route) history.replaceState(null, '', `#${route}`);
   closeMenu();
   $('conteudo').focus({ preventScroll: true });
   if (state.view === 'users') void loadUsers().catch(displayError);
   if (state.view === 'agents') void loadAgents().catch(displayError);
   if (state.view === 'companies') void loadCompanies().catch(displayError);
   if (state.view === 'fiscal') void loadFiscalDocuments().catch(displayError);
+  if (state.view === 'company-detail') void loadCompanyDetail().catch(displayError);
   if (modules.some((module) => module.id === state.view)) void loadWorkItems(state.view).catch(displayError);
 }
 function openMenu() { $('sidebar').classList.add('open'); $('menuBackdrop').hidden = false; $('openMenu').setAttribute('aria-expanded', 'true'); }
@@ -244,6 +279,16 @@ async function loadDashboard() {
   $('statRequests').textContent = Number.isFinite(metrics.workItemsOpen) ? String(metrics.workItemsOpen) : '—';
   $('statAgents').textContent = Number.isFinite(metrics.agentsOnline) ? String(metrics.agentsOnline) : '—';
   $('dashboardFreshness').textContent = 'Atualizado agora';
+}
+async function loadStorage() {
+  const info = await request('/storage');
+  if (!isAdmin()) return;
+  const size = Number(info.bytes);
+  const megabytes = Number.isFinite(size) ? size / 1024 / 1024 : NaN;
+  $('storageUsage').textContent = Number.isFinite(megabytes)
+    ? `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(megabytes)} MB`
+    : 'Indisponível';
+  $('storageDescription').textContent = `${info.tableCount || 0} tabelas · dados e índices · medição aproximada`;
 }
 function fillCompanySelect(select, allOption) {
   const old = select.value;
@@ -296,6 +341,11 @@ async function loadCompanies() {
   const data = await request('/companies');
   state.companies = Array.isArray(data.companies) ? data.companies : [];
   renderCompanies();
+  renderFiscalCompanyQuickList();
+  if (state.view === 'company-detail') {
+    if (!state.companies.some((company) => company.cnpj === state.selectedCompanyCnpj)) navigate('companies');
+    else updateCompanyHeading();
+  }
   for (const id of ['workItemCompany', 'fiscalCompanyFilter']) fillCompanySelect($(id), id === 'fiscalCompanyFilter');
   fillUserCompanyOptions();
   fillAgentCompanyOptions();
@@ -317,9 +367,35 @@ function renderCompanies() {
     info.append(node('strong', '', company.name), node('small', '', cnpjLabel(company.cnpj)));
     main.append(avatar, info);
     const aside = node('span', 'status-pill ' + (company.active === false ? 'status-warning' : 'status-ok'), company.active === false ? 'Inativa' : 'Ativa');
-    row.append(main, aside);
+    const actions = node('div', 'company-row-actions');
+    actions.append(aside);
+    if (canView('fiscal')) {
+      const open = node('button', 'button button-quiet company-open', 'Abrir empresa ↗');
+      open.type = 'button';
+      open.addEventListener('click', () => navigate(`company-${company.cnpj}`));
+      actions.append(open);
+    }
+    row.append(main, actions);
     target.append(row);
   }
+}
+function renderFiscalCompanyQuickList() {
+  const target = $('fiscalCompanyQuickList');
+  target.replaceChildren();
+  if (!state.companies.length) return appendEmpty(target, 'Nenhuma empresa na carteira', 'Cadastre uma empresa ou peça acesso ao administrador para acompanhar suas NFS-e.', '▥');
+  for (const company of state.companies.slice(0, 12)) {
+    const row = node('div', 'list-row');
+    const main = node('div', 'list-row-main');
+    const info = node('div');
+    info.append(node('strong', '', company.name), node('small', '', cnpjLabel(company.cnpj)));
+    main.append(node('span', 'row-avatar teal', initials(company.name)), info);
+    const button = node('button', 'text-button', 'Ver NFS-e ↗');
+    button.type = 'button';
+    button.addEventListener('click', () => navigate(`company-${company.cnpj}`));
+    row.append(main, button);
+    target.append(row);
+  }
+  if (state.companies.length > 12) target.append(node('p', 'pagination-note', `Exibindo 12 de ${state.companies.length} empresas. Use a aba Empresas para buscar toda a carteira.`));
 }
 async function createCompany(event) {
   event.preventDefault();
@@ -584,6 +660,156 @@ async function createWorkItem(event) {
   } catch (error) { formError('workItemError', error.message); }
   finally { withBusy(button, false); }
 }
+function updateCompanyHeading() {
+  const company = state.companies.find((item) => item.cnpj === state.selectedCompanyCnpj);
+  $('companyDetailTitle').textContent = company?.name || cnpjLabel(state.selectedCompanyCnpj);
+  $('companyDetailCnpj').textContent = `CNPJ ${cnpjLabel(state.selectedCompanyCnpj)} · Consulta fiscal da carteira`;
+  $('breadcrumbCurrent').textContent = company?.name || 'Ficha da empresa';
+}
+function showCoverage(data, companyCnpj) {
+  if (companyCnpj !== state.selectedCompanyCnpj || state.view !== 'company-detail') return;
+  const coverage = data?.coverage || data || {};
+  const target = $('companyCoverage');
+  target.replaceChildren();
+  const status = coverage.status || 'not_configured';
+  const configured = !['not_configured', 'never_collected', 'none', 'unavailable'].includes(status);
+  const symbol = node('span', `coverage-icon ${configured ? '' : 'waiting'}`, configured ? '⌁' : '◷');
+  symbol.setAttribute('aria-hidden', 'true');
+  const message = node('div');
+  message.append(node('strong', '', configured ? 'Registros NFS-e recebidos pela plataforma' : 'Sem NFS-e recebida para esta empresa'));
+  const receivedAt = coverage.lastReceivedAt || coverage.lastSeenAt;
+  const text = receivedAt ? `Último registro recebido: ${dateLabel(receivedAt)}.` : 'Ainda não há registro de recebimento confirmado.';
+  const nsu = coverage.lastNsu ? ` Último NSU registrado: ${coverage.lastNsu}.` : '';
+  message.append(node('p', '', `${text}${nsu} A cobertura depende da fonte e da execução do conector; ausência de notas não comprova inexistência.`));
+  target.append(symbol, message);
+}
+async function loadCompanyCoverage(companyCnpj) {
+  try { showCoverage(await request(`/companies/${companyCnpj}/nfse/coverage`), companyCnpj); }
+  catch (error) {
+    if (companyCnpj === state.selectedCompanyCnpj) $('companyCoverage').textContent = 'Cobertura indisponível no momento. Não conclua que não existem notas sem conferir a fonte oficial.';
+    throw error;
+  }
+}
+function comparisonCell(count, amountCents) {
+  const cell = node('div', 'comparison-values');
+  cell.append(node('strong', '', moneyLabel(amountCents)), node('span', '', `${Number(count) || 0} ${Number(count) === 1 ? 'registro' : 'registros'}`));
+  return cell;
+}
+function trendLabel(amount, previous) {
+  const current = Number(amount) || 0;
+  const prior = Number(previous) || 0;
+  if (!prior) return '—';
+  const variation = ((current - prior) / Math.abs(prior)) * 100;
+  return `${variation >= 0 ? '+' : ''}${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(variation)}%`;
+}
+async function loadCompanySummary(companyCnpj) {
+  const from = $('nfseSummaryFrom').value;
+  const to = $('nfseSummaryTo').value;
+  if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to) || from > to) {
+    throw new Error('Selecione um intervalo de competências válido para comparar.');
+  }
+  const result = await request(`/companies/${companyCnpj}/nfse/summary?${new URLSearchParams({ from, to })}`);
+  if (companyCnpj !== state.selectedCompanyCnpj || state.view !== 'company-detail' || from !== $('nfseSummaryFrom').value || to !== $('nfseSummaryTo').value) return;
+  const summary = result.summary || {};
+  $('nfseIssuedCount').textContent = String(Number(summary.issuedCount) || 0);
+  $('nfseReceivedCount').textContent = String(Number(summary.receivedCount) || 0);
+  $('nfseCancelledCount').textContent = String(Number(summary.cancelledCount) || 0);
+  $('nfseIssuedAmount').textContent = `${moneyLabel(summary.issuedActiveAmountCents)} em notas válidas · ${moneyLabel(summary.issuedAmountCents)} observado`;
+  $('nfseReceivedAmount').textContent = `${moneyLabel(summary.receivedActiveAmountCents)} em notas válidas · ${moneyLabel(summary.receivedAmountCents)} observado`;
+  const target = $('nfseComparison');
+  target.replaceChildren();
+  const months = Array.isArray(result.byMonth) ? [...result.byMonth].sort((a, b) => String(a.month).localeCompare(String(b.month))) : [];
+  if (!months.length) return appendEmpty(target, 'Nenhuma competência recebida neste intervalo', 'O resultado depende das notas observadas pela fonte e da cobertura da coleta.', '◫');
+  const scroll = node('div', 'comparison-scroll');
+  const table = node('table', 'comparison-table');
+  const head = node('thead');
+  const headRow = node('tr');
+  for (const label of ['Competência', 'Prestadas válidas', 'Variação prestadas', 'Tomadas válidas', 'Variação tomadas', 'Canceladas']) headRow.append(node('th', '', label));
+  head.append(headRow);
+  const body = node('tbody');
+  for (let index = 0; index < months.length; index++) {
+    const current = months[index];
+    const prior = months[index - 1];
+    const row = node('tr');
+    row.append(node('th', '', monthLabel(current.month)));
+    const issued = node('td'); issued.append(comparisonCell(current.issuedCount, current.issuedActiveAmountCents));
+    const received = node('td'); received.append(comparisonCell(current.receivedCount, current.receivedActiveAmountCents));
+    row.append(issued, node('td', 'comparison-trend', prior ? trendLabel(current.issuedActiveAmountCents, prior.issuedActiveAmountCents) : '—'), received, node('td', 'comparison-trend', prior ? trendLabel(current.receivedActiveAmountCents, prior.receivedActiveAmountCents) : '—'), node('td', '', String(Number(current.cancelledCount) || 0)));
+    body.append(row);
+  }
+  table.append(head, body); scroll.append(table); target.append(scroll);
+}
+function nfseRoleLabel(role) { return ['issued', 'provider'].includes(role) ? 'Prestada' : ['received', 'recipient'].includes(role) ? 'Tomada' : 'NFS-e'; }
+function nfseStatusLabel(status) {
+  const value = String(status || '').toLowerCase();
+  if (['cancelled', 'canceled', 'cancelada'].includes(value)) return 'Cancelada';
+  if (['active', 'authorized', 'valid', 'normal', 'autorizada'].includes(value)) return 'Válida';
+  return status || 'Situação indisponível';
+}
+function openNfseDetails(doc) {
+  const fields = $('nfseDetailFields');
+  fields.replaceChildren();
+  const rows = [
+    ['Papel na empresa', nfseRoleLabel(doc.role)], ['Situação', nfseStatusLabel(doc.status)],
+    ['Chave', doc.documentKey || doc.accessKey], ['Número', doc.number],
+    ['Emissão', doc.issuedAt ? dateLabel(doc.issuedAt) : null], ['Competência', doc.competence ? monthLabel(doc.competence) : null],
+    ['Prestador', doc.providerCnpj ? cnpjLabel(doc.providerCnpj) : null], ['Tomador', doc.recipientCnpj ? cnpjLabel(doc.recipientCnpj) : null],
+    ['Valor', moneyLabel(doc.amountCents)], ['Código do município', doc.municipalityCode], ['NSU', doc.nsu],
+  ];
+  for (const [label, value] of rows) {
+    if (value === null || value === undefined || value === '') continue;
+    const item = node('div', 'nfse-detail-field');
+    item.append(node('dt', '', label), node('dd', '', value));
+    fields.append(item);
+  }
+  $('nfseDetailDialog').showModal();
+}
+async function loadCompanyDocuments(companyCnpj) {
+  const page = state.nfsePage;
+  const requestNumber = ++state.nfseRequest;
+  const target = $('nfseCompanyList');
+  appendEmpty(target, 'Buscando NFS-e...', 'Consultando os registros recebidos para esta empresa.', '⌕');
+  const qs = new URLSearchParams({ page: String(page), limit: '50' });
+  if ($('nfseMonthFilter').value) qs.set('month', $('nfseMonthFilter').value);
+  if ($('nfseRoleFilter').value) qs.set('role', $('nfseRoleFilter').value);
+  if ($('nfseStatusFilter').value) qs.set('status', $('nfseStatusFilter').value);
+  const result = await request(`/companies/${companyCnpj}/nfse?${qs}`);
+  if (companyCnpj !== state.selectedCompanyCnpj || requestNumber !== state.nfseRequest || state.view !== 'company-detail') return;
+  const documents = Array.isArray(result.documents) ? result.documents : [];
+  state.nfseHasMore = !!result.hasMore;
+  $('nfseCount').textContent = `${documents.length} ${documents.length === 1 ? 'nota' : 'notas'} nesta página`;
+  target.replaceChildren();
+  if (!documents.length) appendEmpty(target, 'Nenhuma NFS-e neste filtro', 'Confira a competência, os filtros e a cobertura da fonte antes de concluir que não existem notas.', '▤');
+  for (const doc of documents) {
+    const row = node('div', 'nfse-row');
+    const main = node('div', 'nfse-main');
+    const top = node('div', 'nfse-row-top');
+    top.append(node('strong', '', doc.number ? `NFS-e ${doc.number}` : 'NFS-e sem número informado'), node('span', 'nfse-role', nfseRoleLabel(doc.role)), node('span', `nfse-state ${nfseStatusLabel(doc.status) === 'Cancelada' ? 'cancelled' : ''}`, nfseStatusLabel(doc.status)));
+    const key = node('small', 'nfse-key', `Chave: ${doc.documentKey || doc.accessKey || 'Não informada'}`);
+    const parties = node('small', '', `Prestador ${cnpjLabel(doc.providerCnpj)} · Tomador ${cnpjLabel(doc.recipientCnpj)} · ${doc.issuedAt ? dateLabel(doc.issuedAt) : 'Emissão não informada'}`);
+    main.append(top, key, parties);
+    const side = node('div', 'nfse-row-side');
+    side.append(node('strong', '', moneyLabel(doc.amountCents)));
+    const detail = node('button', 'text-button', 'Ver dados ↗');
+    detail.type = 'button';
+    detail.addEventListener('click', () => openNfseDetails(doc));
+    side.append(detail);
+    row.append(main, side);
+    target.append(row);
+  }
+  $('nfsePagination').hidden = page === 1 && !state.nfseHasMore;
+  $('nfsePageLabel').textContent = `Página ${page}`;
+  $('nfsePreviousPage').disabled = page <= 1;
+  $('nfseNextPage').disabled = !state.nfseHasMore;
+}
+async function loadCompanyDetail() {
+  const companyCnpj = state.selectedCompanyCnpj;
+  if (!companyCnpj) return;
+  updateCompanyHeading();
+  const results = await Promise.allSettled([loadCompanyCoverage(companyCnpj), loadCompanySummary(companyCnpj), loadCompanyDocuments(companyCnpj)]);
+  const failures = results.filter((result) => result.status === 'rejected');
+  if (failures.length && companyCnpj === state.selectedCompanyCnpj) displayError(failures[0].reason);
+}
 async function loadFiscalDocuments() {
   const filter = $('fiscalCompanyFilter').value;
   const qs = new URLSearchParams({ page: '1', limit: '50' });
@@ -601,16 +827,17 @@ async function loadFiscalDocuments() {
     main.append(node('span', 'row-avatar', '▤'), info);
     const side = node('div', 'row-aside');
     side.append(node('small', '', doc.receivedAt ? dateLabel(doc.receivedAt) : 'Data indisponível'));
-    if (doc.id) {
-      const link = node('a', 'download-link', 'Baixar XML ↗');
-      link.href = `${API}/fiscal/documents/${encodeURIComponent(doc.id)}/xml`;
-      side.append(link);
+    if (doc.source === 'NFSE' && canView('fiscal')) {
+      const open = node('button', 'text-button', 'Abrir empresa ↗');
+      open.type = 'button';
+      open.addEventListener('click', () => navigate(`company-${doc.companyCnpj}`));
+      side.append(open);
     }
     row.append(main, side);
     target.append(row);
   }
   if (data.hasMore) {
-    const note = node('div', 'pagination-note', 'Mostrando os 50 documentos mais recentes. Mais páginas estarão disponíveis em breve.');
+    const note = node('div', 'pagination-note', 'Mostrando os 50 registros mais recentes. Abra a empresa para filtrar suas NFS-e por competência.');
     target.append(note);
   }
 }
@@ -626,6 +853,27 @@ function setupEvents() {
   for (const button of document.querySelectorAll('[data-go]')) button.addEventListener('click', () => navigate(button.dataset.go));
   $('companySearch').addEventListener('input', renderCompanies);
   $('fiscalCompanyFilter').addEventListener('change', () => void loadFiscalDocuments().catch(displayError));
+  $('backToCompanies').addEventListener('click', () => navigate('companies'));
+  $('nfseCompareButton').addEventListener('click', () => void loadCompanySummary(state.selectedCompanyCnpj).catch(displayError));
+  for (const id of ['nfseMonthFilter', 'nfseRoleFilter', 'nfseStatusFilter']) $(id).addEventListener('change', () => {
+    state.nfsePage = 1;
+    void loadCompanyDocuments(state.selectedCompanyCnpj).catch(displayError);
+  });
+  $('nfseClearFilters').addEventListener('click', () => {
+    for (const id of ['nfseMonthFilter', 'nfseRoleFilter', 'nfseStatusFilter']) $(id).value = '';
+    state.nfsePage = 1;
+    void loadCompanyDocuments(state.selectedCompanyCnpj).catch(displayError);
+  });
+  $('nfsePreviousPage').addEventListener('click', () => {
+    if (state.nfsePage <= 1) return;
+    state.nfsePage -= 1;
+    void loadCompanyDocuments(state.selectedCompanyCnpj).catch(displayError);
+  });
+  $('nfseNextPage').addEventListener('click', () => {
+    if (!state.nfseHasMore) return;
+    state.nfsePage += 1;
+    void loadCompanyDocuments(state.selectedCompanyCnpj).catch(displayError);
+  });
   $('newCompanyButton').addEventListener('click', () => $('companyDialog').showModal());
   $('newUserButton').addEventListener('click', () => openUserDialog());
   $('newAgentButton').addEventListener('click', () => $('agentDialog').showModal());

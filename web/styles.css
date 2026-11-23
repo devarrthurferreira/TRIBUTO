@@ -240,6 +240,55 @@ a { color: var(--blue); }
 .task-meta span { background: #f0f4f7; color: #7a8fa0; padding: 4px 7px; border-radius: 5px; }
 .work-empty { min-height: 154px; }
 
+.company-back { margin: -4px 0 12px -8px; }
+.company-heading { margin-top: 4px; }
+.company-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 15px; }
+.company-open { min-height: 34px; padding: 7px 11px; font-size: 11px; white-space: nowrap; }
+.coverage-banner { display: flex; align-items: center; gap: 15px; padding: 18px 21px; border: 1px solid #cddde9; border-radius: 14px; background: #edf5fa; color: #36566b; line-height: 1.5; }
+.coverage-icon { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; font-size: 21px; color: #117d83; background: #d6f1ed; }
+.coverage-icon.waiting { color: #9e712c; background: #fff3df; }
+.coverage-banner strong { font-size: 12px; }
+.coverage-banner p { font-size: 11px; color: #668092; margin: 3px 0 0; }
+.company-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; margin: 19px 0; }
+.company-metrics .stat-card strong { font-size: 24px; }
+.company-section { margin-top: 21px; }
+.company-period, .nfse-filter-row { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+.company-period label, .nfse-filter-row label { display: grid; gap: 5px; font-size: 10px; color: #71879a; font-weight: 700; }
+.company-period input, .nfse-filter-row input, .nfse-filter-row select { border: 1px solid #dce6ed; border-radius: 8px; padding: 8px 9px; color: #395268; background: white; min-height: 35px; font-size: 11px; }
+.company-period .button { min-height: 35px; padding: 7px 12px; font-size: 11px; }
+.company-disclaimer { margin: 0; padding: 13px 21px 16px; border-top: 1px solid #f0f3f6; font-size: 11px; line-height: 1.55; color: #7f94a5; }
+.comparison-scroll { width: 100%; overflow: auto; }
+.comparison-table { border-collapse: collapse; width: 100%; min-width: 740px; font-size: 11px; text-align: left; }
+.comparison-table th, .comparison-table td { padding: 12px 17px; border-bottom: 1px solid #eef2f6; vertical-align: middle; }
+.comparison-table thead th { color: #7890a2; font-size: 10px; background: #f7f9fc; white-space: nowrap; }
+.comparison-table tbody th { color: #3a5369; font-weight: 750; white-space: nowrap; }
+.comparison-table tbody tr:last-child th, .comparison-table tbody tr:last-child td { border-bottom: 0; }
+.comparison-values { display: grid; gap: 3px; white-space: nowrap; }
+.comparison-values strong { font-size: 11px; color: #263f54; }
+.comparison-values span { color: #91a1af; font-size: 10px; }
+.comparison-trend { color: #5b7890; white-space: nowrap; }
+.nfse-filter-row { padding: 15px 21px; border-bottom: 1px solid #eef2f5; }
+.nfse-filter-row .text-button { margin-left: auto; }
+.nfse-row { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 15px 21px; border-bottom: 1px solid #f0f3f6; }
+.nfse-row:last-child { border-bottom: 0; }
+.nfse-main { min-width: 0; display: grid; gap: 7px; }
+.nfse-row-top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.nfse-row-top strong { font-size: 12px; }
+.nfse-main small { font-size: 10px; color: #8296a6; line-height: 1.5; overflow-wrap: anywhere; }
+.nfse-key { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.nfse-role, .nfse-state { padding: 4px 7px; border-radius: 6px; background: #eaf1ff; color: #4668b7; font-size: 10px; font-weight: 750; }
+.nfse-state { background: #e5f5ed; color: #258466; }
+.nfse-state.cancelled { background: #fff0e7; color: #aa663a; }
+.nfse-row-side { text-align: right; flex: none; display: grid; justify-items: end; gap: 5px; }
+.nfse-row-side strong { font-size: 12px; white-space: nowrap; }
+.nfse-pagination { display: flex; justify-content: center; align-items: center; gap: 16px; padding: 15px; border-top: 1px solid #edf1f5; font-size: 11px; color: #6d8497; }
+.nfse-pagination .button { min-height: 32px; padding: 5px 11px; font-size: 11px; }
+.nfse-detail-dialog { width: min(570px, calc(100% - 28px)); }
+.nfse-detail-fields { margin: 15px 0; border-top: 1px solid #edf1f5; }
+.nfse-detail-field { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 10px; padding: 11px 0; border-bottom: 1px solid #edf1f5; font-size: 11px; }
+.nfse-detail-field dt { color: #8195a5; }
+.nfse-detail-field dd { color: #294359; margin: 0; overflow-wrap: anywhere; font-weight: 700; }
+
 .form-dialog { width: min(490px, calc(100% - 28px)); max-height: min(90vh, 800px); overflow-y: auto; border: 0; border-radius: 17px; padding: 24px; color: var(--ink); box-shadow: 0 30px 75px rgba(10, 28, 47, .22); }
 .form-dialog::backdrop { background: rgba(12, 29, 46, .48); backdrop-filter: blur(3px); }
 .dialog-header { display: flex; justify-content: space-between; align-items: start; }
@@ -272,6 +321,9 @@ a { color: var(--blue); }
   .menu-backdrop:not([hidden]) { display: block; position: fixed; inset: 0; background: rgba(10,25,41,.43); z-index: 15; }
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .content-wrap { width: 100%; }
+  .company-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .company-period { width: 100%; }
+  .company-section .surface-header { align-items: start; flex-direction: column; }
 }
 @media (max-width: 700px) {
   .auth-layout { grid-template-columns: 1fr; gap: 12px; width: min(450px, calc(100% - 32px)); margin: 22px auto; }
@@ -296,7 +348,17 @@ a { color: var(--blue); }
   .row-aside { max-width: 115px; white-space: normal; }
   .work-toolbar { flex-direction: column; align-items: start; }
   .work-filter select { max-width: 100%; }
+  .company-row-actions { flex-direction: column; align-items: end; gap: 5px; }
+  .company-metrics { grid-template-columns: 1fr; gap: 10px; }
+  .nfse-row { align-items: start; }
+  .nfse-row-side { min-width: 82px; }
+  .nfse-filter-row .text-button { margin-left: 0; }
+  .nfse-detail-field { grid-template-columns: 110px minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .001ms !important; animation-duration: .001ms !important; }
 }
+.storage-summary { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; padding: 0 1.5rem 0.5rem; }
+.storage-summary strong { font-size: 1.65rem; color: var(--ink, #172b4d); }
+.storage-summary span { color: #62728a; }
+#storageOverview > .small-muted { padding: 0 1.5rem 1.5rem; margin: 0; }
