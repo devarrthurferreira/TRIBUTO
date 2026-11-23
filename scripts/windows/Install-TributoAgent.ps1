@@ -92,8 +92,10 @@ $nodeVersion = (& $NodePath --version).Trim()
 if ($nodeVersion -notmatch '^v(\d+)\.' -or [int]$Matches[1] -lt 20) { throw 'Instale Node.js 20 ou superior.' }
 
 $sourceAgent = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\src\agent\agent.mjs'))
+$sourceValidation = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\src\api\validation.mjs'))
 $sourceRunner = Join-Path $PSScriptRoot 'Run-TributoAgent.ps1'
 if (-not (Test-Path -LiteralPath $sourceAgent -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $sourceValidation -PathType Leaf) -or
     -not (Test-Path -LiteralPath $sourceRunner -PathType Leaf)) {
     throw 'Execute este instalador a partir de um checkout completo do TRIBUTO.'
 }
@@ -127,14 +129,21 @@ try {
     # Restrict the parent before creating any token-bearing file. DPAPI
     # LocalMachine relies on this ACL to limit which accounts can read it.
     Protect-InstallTree -Root $InstallRoot -State $stateDir -Logs $logsDir
-    foreach ($directory in @($binDir, $stateDir, $logsDir)) {
+    $agentBinDir = Join-Path $binDir 'agent'
+    $apiBinDir = Join-Path $binDir 'api'
+    foreach ($directory in @($binDir, $agentBinDir, $apiBinDir, $stateDir, $logsDir)) {
         $null = New-Item -ItemType Directory -Path $directory -Force
     }
 
-    $agentPath = Join-Path $binDir 'agent.mjs'
+    $agentPath = Join-Path $agentBinDir 'agent.mjs'
     $runnerPath = Join-Path $InstallRoot 'Run-TributoAgent.ps1'
     Copy-Item -LiteralPath $sourceAgent -Destination $agentPath -Force
+    Copy-Item -LiteralPath $sourceValidation -Destination (Join-Path $apiBinDir 'validation.mjs') -Force
     Copy-Item -LiteralPath $sourceRunner -Destination $runnerPath -Force
+    # Check module resolution from the installed layout, before registering
+    # a task that would otherwise restart forever with ERR_MODULE_NOT_FOUND.
+    & $NodePath $agentPath --help | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'O agente instalado não iniciou; verifique os arquivos em bin.' }
 
     $settings = [ordered]@{
         ApiBaseUrl = $ApiBaseUrl
