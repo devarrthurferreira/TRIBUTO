@@ -1,0 +1,32 @@
+import { readFile } from 'node:fs/promises';
+
+const ALLOWED = new Map([
+  ['/', ['index.html', 'text/html; charset=utf-8']],
+  ['/index.html', ['index.html', 'text/html; charset=utf-8']],
+  ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
+  ['/app.js', ['app.js', 'text/javascript; charset=utf-8']]
+]);
+
+export async function serveStatic(req, res, pathname) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+  const asset = ALLOWED.get(pathname);
+  if (!asset) return false;
+  const file = new URL(`../../web/${asset[0]}`, import.meta.url);
+  try {
+    const data = await readFile(file);
+    res.writeHead(200, {
+      'content-type': asset[1],
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      'x-frame-options': 'DENY',
+      'referrer-policy': 'same-origin',
+      'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    });
+    res.end(req.method === 'HEAD' ? undefined : data);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+    res.end('Interface não instalada');
+  }
+  return true;
+}

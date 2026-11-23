@@ -105,3 +105,22 @@ test('recusa dois agentes configurados com o mesmo token', () => {
   const first = { id: 'first', tokenSha256: sha256(token), companies: [cnpj], sources: ['NFE'] };
   assert.throws(() => createApiServer({ store: new MemoryStore(), agents: [first, { ...first, id: 'second' }] }), /token duplicado/);
 });
+
+test('agente cadastrado no banco só vê sua tarefa e pode ser revogado', async () => {
+  const store = new MemoryStore();
+  let active = true;
+  const registry = {
+    async findAgentByTokenHash(hash) { return hash === sha256(token) ? { _id: 'agent-db', active } : null; },
+    async listAgentJobs() { return [{ id: 'nfe-empresa', companyCnpj: cnpj, source: 'NFE', startNsu: '0', enabled: true }]; }
+  };
+  const server = createApiServer({ store, agentRegistry: registry, logger: { error() {} } });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  try {
+    assert.equal((await call(url, '/v1/agent/jobs')).body.jobs.length, 1);
+    assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: batch() })).status, 201);
+    assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: batch({ companyCnpj: '00000000000000' }) })).status, 403);
+    active = false;
+    assert.equal((await call(url, '/v1/agent/jobs')).status, 401);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});

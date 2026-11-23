@@ -1,55 +1,38 @@
-# TRIBUTO
+# TRIBUTO · Maximum Contábil
 
-Base do módulo fiscal consultivo da Maximum Contábil. Nesta primeira entrega, há uma **API de sincronização** e um **agente de transporte para Windows**. O coletor ainda **não consulta notas fiscais**, e não existe painel de notas nesta versão. A arquitetura separa a coleta local da visualização web e mantém o A1 no servidor da contabilidade.
+Plataforma de trabalho consultivo com painel web, API e agente para o servidor Windows da Maximum. O painel centraliza empresas, usuários e permissões por módulo. O agente se comunica por HTTPS de saída e mantém a fila de documentos no Windows até a API confirmar a gravação.
 
-## O que funciona agora
+## O que já funciona
 
-- API recebe heartbeat, entrega uma lista restrita de tarefas de leitura e persiste lotes XML com checkpoint por CNPJ/fonte.
-- Agente consulta a API via HTTPS de saída, possui fila local persistente e reenvia lotes até receber confirmação.
-- Token exclusivo por instalação é verificado pela API; cada token tem escopo de CNPJs e fontes.
-- Lotes com o mesmo `batchId` são idempotentes; um ID reutilizado com conteúdo diferente é rejeitado.
-- Testes cobrem autenticação, isolamento por CNPJ, heartbeat, confirmação repetida e XML adulterado.
+| Área | Entrega atual | Próxima integração |
+| --- | --- | --- |
+| Acesso | Configuração única do primeiro administrador, login, sessões, troca de senha, permissões por módulo e CNPJ, auditoria de ações. | Convites e recuperação de acesso, se necessários. |
+| Empresas/equipe | Cadastro de empresas, usuários, carteiras e permissões. | Importação da carteira existente da Maximum. |
+| Fiscal | Listagem e download protegido dos XMLs recebidos pela API, tarefas de acompanhamento e visão da saúde do agente. | Conectores oficiais NF-e/NFS-e, eventos, solicitações de cancelamento e análises IBS/CBS. |
+| DP, Contábil, Societário, Financeiro, Gestão | Espaços e atividades vinculadas a empresa e responsável, com permissões separadas. | Fluxos e indicadores específicos de cada setor. |
+| Agente | Cadastro e revogação pelo administrador, token exibido uma vez, heartbeat, fila persistente, confirmação de lote, quarentena de arquivo inválido. | Captura fiscal com A1/procuração e conectores municipais. |
 
-## Arquitetura prevista
+**A coleta de notas fiscais ainda não foi implementada.** O agente atual transporta apenas lotes que outro componente inserir em sua fila. Ele não emite, manifesta ou cancela notas. O A1 e sua senha permanecerão no Windows quando os conectores forem adicionados.
+
+## Arquitetura
 
 ```mermaid
 flowchart LR
-  P["Painel web"] --> A["API e MongoDB"]
-  C["Agente Windows 24h"] -->|"HTTPS de saída"| A
-  C --> F["SEFAZ / NFS-e"]
+  P["Painel e API · Hostinger"] --> B["MongoDB externo"]
+  A["Agente · Windows 24h"] -->|"HTTPS de saída"| P
+  A -.-> F["SEFAZ / NFS-e · futuro"]
 ```
 
-**A seta para os serviços fiscais é futura.** O agente presente só transporta lotes previamente colocados em sua fila, sem executar consultas oficiais. O certificado A1 e sua senha permanecerão no Windows quando implementarmos os conectores. A aplicação web não poderá pedir execução de comandos, emissão, cancelamento ou manifestação automática.
+O painel e a API rodam no mesmo processo Node.js. Dados de usuários, empresas, atividades e XMLs ficam no MongoDB com backup; os XMLs são cifrados antes de gravar no banco. O token do agente fica no Windows com DPAPI e permissões restritas. A publicação na Hostinger não armazena PFX, fila nem arquivos persistentes.
 
-## Instalação de desenvolvimento
+## Publicação e instalação
 
-Requer Node.js 20+ e MongoDB com suporte a transações (replica set, como MongoDB Atlas). A API deve usar HTTPS através da hospedagem/proxy em produção. Os XMLs são cifrados pela API antes de ir ao banco, usando `XML_ENCRYPTION_KEY`; cuide do backup da chave.
+1. Configure um MongoDB com transações e as variáveis secretas descritas em [docs/HOSTINGER.md](docs/HOSTINGER.md).
+2. Importe este repositório privado em **Hostinger Web Apps**, com Node 22/24 e `src/api/main.mjs` como arquivo de entrada. O painel será servido na raiz do domínio e a API em `/v1/`.
+3. Abra o domínio em HTTPS, use o código de configuração inicial para criar o administrador e cadastre empresas e acessos.
+4. Crie o agente no painel, copie o token exibido uma vez e instale no servidor Windows conforme [docs/WINDOWS-INSTALL.md](docs/WINDOWS-INSTALL.md).
+5. Confira o heartbeat em **Agentes de coleta**. As notas só aparecerão após integrar um conector autorizado ou enviar lotes válidos à API.
 
-```bash
-npm ci
-cp .env.example .env
-# Configure as variáveis no ambiente do processo. O Node não carrega .env automaticamente.
-npm run api
-```
+Para desenvolvimento local, configure `MONGODB_URI`, `MONGODB_DB`, `XML_ENCRYPTION_KEY`, `BOOTSTRAP_ADMIN_TOKEN_SHA256`, `COOKIE_SECURE=false`, `HOST` e `PORT` no ambiente do processo; o Node não lê `.env` automaticamente. Use `npm ci`, `npm test` e `npm start`.
 
-No PowerShell, configure as variáveis de ambiente do processo com `$env:NOME = 'valor'`, depois rode `npm run api`. Nunca comite `.env`. Gere o token e o hash como descrito em [docs/API.md](docs/API.md), configure `AGENT_TOKENS_JSON` na API e `AGENT_TOKEN` no servidor Windows. O `COLLECTOR_JOBS_JSON` define quais CNPJs/fontes aparecerão ao agente; configure um CNPJ real autorizado antes de ativar coleta.
-
-```powershell
-npm ci
-$env:API_BASE_URL = 'https://SEU-DOMINIO-DA-API'
-$env:AGENT_TOKEN = 'SEGREDO_GERADO_LOCALMENTE'
-$env:AGENT_STATE_DIR = 'C:\Tributo\dados-agente'
-node src/agent/agent.mjs --once
-```
-
-Leia [docs/AGENT.md](docs/AGENT.md) para execução contínua no Windows e [docs/API.md](docs/API.md) para o contrato e os limites.
-
-## Próximas etapas
-
-1. Autenticação de usuários e painel fiscal com acesso por carteira de empresas.
-2. Conector NF-e recebida via distribuição oficial, usando A1 do CNPJ correspondente e NSU.
-3. Conector NFS-e nacional com acesso válido do cliente e tratamento de municípios sem dados no ADN.
-4. Visualização e download protegido dos XMLs, eventos oficiais, solicitações de cancelamento e alertas.
-5. Regras consultivas versionadas para IBS/CBS.
-
-Nenhuma credencial, certificado ou XML real é incluído no repositório. Antes de produção, configurar backup, retenção, monitoramento e controles de acesso ao banco e aos XMLs.
+Leia [docs/API.md](docs/API.md) para o protocolo de sincronização e [docs/AGENT.md](docs/AGENT.md) para a operação da fila. Nenhum certificado, senha ou XML real acompanha o código.
