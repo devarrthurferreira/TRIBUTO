@@ -1,23 +1,19 @@
-# Publicar painel e API na Hostinger Web Apps
+# Publicar o painel e a API na Hostinger Web Apps
 
-O TRIBUTO usa **um único aplicativo Node.js**: o mesmo processo entrega o painel e as rotas da API. O agente de coleta permanece no servidor Windows da Maximum e acessa a API por HTTPS de saída. O MongoDB é externo à Hostinger Web Apps; use um cluster MongoDB com suporte a transações, TLS e backup.
+O TRIBUTO usa **um único Web App Node.js** para o painel e a API. O agente permanece no servidor Windows da Maximum e conecta-se à API por HTTPS de saída. Dados do painel e **metadados fiscais** ficam no **MySQL criado no hPanel da própria Hostinger**. O banco não armazena XML/PDF, PFX, senha do certificado ou fila do agente.
 
 ## Pré-requisitos
 
-- Plano Hostinger Business ou Cloud com Web Apps e um domínio/subdomínio com HTTPS.
-- Conta GitHub com acesso ao repositório privado `devarrthurferreira/TRIBUTO`.
-- MongoDB Atlas ou serviço equivalente com replica set e usuário de banco restrito à base TRIBUTO.
-- Valores secretos gerados fora do repositório para `XML_ENCRYPTION_KEY` e para o token de configuração inicial.
+- Web App Node.js e domínio/subdomínio com HTTPS no plano contratado.
+- Acesso do GitHub ao repositório privado `devarrthurferreira/TRIBUTO`.
+- Banco MySQL criado em **Websites → Gerenciar → Bancos de dados → MySQL** (o nome da seção pode variar no hPanel), com usuário e senha exclusivos para TRIBUTO. Confirme host, porta, cota e acesso do Web App ao banco no próprio hPanel.
+- Segredo de configuração inicial gerado fora do repositório.
 
-Gere os valores em PowerShell local, separadamente. Guarde o token de configuração inicial até concluir o primeiro acesso; informe **somente o hash** à Hostinger:
+Gere um código inicial aleatório em **PowerShell** no computador do administrador. Coloque apenas o hash no hPanel e use o código original uma vez na tela de cadastro inicial:
 
 ```powershell
-$keyBytes = [byte[]]::new(32)
-$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-$rng.GetBytes($keyBytes)
-$xmlEncryptionKey = [Convert]::ToBase64String($keyBytes)
-
 $setupBytes = [byte[]]::new(32)
+$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
 $rng.GetBytes($setupBytes)
 $setupToken = [BitConverter]::ToString($setupBytes).Replace('-', '').ToLowerInvariant()
 $sha = [Security.Cryptography.SHA256]::Create()
@@ -26,31 +22,36 @@ $sha.Dispose()
 $rng.Dispose()
 ```
 
-`$xmlEncryptionKey` é um segredo permanente: seu backup protegido é necessário para recuperar os XMLs armazenados. `$setupToken` é usado uma vez no formulário inicial e não deve ser publicado no Git.
+Guarde `$setupToken` até concluir o primeiro acesso. Não inclua esse valor, a senha MySQL ou o token do agente em arquivos do Git.
 
 ## Configuração no hPanel
 
-1. Em **Websites → Create site → Web App**, escolha **Import your Git repository**. Autorize a conta GitHub que tem acesso ao TRIBUTO e selecione `devarrthurferreira/TRIBUTO`, branch `main`.
-2. Configure **Framework: Other**, **Root directory: /**, **Node.js: 22 ou 24**, **Entry file: `src/api/main.mjs`**. O projeto não precisa de diretório de saída nem de build do frontend; `web/` é servido pelo próprio Node. Se o painel exigir Build command, use `npm run build` conforme o `package.json`.
-3. Configure as variáveis de ambiente abaixo no hPanel. Não envie `.env` ao GitHub.
-4. Publique e confira `https://SEU-DOMINIO/healthz` e a tela de configuração inicial em `/`. A Hostinger pode iniciar nova publicação a cada push na branch selecionada.
+1. Crie o banco e o usuário MySQL. Anote **host, porta, nome do banco e usuário** exatamente como exibidos no hPanel; o host pode diferir de `127.0.0.1` conforme a infraestrutura da conta. Permita ao usuário criar tabelas e índices na primeira inicialização, pois o aplicativo prepara seu esquema automaticamente.
+2. Em **Websites → Create site → Web App**, importe o repositório privado, branch `main`. Use **Framework: Other**, raiz `/`, Node.js 22/24 se disponíveis e entrada `src/api/main.mjs`. Não há diretório de saída estático; o próprio Node serve `web/`. Se for exigido comando de build, use `npm run build`.
+3. Defina as variáveis na configuração do Web App. O exemplo `.env.example` serve apenas de referência local; não publique `.env`.
+4. Publique e abra `https://SEU-DOMINIO/healthz` e a página inicial. Crie o administrador com `$setupToken`, configure empresas, usuários, permissões e agente.
+5. Remova `BOOTSTRAP_ADMIN_TOKEN_SHA256` das variáveis após criar o primeiro administrador. O banco bloqueia uma segunda configuração inicial; a remoção reduz a exposição desnecessária do hash.
 
-| Variável | Valor |
+| Variável | Valor no Web App |
 | --- | --- |
-| `MONGODB_URI` | URI TLS do cluster MongoDB, com usuário restrito. |
-| `MONGODB_DB` | Nome da base, por exemplo `tributo`. |
-| `XML_ENCRYPTION_KEY` | `$xmlEncryptionKey` (base64 de 32 bytes). |
-| `BOOTSTRAP_ADMIN_TOKEN_SHA256` | `$setupTokenHash` (64 caracteres hex). |
-| `COOKIE_SECURE` | `true` em HTTPS. |
-| `HOST` | `127.0.0.1` no modo gerenciado, salvo instrução específica da sua instalação. |
-| `PORT` | `3000`, salvo porta atribuída pela Hostinger. |
+| `MYSQL_HOST` | Host do MySQL informado no hPanel; use `127.0.0.1` somente se for o host indicado. |
+| `MYSQL_PORT` | Porta informada no hPanel, normalmente `3306`. |
+| `MYSQL_USER` | Usuário exclusivo do TRIBUTO. |
+| `MYSQL_PASSWORD` | Senha do usuário MySQL, configurada somente como variável secreta. |
+| `MYSQL_DATABASE` | Nome exato do banco criado no hPanel. |
+| `BOOTSTRAP_ADMIN_TOKEN_SHA256` | `$setupTokenHash` (64 caracteres hex), temporariamente. |
+| `COOKIE_SECURE` | `true` para HTTPS. |
+| `HOST` | `127.0.0.1` no modo gerenciado, salvo orientação específica para o Web App. |
+| `PORT` | `3000` ou a porta atribuída pela Hostinger. |
 
-Depois do primeiro administrador criado, remova `BOOTSTRAP_ADMIN_TOKEN_SHA256` das variáveis da Hostinger. O cadastro inicial já fica bloqueado pelo banco; a remoção reduz o tempo de exposição do segredo. Faça backup da chave de XML separadamente do banco, sob controle administrativo.
+`MONGODB_URI`, `MONGODB_DB` e `XML_ENCRYPTION_KEY` pertenciam à versão anterior e **não são usadas** nesta instalação. A troca para MySQL não migra automaticamente dados de um MongoDB usado antes; se houver dados reais lá, planeje uma migração explícita antes de desligá-lo. Nunca copie um banco de produção sem testar restauração e permissões.
 
-## Agente Windows
+## Agente Windows e coleta
 
-No painel, um administrador cria um agente e define os CNPJs/fontes autorizados. Copie o token **uma única vez** para a instalação em seu servidor Windows. Execute o instalador descrito em [WINDOWS-INSTALL.md](WINDOWS-INSTALL.md) apontando para a origem HTTPS do painel. O agente faz chamadas de saída; não é preciso abrir uma porta de entrada no Windows.
+No painel, um administrador vincula um agente aos CNPJs/fontes permitidos. O token aparece uma vez e é digitado no instalador do Windows; consulte [WINDOWS-INSTALL.md](WINDOWS-INSTALL.md). Não é preciso abrir porta de entrada no servidor. O transporte e a ficha de NFS-e estão preparados para metadados. **A consulta automática ao ADN exige configurar e homologar separadamente o conector com certificado e autorização válidos**; ela não começa apenas por marcar NFS-e no painel. O A1 e sua senha ficam no Windows.
 
-## Persistência e limites
+## Limite de espaço e operação
 
-Os documentos e os dados do painel ficam no MongoDB; o estado local do agente fica no Windows. Não guarde XML, PFX, fila ou dados de usuário nas pastas da publicação: a Hostinger substitui arquivos de deploy ao publicar versões novas. O plano gerenciado também não é o local para um coletor permanente. Monitore a disponibilidade da API, do MongoDB, a última comunicação do agente e os backups antes de operar com dados reais.
+**50 GB de armazenamento do site não são 50 GB de MySQL.** Na oferta atual do plano Unlimited, o limite de banco informado é **3 GB**; confirme a cota efetiva da sua contratação no hPanel, inclusive se é por banco ou agregada. Com 500 empresas, o tamanho depende do total de notas, eventos, índices e período retido. Exemplo apenas para ordem de grandeza: 500 × 100 notas/mês × 12 meses × 1 KB por registro ≈ 600 MB de dados brutos por ano, **sem** índices, eventos e auditoria. Com 500 notas/mês por empresa seriam ≈ 3 GB brutos por ano, antes desses adicionais. Faça um piloto, acompanhe crescimento real e estabeleça uma margem de segurança; não prometa capacidade por número de empresas isolado.
+
+Configure backup periódico do MySQL e teste a restauração. Monitore espaço, disponibilidade da API, última comunicação do agente e checkpoints por CNPJ. Arquivos de publicação podem ser substituídos em novos deploys: não guarde XML, PDF, certificado nem fila nessas pastas. A Hostinger Web Apps hospeda o painel/API; o processo de coleta contínua roda no Windows 24 horas.

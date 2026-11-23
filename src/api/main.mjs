@@ -1,20 +1,24 @@
 import { createApiServer } from './http.mjs';
-import { MongoStore } from './mongo-store.mjs';
-import { PlatformMongoStore } from '../platform/mongo-store.mjs';
+import { MySqlStore } from './mysql-store.mjs';
+import { PlatformMySqlStore } from '../platform/mysql-store.mjs';
 import { createPlatformRouter } from '../platform/routes.mjs';
 
-const uri = process.env.MONGODB_URI;
-if (!uri) throw new Error('MONGODB_URI obrigatória');
-const encryptionKeyBase64 = process.env.XML_ENCRYPTION_KEY;
-const encryptionKey = Buffer.from(encryptionKeyBase64 || '', 'base64');
-if (!encryptionKeyBase64 || encryptionKey.length !== 32 || encryptionKey.toString('base64') !== encryptionKeyBase64) throw new Error('XML_ENCRYPTION_KEY deve ser base64 de 32 bytes aleatórios');
+for (const key of ['MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE']) {
+  if (!process.env[key]) throw new Error(`${key} obrigatória`);
+}
 const bootstrapTokenSha256 = process.env.BOOTSTRAP_ADMIN_TOKEN_SHA256 || null;
 if (bootstrapTokenSha256 && !/^[a-f0-9]{64}$/.test(bootstrapTokenSha256)) throw new Error('BOOTSTRAP_ADMIN_TOKEN_SHA256 deve conter 64 caracteres hex');
 const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 3000);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT inválida');
-const store = await MongoStore.connect(uri, process.env.MONGODB_DB || 'tributo', encryptionKey);
-const platformStore = new PlatformMongoStore(store.db, store.client, encryptionKey);
+const mysqlPort = Number(process.env.MYSQL_PORT || 3306);
+if (!Number.isInteger(mysqlPort) || mysqlPort < 1 || mysqlPort > 65535) throw new Error('MYSQL_PORT inválida');
+const store = await MySqlStore.connect({
+  host: process.env.MYSQL_HOST || '127.0.0.1', port: mysqlPort,
+  user: process.env.MYSQL_USER, password: process.env.MYSQL_PASSWORD,
+  database: process.env.MYSQL_DATABASE
+});
+const platformStore = new PlatformMySqlStore(store.pool);
 await platformStore.initialize();
 if (await platformStore.countUsers() === 0 && !bootstrapTokenSha256) throw new Error('Configure BOOTSTRAP_ADMIN_TOKEN_SHA256 para o primeiro administrador');
 const platformRouter = createPlatformRouter({ store: platformStore, bootstrapTokenSha256, secureCookies: process.env.COOKIE_SECURE !== 'false' });

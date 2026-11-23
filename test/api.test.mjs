@@ -12,7 +12,7 @@ class MemoryStore {
   async recordHeartbeat(id, value) { this.heartbeats.set(id, value); }
   async commitBatch(agentId, batch, startNsu) {
     const key = `${agentId}:${batch.batchId}`;
-    const digest = sha256(JSON.stringify({ company: batch.companyCnpj, source: batch.source, first: batch.firstNsu, last: batch.lastNsu, docs: batch.documents.map(x => [x.nsu, x.documentKey, x.sha256]) }));
+    const digest = sha256(JSON.stringify({ company: batch.companyCnpj, source: batch.source, first: batch.firstNsu, last: batch.lastNsu, docs: batch.documents.map(x => [x.nsu, x.documentKey, x.metadataSha256]) }));
     const previous = this.batches.get(key);
     if (previous) {
       if (previous !== digest) throw new ApiError(409, 'BATCH_CONFLICT', 'batchId reutilizado');
@@ -42,10 +42,12 @@ async function fixture(fn) {
 }
 
 function batch(overrides = {}) {
-  const xml = Buffer.from('<NFe>piloto</NFe>');
   return {
     batchId: 'batch-0001', companyCnpj: cnpj, source: 'NFE', firstNsu: '1', lastNsu: '1',
-    documents: [{ nsu: '1', documentKey: '12345678901234567890123456789012345678901234', xmlBase64: xml.toString('base64'), sha256: sha256(xml) }],
+    documents: [{ nsu: '1', documentKey: '12345678901234567890123456789012345678901234',
+      number: '103', issuedAt: '2026-11-23T10:00:00-03:00', competence: '2026-11',
+      providerCnpj: cnpj, recipientCnpj: null, amountCents: 12345,
+      status: 'active', municipalityCode: '3106200', eventType: 'issued' }],
     ...overrides
   };
 }
@@ -82,13 +84,22 @@ test('lote confirmado, repetição e conflito', async () => fixture(async ({ sto
   assert.equal(changed.status, 409);
 }));
 
-test('não aceita outro CNPJ, token inválido ou XML adulterado', async () => fixture(async ({ store, url }) => {
-  assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: batch({ companyCnpj: '00000000000000' }) })).status, 403);
+test('não aceita outro CNPJ, token inválido ou XML no lote de metadados', async () => fixture(async ({ store, url }) => {
+  const otherCompany = batch({ companyCnpj: '00000000000000' });
+  otherCompany.documents[0].providerCnpj = '00000000000000';
+  assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: otherCompany })).status, 403);
   assert.equal((await call(url, '/v1/agent/jobs', { auth: 'b'.repeat(64) })).status, 401);
   const corrupted = batch();
-  corrupted.documents[0].sha256 = '0'.repeat(64);
+  corrupted.documents[0].xmlBase64 = 'PE5GU2U+';
   assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: corrupted })).status, 400);
   assert.equal(store.batches.size, 0);
+}));
+
+test('aceita evento sem inventar valor e exige chave nacional de NFS-e', async () => fixture(async ({ url }) => {
+  const noJob = batch({ source: 'NFSE', documents: [{ nsu: '1', documentKey: '1'.repeat(50), eventType: 'cancelled' }] });
+  assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: noJob })).status, 403);
+  const badKey = batch({ documents: [{ ...batch().documents[0], documentKey: '1'.repeat(50) }] });
+  assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: badKey })).status, 400);
 }));
 
 test('não avança NSU com lacuna ou CNPJ/fonte sem tarefa ativa', async () => fixture(async ({ store, url }) => {
@@ -96,7 +107,7 @@ test('não avança NSU com lacuna ou CNPJ/fonte sem tarefa ativa', async () => f
   assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: gap })).body.error, 'NSU_OUT_OF_SEQUENCE');
   const incomplete = batch({ firstNsu: '1', lastNsu: '3' });
   assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: incomplete })).status, 400);
-  const noJob = batch({ source: 'NFSE' });
+  const noJob = batch({ source: 'NFSE', documents: [{ ...batch().documents[0], documentKey: '1'.repeat(50) }] });
   assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: noJob })).status, 403);
   assert.equal(store.checkpoints.size, 0);
 }));
@@ -119,7 +130,9 @@ test('agente cadastrado no banco só vê sua tarefa e pode ser revogado', async 
   try {
     assert.equal((await call(url, '/v1/agent/jobs')).body.jobs.length, 1);
     assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: batch() })).status, 201);
-    assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: batch({ companyCnpj: '00000000000000' }) })).status, 403);
+    const otherCompany = batch({ companyCnpj: '00000000000000' });
+    otherCompany.documents[0].providerCnpj = '00000000000000';
+    assert.equal((await call(url, '/v1/agent/batches', { method: 'POST', data: otherCompany })).status, 403);
     active = false;
     assert.equal((await call(url, '/v1/agent/jobs')).status, 401);
   } finally { await new Promise(resolve => server.close(resolve)); }

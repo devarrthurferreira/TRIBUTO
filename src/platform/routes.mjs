@@ -8,6 +8,7 @@ const SESSION_MS = 12 * 60 * 60_000;
 const CNPJ = /^\d{14}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const NSU = /^(0|[1-9]\d{0,14})$/;
+const MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/;
 
 function fail(status, code, message) { throw new ApiError(status, code, message); }
 function check(condition, field) { if (!condition) fail(400, 'INVALID_INPUT', `Campo inválido: ${field}`); }
@@ -49,6 +50,19 @@ function validCnpj(value) {
   return digits[12] === checksum(12, [5,4,3,2,9,8,7,6,5,4,3,2]) && digits[13] === checksum(13, [6,5,4,3,2,9,8,7,6,5,4,3,2]);
 }
 function cnpj(value) { check(validCnpj(value), 'cnpj'); return value; }
+function month(value, name) {
+  if (value === null) return null;
+  check(MONTH.test(value), name);
+  return value;
+}
+function pageNumber(query, key, defaultValue, maximum) {
+  const raw = query.get(key);
+  if (raw === null) return defaultValue;
+  check(/^[1-9]\d*$/.test(raw), key);
+  const parsed = Number(raw);
+  check(Number.isSafeInteger(parsed) && parsed <= maximum, key);
+  return parsed;
+}
 function cookieValue(req) {
   const match = (req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith(`${COOKIE}=`));
   const value = match?.slice(COOKIE.length + 1);
@@ -152,6 +166,32 @@ export function createPlatformRouter({ store, bootstrapTokenSha256, secureCookie
       if (req.method === 'GET' && route === '/dashboard') {
         return send(res, 200, { metrics: await store.dashboard(user), modules: MODULES.filter(x => canAccess(user, x.id)) });
       }
+      if (req.method === 'GET' && route === '/storage') {
+        requireAdmin(user);
+        return send(res, 200, await store.getStorageUsage());
+      }
+      const nfsePath = /^\/companies\/(\d{14})\/nfse(?:\/(summary|coverage))?$/.exec(route);
+      if (req.method === 'GET' && nfsePath) {
+        const companyCnpj = cnpj(nfsePath[1]);
+        if (!canAccess(user, 'fiscal') || !canAccessCompany(user, companyCnpj)) fail(403, 'FORBIDDEN', 'Sem acesso ao Fiscal desta empresa');
+        if (!await store.companyExists(companyCnpj)) fail(404, 'NOT_FOUND', 'Empresa não encontrada');
+        const query = new URL(req.url, 'http://localhost').searchParams;
+        if (nfsePath[2] === 'coverage') return send(res, 200, await store.getCompanyNfseCoverage(companyCnpj));
+        if (nfsePath[2] === 'summary') {
+          const from = month(query.get('from'), 'from');
+          const to = month(query.get('to'), 'to');
+          check(!from || !to || from <= to, 'from/to');
+          return send(res, 200, await store.getCompanyNfseSummary(companyCnpj, { from, to }));
+        }
+        const requestedMonth = month(query.get('month'), 'month');
+        const role = query.get('role');
+        const status = query.get('status');
+        check(role === null || ['issued', 'received'].includes(role), 'role');
+        check(status === null || ['active', 'cancelled', 'substituted', 'unknown'].includes(status), 'status');
+        const page = pageNumber(query, 'page', 1, 1000);
+        const limit = pageNumber(query, 'limit', 50, 100);
+        return send(res, 200, await store.listCompanyNfse(companyCnpj, { month: requestedMonth, role, status, page, limit }));
+      }
       if (req.method === 'GET' && route === '/fiscal/documents') {
         if (!canAccess(user, 'fiscal')) fail(403, 'FORBIDDEN', 'Sem acesso ao Fiscal');
         const query = new URL(req.url, 'http://localhost').searchParams;
@@ -162,22 +202,6 @@ export function createPlatformRouter({ store, bootstrapTokenSha256, secureCookie
         check(Number.isSafeInteger(page) && page >= 1 && page <= 1000, 'page');
         check(Number.isSafeInteger(limit) && limit >= 1 && limit <= 100, 'limit');
         return send(res, 200, await store.listFiscalDocuments(user.role === 'admin' ? null : user.companyCnpjs, companyCnpj, page, limit));
-      }
-      const xmlPath = /^\/fiscal\/documents\/([^/]+)\/xml$/.exec(route);
-      if (req.method === 'GET' && xmlPath) {
-        let documentId;
-        try { documentId = decodeURIComponent(xmlPath[1]); } catch { fail(400, 'INVALID_INPUT', 'Identificador inválido'); }
-        check(/^\d{14}:(?:NFE|NFSE):(0|[1-9]\d{0,14})$/.test(documentId), 'documentId');
-        if (!canAccess(user, 'fiscal')) fail(403, 'FORBIDDEN', 'Sem acesso ao Fiscal');
-        const document = await store.getFiscalDocument(documentId);
-        if (!document) fail(404, 'NOT_FOUND', 'Documento não encontrado');
-        if (!canAccessCompany(user, document.companyCnpj)) fail(403, 'FORBIDDEN', 'Sem acesso à empresa');
-        const xml = store.decryptFiscalXml(document);
-        await store.audit('fiscal.xml.download', user._id, document._id, { companyCnpj: document.companyCnpj });
-        const fileName = `${document.companyCnpj}-${document.source}-${document.nsu}.xml`;
-        res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="${fileName}"`, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
-        res.end(xml);
-        return true;
       }
       if (req.method === 'GET' && route === '/companies') {
         const companies = await store.listCompanies(user.role === 'admin' ? null : user.companyCnpjs);

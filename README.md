@@ -1,38 +1,42 @@
 # TRIBUTO · Maximum Contábil
 
-Plataforma de trabalho consultivo com painel web, API e agente para o servidor Windows da Maximum. O painel centraliza empresas, usuários e permissões por módulo. O agente se comunica por HTTPS de saída e mantém a fila de documentos no Windows até a API confirmar a gravação.
+Painel consultivo em **Hostinger Web Apps (Node.js)**, API e agente para o servidor Windows 24 horas da Maximum. O sistema organiza empresas, equipe e permissões por módulo/CNPJ. A área Fiscal oferece uma ficha por empresa com NFS-e prestadas e tomadas, filtros, totais por competência e indicação do último lote recebido. Os registros são **metadados** no MySQL criado na própria Hostinger; XML, PDF e certificado A1 não são enviados ao banco.
 
-## O que já funciona
+## Estado das funcionalidades
 
-| Área | Entrega atual | Próxima integração |
+| Área | Implementado | Ainda necessário |
 | --- | --- | --- |
-| Acesso | Configuração única do primeiro administrador, login, sessões, troca de senha, permissões por módulo e CNPJ, auditoria de ações. | Convites e recuperação de acesso, se necessários. |
-| Empresas/equipe | Cadastro de empresas, usuários, carteiras e permissões. | Importação da carteira existente da Maximum. |
-| Fiscal | Listagem e download protegido dos XMLs recebidos pela API, tarefas de acompanhamento e visão da saúde do agente. | Conectores oficiais NF-e/NFS-e, eventos, solicitações de cancelamento e análises IBS/CBS. |
-| DP, Contábil, Societário, Financeiro, Gestão | Espaços e atividades vinculadas a empresa e responsável, com permissões separadas. | Fluxos e indicadores específicos de cada setor. |
-| Agente | Cadastro e revogação pelo administrador, token exibido uma vez, heartbeat, fila persistente, confirmação de lote, quarentena de arquivo inválido. | Captura fiscal com A1/procuração e conectores municipais. |
+| Acesso | Primeiro administrador, login, sessões, troca de senha, permissões por módulo e empresa, trilha de auditoria. | Processo de convites/recuperação, se desejado. |
+| Empresas | Cadastro e ficha individual com acesso controlado. | Importação da carteira atual. |
+| Fiscal | API de metadados com checkpoint e histórico de eventos; listagem de NFS-e por empresa; resumo mensal de prestadas/tomadas, valores e cancelamentos; sinal de cobertura. | Homologar conector de coleta autorizado, conciliação com fonte independente, fluxos de solicitação de cancelamento e análise IBS/CBS. |
+| DP, Contábil, Societário, Financeiro e Gestão | Espaços, atividades e permissões separados. | Fluxos específicos de cada departamento. |
+| Agente | Token revogável, heartbeat, fila local, retransmissão idempotente e confirmação de lotes. | Ativação homologada da coleta com A1/procuração para cada fonte. |
 
-**A coleta de notas fiscais ainda não foi implementada.** O agente atual transporta apenas lotes que outro componente inserir em sua fila. Ele não emite, manifesta ou cancela notas. O A1 e sua senha permanecerão no Windows quando os conectores forem adicionados.
+**A consulta automática a portais ainda não está ativa em produção.** O agente de transporte recebe trabalhos autorizados e envia lotes preparados localmente. Um conector do ADN da NFS-e fica separado e deve passar por configuração e homologação antes de ser usado com empresas reais. O sistema não emite, manifesta ou cancela notas.
 
 ## Arquitetura
 
 ```mermaid
 flowchart LR
-  P["Painel e API · Hostinger"] --> B["MongoDB externo"]
-  A["Agente · Windows 24h"] -->|"HTTPS de saída"| P
-  A -.-> F["SEFAZ / NFS-e · futuro"]
+  W["Agente · Windows 24h"] -->|"HTTPS de saída"| P["Painel e API · Hostinger Web Apps"]
+  P --> D["MySQL · Hostinger"]
+  W -.->|"Conector habilitado após homologação"| F["Fonte fiscal autorizada"]
 ```
 
-O painel e a API rodam no mesmo processo Node.js. Dados de usuários, empresas, atividades e XMLs ficam no MongoDB com backup; os XMLs são cifrados antes de gravar no banco. O token do agente fica no Windows com DPAPI e permissões restritas. A publicação na Hostinger não armazena PFX, fila nem arquivos persistentes.
+O painel e a API usam o mesmo processo Node.js. O banco guarda usuários, empresas, atividades e **chave/dados mínimos de cada nota e evento**, separados por CNPJ e fonte; o agente mantém sua fila no Windows até a confirmação do banco. A1 e senha permanecem no servidor Windows, com acesso restrito à conta de serviço apropriada. Não use pastas da publicação para arquivos persistentes.
 
-## Publicação e instalação
+## Capacidade: 500 empresas e 50 GB
 
-1. Configure um MongoDB com transações e as variáveis secretas descritas em [docs/HOSTINGER.md](docs/HOSTINGER.md).
-2. Importe este repositório privado em **Hostinger Web Apps**, com Node 22/24 e `src/api/main.mjs` como arquivo de entrada. O painel será servido na raiz do domínio e a API em `/v1/`.
-3. Abra o domínio em HTTPS, use o código de configuração inicial para criar o administrador e cadastre empresas e acessos.
-4. Crie o agente no painel, copie o token exibido uma vez e instale no servidor Windows conforme [docs/WINDOWS-INSTALL.md](docs/WINDOWS-INSTALL.md).
-5. Confira o heartbeat em **Agentes de coleta**. As notas só aparecerão após integrar um conector autorizado ou enviar lotes válidos à API.
+O número de empresas não determina sozinho o espaço necessário: importam o número de notas por mês, os campos guardados, eventos, índices, auditoria e retenção. **Os 50 GB anunciados como espaço do site não equivalem à cota do banco MySQL.** Em planos como o Unlimited, a cota do banco pode ser de **3 GB**; confirme o limite exato do seu plano no hPanel antes de carregar a carteira. Como referência bruta, 500 empresas × 100 notas/mês × 12 meses × 1 KB por registro dão cerca de 600 MB/ano **antes** de índices e histórico. O uso real deve ser medido com um piloto, alertas de capacidade e backups testados. Só guardar metadados reduz muito o volume, mas não garante capacidade para qualquer volume de 500 empresas.
 
-Para desenvolvimento local, configure `MONGODB_URI`, `MONGODB_DB`, `XML_ENCRYPTION_KEY`, `BOOTSTRAP_ADMIN_TOKEN_SHA256`, `COOKIE_SECURE=false`, `HOST` e `PORT` no ambiente do processo; o Node não lê `.env` automaticamente. Use `npm ci`, `npm test` e `npm start`.
+## Implantação
 
-Leia [docs/API.md](docs/API.md) para o protocolo de sincronização e [docs/AGENT.md](docs/AGENT.md) para a operação da fila. Nenhum certificado, senha ou XML real acompanha o código.
+1. Crie um banco **MySQL** e usuário restrito no hPanel; configure as variáveis de ambiente secretas em [docs/HOSTINGER.md](docs/HOSTINGER.md).
+2. Importe este repositório privado em **Hostinger Web Apps**, com Node.js e `src/api/main.mjs` como arquivo de entrada. O painel ocupa a raiz do domínio e a API fica em `/v1/`.
+3. Abra o domínio em HTTPS, crie o primeiro administrador com o código de configuração e cadastre empresas e acessos.
+4. Crie o agente no painel e instale-o no Windows conforme [docs/WINDOWS-INSTALL.md](docs/WINDOWS-INSTALL.md).
+5. Confirme o heartbeat e faça um piloto com uma empresa e dados de homologação; confira chaves, totais por competência, cobertura e tamanho do banco antes de ampliar.
+
+Para desenvolvimento local, configure `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`, `BOOTSTRAP_ADMIN_TOKEN_SHA256`, `COOKIE_SECURE=false`, `HOST` e `PORT` no ambiente do processo. O Node não carrega `.env` automaticamente. Execute `npm ci`, `npm test` e `npm start`. O esquema é criado pelo aplicativo com `CREATE TABLE IF NOT EXISTS`; em produção, o usuário do banco precisa dessa permissão na inicialização inicial. Depois de criado o esquema, pode-se restringi-la conforme a operação.
+
+Leia [docs/API.md](docs/API.md) para o contrato de lotes e [docs/AGENT.md](docs/AGENT.md) para o serviço Windows. Nenhum segredo ou nota real acompanha o código.

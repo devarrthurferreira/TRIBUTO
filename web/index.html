@@ -132,6 +132,7 @@
             <article class="surface"><div class="surface-header"><div><p class="eyebrow">ACOMPANHAMENTO</p><h3>Próximas atividades</h3></div></div><div class="empty-panel"><span class="empty-graphic" aria-hidden="true">◷</span><strong>Sem atividades para mostrar</strong><p>As rotinas aparecerão aqui à medida que cada módulo for conectado.</p></div></article>
             <article class="surface"><div class="surface-header"><div><p class="eyebrow">INTEGRAÇÃO</p><h3>Saúde da coleta</h3></div><button class="text-button" type="button" data-go="agents">Ver agentes ↗</button></div><div id="overviewAgentHealth" class="empty-panel compact"><span class="empty-graphic" aria-hidden="true">⌁</span><strong>Nenhum agente vinculado</strong><p>O servidor Windows aparecerá aqui após o cadastro.</p></div></article>
           </div>
+          <article id="storageOverview" class="surface section-spaced" hidden><div class="surface-header"><div><p class="eyebrow">ADMINISTRAÇÃO</p><h3>Uso do banco de dados</h3></div></div><div class="storage-summary"><strong id="storageUsage">—</strong><span id="storageDescription">Medindo tabelas e índices...</span></div><p class="small-muted">Estimativa das tabelas deste banco. Confira a cota real e o espaço disponível no hPanel da Hostinger.</p></article>
         </section>
 
         <section class="view" id="view-fiscal" aria-labelledby="fiscalTitle" hidden>
@@ -141,7 +142,8 @@
             <article class="feature-card"><span class="feature-icon teal">◇</span><h3>NFS-e</h3><p>Serviços recebidos e prestados conforme a cobertura do ambiente nacional e dos municípios.</p><span class="feature-tag">Integração planejada</span></article>
             <article class="feature-card"><span class="feature-icon amber">◷</span><h3>Cancelamentos</h3><p>Solicite ao emissor, acompanhe o prazo e confira o evento oficial da nota.</p><span class="feature-tag">Fluxo em preparação</span></article>
           </div>
-          <article class="surface section-spaced"><div class="surface-header"><div><p class="eyebrow">DOCUMENTOS</p><h3>Notas fiscais recebidas pela API</h3></div><label class="work-filter"><span class="sr-only">Filtrar empresa</span><select id="fiscalCompanyFilter" aria-label="Filtrar empresa nas notas"></select></label></div><div id="fiscalDocumentsList" class="list-content" aria-live="polite"></div></article>
+          <article class="surface section-spaced"><div class="surface-header"><div><p class="eyebrow">CARTEIRA FISCAL</p><h3>NFS-e por empresa</h3></div><button type="button" class="text-button" data-go="companies">Ver empresas ↗</button></div><div id="fiscalCompanyQuickList" class="list-content" aria-live="polite"></div></article>
+          <article class="surface section-spaced"><div class="surface-header"><div><p class="eyebrow">DOCUMENTOS</p><h3>Chaves e dados fiscais recebidos pela API</h3></div><label class="work-filter"><span class="sr-only">Filtrar empresa</span><select id="fiscalCompanyFilter" aria-label="Filtrar empresa nas notas"></select></label></div><div id="fiscalDocumentsList" class="list-content" aria-live="polite"></div></article>
         </section>
 
         <section class="view" id="view-dp" aria-labelledby="dpTitle" hidden>
@@ -175,6 +177,19 @@
         <section class="view" id="view-companies" aria-labelledby="companiesTitle" hidden>
           <div class="page-heading"><div><p class="eyebrow">ORGANIZAÇÃO</p><h1 id="companiesTitle">Empresas</h1><p>Uma carteira central, com acesso definido por usuário e módulo.</p></div><button id="newCompanyButton" class="button button-primary" type="button">+ Nova empresa</button></div>
           <article class="surface"><div class="list-toolbar"><label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">Buscar empresa</span><input id="companySearch" type="search" placeholder="Buscar por nome ou CNPJ"></label><span id="companiesCount" class="list-count">— empresas</span></div><div id="companiesList" class="list-content" aria-live="polite"></div></article>
+        </section>
+
+        <section class="view" id="view-company-detail" aria-labelledby="companyDetailTitle" hidden>
+          <div class="company-back"><button id="backToCompanies" type="button" class="text-button">← Voltar às empresas</button></div>
+          <div class="page-heading company-heading"><div><p class="eyebrow">FICHA DA EMPRESA · FISCAL</p><h1 id="companyDetailTitle">Empresa</h1><p id="companyDetailCnpj">—</p></div><span class="status-pill status-neutral">NFS-e por CNPJ</span></div>
+          <div id="companyCoverage" class="coverage-banner" role="status">Carregando informações de cobertura...</div>
+          <div class="company-metrics">
+            <article class="stat-card"><span class="stat-caption">PRESTADAS OBSERVADAS</span><strong id="nfseIssuedCount">—</strong><span id="nfseIssuedAmount">—</span></article>
+            <article class="stat-card"><span class="stat-caption">TOMADAS OBSERVADAS</span><strong id="nfseReceivedCount">—</strong><span id="nfseReceivedAmount">—</span></article>
+            <article class="stat-card"><span class="stat-caption">CANCELADAS NO PERÍODO</span><strong id="nfseCancelledCount">—</strong><span>Conforme os registros recebidos</span></article>
+          </div>
+          <article class="surface company-section"><div class="surface-header"><div><p class="eyebrow">COMPARAR COMPETÊNCIAS</p><h3>Serviços prestados e tomados</h3></div><div class="company-period"><label>De <input id="nfseSummaryFrom" type="month" aria-label="Competência inicial"></label><label>Até <input id="nfseSummaryTo" type="month" aria-label="Competência final"></label><button id="nfseCompareButton" type="button" class="button button-quiet">Comparar</button></div></div><div id="nfseComparison" class="company-comparison" aria-live="polite"></div><p class="company-disclaimer">Valores consideram apenas notas válidas; as contagens incluem também canceladas. Prestadas e tomadas são visões diferentes, e a diferença entre elas não representa imposto devido. Uma competência sem registros pode indicar falta de cobertura da fonte.</p></article>
+          <article class="surface company-section"><div class="surface-header"><div><p class="eyebrow">NOTAS DE SERVIÇO</p><h3>Chaves e dados da empresa</h3></div><span id="nfseCount" class="list-count">— notas</span></div><div class="nfse-filter-row"><label>Competência <input id="nfseMonthFilter" type="month" aria-label="Filtrar competência das NFS-e"></label><label>Papel <select id="nfseRoleFilter" aria-label="Filtrar papel nas NFS-e"><option value="">Prestadas e tomadas</option><option value="issued">Prestadas</option><option value="received">Tomadas</option></select></label><label>Situação <select id="nfseStatusFilter" aria-label="Filtrar situação das NFS-e"><option value="">Todas</option><option value="active">Válidas</option><option value="cancelled">Canceladas</option></select></label><button id="nfseClearFilters" type="button" class="text-button">Limpar filtros</button></div><div id="nfseCompanyList" class="list-content" aria-live="polite"></div><div id="nfsePagination" class="nfse-pagination" hidden><button id="nfsePreviousPage" type="button" class="button button-quiet">Anterior</button><span id="nfsePageLabel">Página 1</span><button id="nfseNextPage" type="button" class="button button-quiet">Próxima</button></div></article>
         </section>
 
         <section class="view" id="view-users" aria-labelledby="usersTitle" hidden>
@@ -267,6 +282,12 @@
       <p id="passwordError" class="form-message" role="alert" hidden></p>
       <div class="dialog-actions"><button type="button" class="button button-quiet close-dialog">Cancelar</button><button type="submit" class="button button-primary">Salvar senha</button></div>
     </form>
+  </dialog>
+  <dialog id="nfseDetailDialog" class="form-dialog nfse-detail-dialog" aria-labelledby="nfseDetailTitle">
+    <div class="dialog-header"><div><p class="eyebrow">NOTA DE SERVIÇO</p><h2 id="nfseDetailTitle">Detalhes da NFS-e</h2></div><button type="button" class="icon-button close-dialog" aria-label="Fechar">×</button></div>
+    <p class="dialog-description">Dados recebidos e armazenados para consulta. O XML e o PDF não fazem parte deste registro.</p>
+    <dl id="nfseDetailFields" class="nfse-detail-fields"></dl>
+    <div class="dialog-actions"><button type="button" class="button button-primary close-dialog">Fechar</button></div>
   </dialog>
 </body>
 </html>

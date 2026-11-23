@@ -30,6 +30,7 @@ class MemoryPlatformStore {
   async companyExists(key) { return this.companies.has(key); }
   async createCompany(company) { this.companies.set(company.cnpj, company); }
   async dashboard(user) { return { companies: (await this.listCompanies(user.role === 'admin' ? null : user.companyCnpjs)).length, users: user.role === 'admin' ? this.users.size : null, documents: user.role === 'admin' || user.moduleGrants.fiscal ? [...this.documents.values()].filter(x => user.role === 'admin' || user.companyCnpjs.includes(x.companyCnpj)).length : null, workItemsOpen: [...this.items.values()].filter(x => x.status !== 'done' && (user.role === 'admin' || user.companyCnpjs.includes(x.companyCnpj) && user.moduleGrants[x.module])).length, agentsOnline: 0 }; }
+  async getStorageUsage() { return { bytes: 4096, tableCount: 2, approximate: true, tables: [] }; }
   async listAgents() { return [...this.agents.values()].map(x => ({ id: x._id, name: x.name, active: x.active, assignments: x.assignments })); }
   async createAgent(agent) { this.agents.set(agent._id, agent); }
   async revokeAgent(id) { const value = this.agents.get(id); if (value) value.active = false; return value; }
@@ -38,9 +39,32 @@ class MemoryPlatformStore {
   async getWorkItem(id) { return this.items.get(id); }
   async createWorkItem(item) { this.items.set(item._id, item); }
   async updateWorkItem(id, changes) { const value = { ...this.items.get(id), ...changes }; this.items.set(id, value); return value; }
-  async listFiscalDocuments(allowed, cnpj, page, limit) { const documents = [...this.documents.values()].filter(x => (allowed === null || allowed.includes(x.companyCnpj)) && (!cnpj || x.companyCnpj === cnpj)).slice((page - 1) * limit, page * limit).map(({ _id, companyCnpj, source, nsu, documentKey, sha256: hash, receivedAt }) => ({ id: _id, companyCnpj, source, nsu, documentKey, sha256: hash, receivedAt })); return { documents, page, hasMore: false }; }
-  async getFiscalDocument(id) { return this.documents.get(id); }
-  decryptFiscalXml(value) { return value.xml; }
+  async listFiscalDocuments(allowed, cnpj, page, limit) {
+    const rows = [...this.documents.values()].filter(x => (allowed === null || allowed.includes(x.companyCnpj)) && (!cnpj || x.companyCnpj === cnpj));
+    const documents = rows.slice((page - 1) * limit, page * limit).map(({ _id, companyCnpj, source, nsu, documentKey, receivedAt }) => ({ id: _id, companyCnpj, source, nsu, documentKey, receivedAt }));
+    return { documents, page, hasMore: rows.length > page * limit };
+  }
+  async listCompanyNfse(cnpj, { month, role, status, page, limit }) {
+    const rows = [...this.documents.values()].filter(x => x.companyCnpj === cnpj && x.source === 'NFSE' && (!month || x.competence === month) && (!role || x.role === role) && (!status || x.status === status));
+    return { documents: rows.slice((page - 1) * limit, page * limit), page, hasMore: rows.length > page * limit };
+  }
+  async getCompanyNfseSummary(cnpj, { from, to }) {
+    const rows = [...this.documents.values()].filter(x => x.companyCnpj === cnpj && x.source === 'NFSE' && (!from || x.competence >= from) && (!to || x.competence <= to));
+    const summarize = (items) => ({
+      issuedCount: items.filter(x => x.role === 'issued').length,
+      receivedCount: items.filter(x => x.role === 'received').length,
+      cancelledCount: items.filter(x => x.status === 'cancelled').length,
+      issuedAmountCents: String(items.filter(x => x.role === 'issued').reduce((sum, x) => sum + Number(x.amountCents), 0)),
+      receivedAmountCents: String(items.filter(x => x.role === 'received').reduce((sum, x) => sum + Number(x.amountCents), 0)),
+      issuedActiveAmountCents: String(items.filter(x => x.role === 'issued' && x.status === 'active').reduce((sum, x) => sum + Number(x.amountCents), 0)),
+      receivedActiveAmountCents: String(items.filter(x => x.role === 'received' && x.status === 'active').reduce((sum, x) => sum + Number(x.amountCents), 0)),
+    });
+    return { summary: summarize(rows), byMonth: [...new Set(rows.map(x => x.competence))].sort().map(month => ({ month, ...summarize(rows.filter(x => x.competence === month)) })) };
+  }
+  async getCompanyNfseCoverage(cnpj) {
+    const rows = [...this.documents.values()].filter(x => x.companyCnpj === cnpj && x.source === 'NFSE');
+    return { source: 'NFSE', lastNsu: rows.at(-1)?.nsu ?? null, lastSeenAt: rows.at(-1)?.receivedAt ?? null, status: rows.length ? 'received' : 'never_collected' };
+  }
   async audit(action, actorId, subject) { this.auditEntries.push({ action, actorId, subject }); }
 }
 
@@ -74,6 +98,7 @@ test('primeiro admin, CSRF, permissões por módulo e empresa, tarefas', async (
   assert.equal(initial.body.setupRequired, true);
   const admin = await setup(url);
   assert.equal((await request(url, '/v1/platform/session', { cookie: admin.cookie })).body.user.role, 'admin');
+  assert.equal((await request(url, '/v1/platform/storage', { cookie: admin.cookie })).body.bytes, 4096);
   assert.equal((await request(url, '/v1/platform/setup', { method: 'POST', data: { setupToken } })).status, 409);
   const denied = await request(url, '/v1/platform/companies', { method: 'POST', cookie: admin.cookie, data: { cnpj: CNPJ_A, name: 'Empresa A' } });
   assert.equal(denied.status, 403);
@@ -88,6 +113,7 @@ test('primeiro admin, CSRF, permissões por módulo e empresa, tarefas', async (
   assert.deepEqual((await request(url, '/v1/platform/companies', member)).body.companies.map(x => x.cnpj), [CNPJ_A]);
   assert.equal((await request(url, '/v1/platform/dashboard', member)).body.metrics.documents, null);
   assert.equal((await request(url, '/v1/platform/fiscal/documents', member)).status, 403);
+  assert.equal((await request(url, '/v1/platform/storage', member)).status, 403);
   assert.equal((await request(url, `/v1/platform/work-items?companyCnpj=${CNPJ_B}`, member)).status, 403);
   assert.equal((await request(url, '/v1/platform/work-items', { method: 'POST', ...member, data: { module: 'dp', companyCnpj: CNPJ_A, title: 'Admissão' } })).status, 403);
   const created = await request(url, '/v1/platform/work-items', { method: 'POST', cookie: admin.cookie, csrf: admin.csrf, data: { module: 'dp', companyCnpj: CNPJ_A, title: 'Conferir admissão' } });
@@ -97,7 +123,7 @@ test('primeiro admin, CSRF, permissões por módulo e empresa, tarefas', async (
   assert.ok(store.auditEntries.some(x => x.action === 'work_item.create'));
 }));
 
-test('token do agente é exibido uma vez e XML respeita escopo', async () => fixture(async ({ store, url }) => {
+test('token do agente é exibido uma vez e documentos não expõem XML', async () => fixture(async ({ store, url }) => {
   const admin = await setup(url);
   for (const cnpj of [CNPJ_A, CNPJ_B]) await request(url, '/v1/platform/companies', { method: 'POST', cookie: admin.cookie, csrf: admin.csrf, data: { cnpj, name: cnpj } });
   const created = await request(url, '/v1/platform/agents', { method: 'POST', cookie: admin.cookie, csrf: admin.csrf, data: { name: 'Servidor Windows', assignments: [{ companyCnpj: CNPJ_A, source: 'NFE', startNsu: '0' }] } });
@@ -108,13 +134,11 @@ test('token do agente é exibido uma vez e XML respeita escopo', async () => fix
   assert.equal(listed.body.agents.length, 1);
   assert.equal(JSON.stringify(listed.body).includes(created.body.token), false);
   const id = `${CNPJ_A}:NFE:1`;
-  store.documents.set(id, { _id: id, companyCnpj: CNPJ_A, source: 'NFE', nsu: '1', documentKey: '1234', sha256: 'hash', xml: Buffer.from('<NFe/>'), receivedAt: new Date() });
+  store.documents.set(id, { _id: id, companyCnpj: CNPJ_A, source: 'NFE', nsu: '1', documentKey: '1234', receivedAt: new Date() });
   const fiscal = await request(url, '/v1/platform/fiscal/documents', { cookie: admin.cookie });
   assert.equal(fiscal.body.documents.length, 1);
-  const download = await request(url, `/v1/platform/fiscal/documents/${encodeURIComponent(id)}/xml`, { cookie: admin.cookie });
-  assert.equal(download.status, 200);
-  assert.equal(download.body, '<NFe/>');
-  assert.ok(store.auditEntries.some(x => x.action === 'fiscal.xml.download'));
+  assert.equal(JSON.stringify(fiscal.body).includes('xml'), false);
+  assert.equal((await request(url, `/v1/platform/fiscal/documents/${encodeURIComponent(id)}/xml`, { cookie: admin.cookie })).status, 404);
 }));
 
 test('troca senha e limita tentativas de login no armazenamento', async () => fixture(async ({ url }) => {
@@ -125,7 +149,7 @@ test('troca senha e limita tentativas de login no armazenamento', async () => fi
   assert.equal(changed.status, 200);
 }));
 
-test('Fiscal filtra XML por carteira e rejeita CNPJ inválido', async () => fixture(async ({ store, url }) => {
+test('Fiscal isola dados de NFS-e por empresa, filtra competência e respeita acesso ao módulo', async () => fixture(async ({ store, url }) => {
   const admin = await setup(url);
   assert.equal((await request(url, '/v1/platform/companies', { method: 'POST', cookie: admin.cookie, csrf: admin.csrf, data: { cnpj: '12345678000190', name: 'CNPJ errado' } })).status, 400);
   for (const cnpj of [CNPJ_A, CNPJ_B]) await request(url, '/v1/platform/companies', { method: 'POST', cookie: admin.cookie, csrf: admin.csrf, data: { cnpj, name: cnpj } });
@@ -133,12 +157,34 @@ test('Fiscal filtra XML por carteira e rejeita CNPJ inválido', async () => fixt
   assert.equal(reader.status, 201);
   const login = await request(url, '/v1/platform/login', { method: 'POST', data: { email: 'fiscal@maximumcontabil.com.br', password: 'senha-fiscal-longa-789' } });
   const cookie = login.cookie;
-  for (const cnpj of [CNPJ_A, CNPJ_B]) {
-    const id = `${cnpj}:NFE:1`;
-    store.documents.set(id, { _id: id, companyCnpj: cnpj, source: 'NFE', nsu: '1', documentKey: cnpj, sha256: 'hash', xml: Buffer.from('<NFe/>') });
-  }
+  const notes = [
+    { companyCnpj: CNPJ_A, source: 'NFSE', nsu: '1', documentKey: 'A'.repeat(50), role: 'issued', status: 'active', competence: '2026-09', amountCents: '12500', issuedAt: '2026-09-10T12:00:00Z' },
+    { companyCnpj: CNPJ_A, source: 'NFSE', nsu: '2', documentKey: 'B'.repeat(50), role: 'received', status: 'cancelled', competence: '2026-10', amountCents: '9900', issuedAt: '2026-10-10T12:00:00Z' },
+    { companyCnpj: CNPJ_B, source: 'NFSE', nsu: '1', documentKey: 'C'.repeat(50), role: 'issued', status: 'active', competence: '2026-09', amountCents: '500000', issuedAt: '2026-09-10T12:00:00Z' },
+  ];
+  notes.forEach(note => store.documents.set(`${note.companyCnpj}:${note.nsu}`, { _id: `${note.companyCnpj}:${note.nsu}`, ...note, receivedAt: new Date() }));
   const listed = await request(url, '/v1/platform/fiscal/documents', { cookie });
-  assert.deepEqual(listed.body.documents.map(x => x.companyCnpj), [CNPJ_A]);
-  assert.equal((await request(url, `/v1/platform/fiscal/documents/${encodeURIComponent(`${CNPJ_B}:NFE:1`)}/xml`, { cookie })).status, 403);
-  assert.equal((await request(url, `/v1/platform/fiscal/documents/${encodeURIComponent(`${CNPJ_A}:NFE:1`)}/xml`, { cookie })).status, 200);
+  assert.deepEqual(listed.body.documents.map(x => x.companyCnpj), [CNPJ_A, CNPJ_A]);
+  const query = await request(url, `/v1/platform/companies/${CNPJ_A}/nfse?month=2026-09&role=issued&status=active&page=1&limit=50`, { cookie });
+  assert.equal(query.status, 200);
+  assert.deepEqual(query.body.documents.map(x => x.documentKey), ['A'.repeat(50)]);
+  const cancelled = await request(url, `/v1/platform/companies/${CNPJ_A}/nfse?status=cancelled`, { cookie });
+  assert.deepEqual(cancelled.body.documents.map(x => x.documentKey), ['B'.repeat(50)]);
+  const summary = await request(url, `/v1/platform/companies/${CNPJ_A}/nfse/summary?from=2026-09&to=2026-10`, { cookie });
+  assert.equal(summary.body.summary.issuedCount, 1);
+  assert.equal(summary.body.summary.receivedCount, 1);
+  assert.equal(summary.body.summary.cancelledCount, 1);
+  assert.equal(summary.body.summary.receivedActiveAmountCents, '0');
+  assert.deepEqual(summary.body.byMonth.map(x => x.month), ['2026-09', '2026-10']);
+  const coverage = await request(url, `/v1/platform/companies/${CNPJ_A}/nfse/coverage`, { cookie });
+  assert.equal(coverage.body.status, 'received');
+  assert.equal((await request(url, `/v1/platform/companies/${CNPJ_B}/nfse`, { cookie })).status, 403);
+  assert.equal((await request(url, `/v1/platform/companies/${CNPJ_B}/nfse/summary?from=2026-09&to=2026-10`, { cookie })).status, 403);
+  assert.equal((await request(url, `/v1/platform/companies/${CNPJ_B}/nfse/coverage`, { cookie })).status, 403);
+  assert.equal((await request(url, `/v1/platform/companies/${CNPJ_A}/nfse?month=2026-13`, { cookie })).status, 400);
+  assert.equal((await request(url, `/v1/platform/companies/${CNPJ_A}/nfse?status=invalid`, { cookie })).status, 400);
+  const dpMember = await request(url, '/v1/platform/users', { method: 'POST', cookie: admin.cookie, csrf: admin.csrf, data: { name: 'Pessoa DP', email: 'dp2@maximumcontabil.com.br', password: 'senha-dp-12234567890', role: 'member', companyCnpjs: [CNPJ_A], moduleGrants: { dp: 'view' } } });
+  assert.equal(dpMember.status, 201);
+  const dpLogin = await request(url, '/v1/platform/login', { method: 'POST', data: { email: 'dp2@maximumcontabil.com.br', password: 'senha-dp-12234567890' } });
+  assert.equal((await request(url, `/v1/platform/companies/${CNPJ_A}/nfse`, { cookie: dpLogin.cookie })).status, 403);
 }));
