@@ -1,0 +1,15 @@
+{
+  "name": "tributo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "api": "node src/api/main.mjs",
+    "agent": "node src/agent/agent.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "mongodb": "^6.0.0"
+  }
+}
