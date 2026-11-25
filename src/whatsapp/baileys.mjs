@@ -21,6 +21,8 @@ const MEDIA = Object.freeze({ imageMessage: ['image', 'Imagem recebida'], audioM
   stickerMessage: ['sticker', 'Figurinha recebida'] });
 const CREDS = 'credentials';
 const MAIN = 'main';
+// Advisory locks are server-wide, so use the current database as part of the lease key.
+const LEASE_KEY_SQL = "CONCAT('central-baileys:', LEFT(SHA2(CONCAT(DATABASE(), ':', ?), 256), 40))";
 
 export function readBaileysConfig(env = process.env) {
   const { WHATSAPP_MODE: mode, WHATSAPP_SECTOR: sector, WHATSAPP_BAILEYS_AUTH_KEY: key } = env;
@@ -131,7 +133,6 @@ function bounded(task, ms) {
 
 export function createBaileysBridge({ config, store, pool, logger = console,
   loadLibrary = () => import('@whiskeysockets/baileys'), renderQr = (value) => qrCode.toDataURL(value, { width: 280, margin: 3 }) }) {
-  const lockName = `central-baileys:${config.sector}`;
   const transportLogger = pino({ level: 'silent' });
   let library, authStore, lease, leaseTimer, socket, retry, pairingTimer, accountPhone, qr;
   let state = 'disconnected';
@@ -174,7 +175,7 @@ export function createBaileysBridge({ config, store, pool, logger = console,
     lease = null;
     clearInterval(leaseTimer);
     if (!executor) return;
-    try { await executor.execute('SELECT RELEASE_LOCK(?)', [lockName]); }
+    try { await executor.execute(`SELECT RELEASE_LOCK(${LEASE_KEY_SQL})`, [config.sector]); }
     catch { executor.destroy(); }
     finally { executor.release(); }
   }
@@ -183,7 +184,7 @@ export function createBaileysBridge({ config, store, pool, logger = console,
     if (lease) return true;
     const executor = await pool.getConnection();
     try {
-      const [[row]] = await executor.execute('SELECT GET_LOCK(?, 0) claimed', [lockName]);
+      const [[row]] = await executor.execute(`SELECT GET_LOCK(${LEASE_KEY_SQL}, 0) claimed`, [config.sector]);
       if (Number(row.claimed) !== 1) {
         executor.release();
         return false;
