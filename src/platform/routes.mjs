@@ -233,7 +233,7 @@ async function validateTaskAssignee(store, assigneeId, module, companyCnpj) {
   }
 }
 
-export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha256, secureCookies = true, logger = console }) {
+export function createPlatformRouter({ store, chat, whatsapp, club, bootstrapTokenSha256, secureCookies = true, logger = console }) {
   function loginKey(req, address) { return sha256(`${req.socket.remoteAddress || 'unknown'}:${address}`); }
   async function startSession(res, user) {
     const token = newSecret();
@@ -291,6 +291,9 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
       }
       if (whatsapp && (route === '/whatsapp' || route.startsWith('/whatsapp/'))) {
         return await whatsapp.handleHttp({ req, res, route, user, send, readBody: body });
+      }
+      if (club && (route === '/club' || route.startsWith('/club/'))) {
+        return await club.handleHttp({ req, res, route, user, send, readBody: body, requireAdmin, logger });
       }
       if (req.method === 'POST' && route === '/logout') {
         await store.deleteSession(session._id);

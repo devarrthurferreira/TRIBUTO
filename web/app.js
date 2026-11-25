@@ -3,6 +3,7 @@ import { mountPortal, setChatNotification } from './portal.js';
 import { mountSectorNavigation } from './sectors.js';
 import { mountUserWizard } from './user-wizard.js';
 import { mountMarketingTasks } from './marketing-tasks.js';
+import { mountClub } from './club.js';
 
 const API = '/v1/platform';
 const DASHBOARD_PATH = '/home';
@@ -185,13 +186,45 @@ function setPortalContext(view) {
   $('appView').dataset.view = view;
   $('homeClub').hidden = view !== 'overview';
   $('railClub').hidden = view === 'overview';
+  renderClubRail(view === 'club', assignedSectors);
+}
+
+function renderClubRail(active, assignedSectors) {
+  const referrer = active && document.referrer ? new URL(document.referrer) : null;
+  const previousSector = referrer?.origin === location.origin
+    ? allModules.find(({ id }) => referrer.pathname === `${SECTOR_PREFIX}${id}`)?.id : undefined;
+  const preferredSectors = active
+    ? [previousSector, ...assignedSectors.map(({ id }) => id), 'tecnologia', ...allModules.map(({ id }) => id)].filter(Boolean)
+    : [];
+  const sector = preferredSectors.find(canView);
+  const talkSector = preferredSectors.find((id) => canUse(id, 'sectorTalkRead'));
+  const whatsappSector = preferredSectors.find((id) => canUse(id, 'whatsappRead'));
+  const sectorLinks = {
+    clubRailSector: sector && viewUrl(sector),
+    clubRailTalk: active && (talkSector ? `${viewUrl(talkSector)}?aba=talk` : `${DASHBOARD_PATH}?talk=1`),
+    clubRailWhatsApp: whatsappSector && `${viewUrl(whatsappSector)}?aba=whatsapp`,
+  };
+  for (const [id, href] of Object.entries(sectorLinks)) {
+    const link = $(id);
+    link.hidden = !href;
+    if (href) link.href = href;
+    else link.removeAttribute('href');
+  }
+}
+
+function updateChatBadges(notification = { unread: 0 }) {
+  const unread = notification.unread;
+  setChatNotification(notification);
+  sectorNavigation.setTalkUnread(unread);
+  $('clubTalkDot').hidden = !unread;
+  $('clubRailTalk').setAttribute('aria-label', unread ? `Talk, mensagens não lidas: ${unread}` : 'Talk');
 }
 
 function showAuth(setupRequired, message = '', preserveRoute = false) {
+  club.close();
   destroyChat();
-  setChatNotification();
   sectorNavigation.leave();
-  sectorNavigation.setTalkUnread(0);
+  updateChatBadges();
   state.session = null;
   state.selectedCompanyCnpj = null;
   state.selectedClientCnpj = null;
@@ -274,10 +307,7 @@ function applySession(session) {
   void initialLoad();
   const surface = navigate(view, { replace: true });
   if (surface) {
-    initChat(session, { surface, notify: (notification) => {
-      setChatNotification(notification);
-      sectorNavigation.setTalkUnread(notification.unread);
-    } });
+    initChat(session, { surface, notify: updateChatBadges });
     const url = new URL(location.href);
     if (state.view === 'overview' && url.searchParams.has('talk')) {
       url.searchParams.delete('talk');
@@ -376,6 +406,8 @@ function navigate(view, { replace = false } = {}) {
     onPanelChange: sector.id === 'marketing' ? showMarketingPanel : undefined,
   } : null, { home: state.view === 'overview' });
   $('conteudo').focus({ preventScroll: true });
+  if (state.view === 'club') void club.open({ isAdmin: isAdmin() });
+  else club.close();
   if (state.view === 'users') void loadUsers().catch(displayError);
   if (state.view === 'agents') void loadAgents().catch(displayError);
   if (state.view === 'companies') void loadCompanies().catch(displayError);
@@ -1378,6 +1410,7 @@ function setupEvents() {
 
 setupEvents();
 const sectorNavigation = mountSectorNavigation();
+const club = mountClub($('clubRoot'), { request, onAuthError: displayError });
 mountPortal(() => {
   if (sectorNavigation.open('talk')) return;
   if (state.view === 'overview') openChat();

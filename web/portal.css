@@ -37,10 +37,6 @@
 .portal-header-divider { flex: none; height: 25px; width: 1px; background: var(--portal-edge); }
 .portal-sector { overflow: hidden; color: var(--ink-soft); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .portal-controls { gap: 9px; flex: none; }
-.portal-club-status { max-width: 620px; display: grid; justify-items: center; margin-inline: auto; padding: clamp(25px, 5vw, 56px); text-align: center; }
-.portal-club-status h2 { margin: 15px 0 7px; font-size: 19px; }
-.portal-club-status p { margin: 0; }
-.portal-club-mark { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 15px; background: var(--portal-hover); color: var(--blue); font-size: 22px; }
 .portal-icon {
   cursor: pointer;
   position: relative;
@@ -125,7 +121,8 @@
 .portal-profile .bi { font-size: 10px; }
 
 .app-shell .sidebar { top: var(--portal-header-size); height: calc(100dvh - var(--portal-header-size)); }
-.app-shell:is([data-view="overview"], [data-view="club"]) .sidebar:not(.open) { display: none; }
+.app-shell[data-view="overview"] .sidebar:not(.open) { display: none; }
+.app-shell[data-view="club"] .main-content { padding-inline: clamp(12px, 2.7vw, 44px); }
 .app-shell[data-view="overview"] .main-content {
   width: 100%;
   min-height: calc(100dvh - var(--portal-header-size));
@@ -299,6 +296,7 @@
   .portal-content-layout .sidebar { inset: var(--portal-header-size) auto 0 0; }
   .portal-menu { display: grid; }
   .app-shell[data-view="overview"] .sidebar.open { display: flex; }
+  .app-shell[data-view="club"] .sidebar:not(.open) { visibility: hidden; }
   .portal-news { margin-top: 8px; }
   .portal-modules { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

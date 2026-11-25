@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="/sector-whatsapp.css">
   <link rel="stylesheet" href="/user-wizard.css">
   <link rel="stylesheet" href="/marketing-tasks.css">
+  <link rel="stylesheet" href="/club.css">
   <script defer src="/socket.io/socket.io.js"></script>
   <script type="module" src="/app.js"></script>
 </head>
@@ -114,6 +115,9 @@
         <button type="button" class="sector-rail-button" data-sector-area="whatsapp" title="WhatsApp" aria-label="WhatsApp" aria-controls="sectorWhatsAppScreen" hidden>
           <i class="bi bi-whatsapp" aria-hidden="true"></i><span id="sectorWhatsAppDot" class="sector-unread" hidden aria-hidden="true"></span>
         </button>
+        <a id="clubRailSector" class="sector-rail-button" title="Setor" aria-label="Setor" hidden><i class="bi bi-grid" aria-hidden="true"></i></a>
+        <a id="clubRailTalk" class="sector-rail-button" title="Talk" aria-label="Talk" hidden><i class="bi bi-chat-dots" aria-hidden="true"></i><span id="clubTalkDot" class="sector-unread" hidden aria-hidden="true"></span></a>
+        <a id="clubRailWhatsApp" class="sector-rail-button" title="WhatsApp" aria-label="WhatsApp" hidden><i class="bi bi-whatsapp" aria-hidden="true"></i></a>
         <a id="railClub" class="sector-rail-button" href="/home#club" title="Clube de Benefícios" aria-label="Clube">
           <i class="bi bi-gift" aria-hidden="true"></i>
         </a>
@@ -257,14 +261,7 @@
           <div class="page-heading"><div><h1 id="diretoriaTitle">Diretoria</h1><p>Espaço de acompanhamento da Diretoria.</p></div><span class="status-pill status-planned">Em preparação</span></div>
         </section>
 
-        <section class="view" id="view-club" aria-labelledby="clubTitle" hidden>
-          <div class="page-heading"><div><h1 id="clubTitle">Clube de Benefícios</h1></div></div>
-          <div class="surface portal-club-status">
-            <div class="portal-club-mark"><i class="bi bi-gift" aria-hidden="true"></i></div>
-            <h2>Portal de benefícios temporariamente indisponível</h2>
-            <p class="muted">O acesso ao Clube será liberado aqui quando o portal estiver disponível.</p>
-          </div>
-        </section>
+        <section class="view" id="view-club" aria-labelledby="clubTitle" hidden><div id="clubRoot"></div></section>
 
         <section class="view" id="view-fiscal" aria-labelledby="fiscalTitle" hidden>
           <div class="page-heading"><div><p class="eyebrow">MÓDULO FISCAL</p><h1 id="fiscalTitle">Fiscal</h1><p>Documentos, eventos e solicitações em uma visão consultiva.</p></div><span class="status-pill status-planned">Conectores em preparação</span></div>
