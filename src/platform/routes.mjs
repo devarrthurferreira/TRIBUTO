@@ -72,10 +72,20 @@ function cookieValue(req) {
 function cookieHeader(token, secure) {
   return `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${token ? SESSION_MS / 1000 : 0}${secure ? '; Secure' : ''}`;
 }
+export async function authenticatePlatformRequest(store, req) {
+  const token = cookieValue(req);
+  if (!token) return null;
+  const session = await store.findSession(sha256(token));
+  if (!session) return null;
+  const user = await store.findUserById(session.userId);
+  return user?.active ? { user, session } : null;
+}
 function requireAdmin(user) { if (user.role !== 'admin') fail(403, 'FORBIDDEN', 'Acesso restrito a administradores'); }
+export function matchesPlatformCsrf(session, value) {
+  return typeof value === 'string' && value.length <= 128 && safeEqualHex(sha256(value), sha256(session.csrfToken));
+}
 function requireCsrf(req, session) {
-  const value = req.headers['x-csrf-token'];
-  if (!safeEqualHex(sha256(typeof value === 'string' ? value : ''), sha256(session.csrfToken))) fail(403, 'CSRF', 'Token de proteção inválido');
+  if (!matchesPlatformCsrf(session, req.headers['x-csrf-token'])) fail(403, 'CSRF', 'Token de proteção inválido');
 }
 function sessionView(user, session, setupRequired = false) {
   return { user: publicUser(user), permissions: permissionsFor(user), capabilities: capabilitiesFor(user), csrfToken: session?.csrfToken ?? null, setupRequired };
@@ -105,7 +115,7 @@ function dueAt(value) {
   return value;
 }
 
-export function createPlatformRouter({ store, bootstrapTokenSha256, secureCookies = true, logger = console }) {
+export function createPlatformRouter({ store, chat, bootstrapTokenSha256, secureCookies = true, logger = console }) {
   function loginKey(req, address) { return sha256(`${req.socket.remoteAddress || 'unknown'}:${address}`); }
   async function startSession(res, user) {
     const token = newSecret();
@@ -114,20 +124,12 @@ export function createPlatformRouter({ store, bootstrapTokenSha256, secureCookie
     res.setHeader('set-cookie', cookieHeader(token, secureCookies));
     return sessionView(user, session);
   }
-  async function current(req) {
-    const token = cookieValue(req);
-    if (!token) return null;
-    const session = await store.findSession(sha256(token));
-    if (!session) return null;
-    const user = await store.findUserById(session.userId);
-    return user?.active ? { user, session } : null;
-  }
   return async function handlePlatform(req, res, pathname) {
     if (pathname !== '/v1/platform' && !pathname.startsWith('/v1/platform/')) return false;
     try {
       const route = pathname.slice('/v1/platform'.length);
       if (req.method === 'GET' && route === '/session') {
-        const auth = await current(req);
+        const auth = await authenticatePlatformRequest(store, req);
         return send(res, 200, auth ? sessionView(auth.user, auth.session) : sessionView(null, null, Boolean(bootstrapTokenSha256 && await store.countUsers() === 0)));
       }
       if (req.method === 'POST' && route === '/setup') {
@@ -157,12 +159,16 @@ export function createPlatformRouter({ store, bootstrapTokenSha256, secureCookie
         return send(res, 200, await startSession(res, user));
       }
 
-      const auth = await current(req);
+      const auth = await authenticatePlatformRequest(store, req);
       if (!auth) fail(401, 'UNAUTHORIZED', 'Entre para continuar');
       const { user, session } = auth;
       if (req.method !== 'GET' && req.method !== 'HEAD') requireCsrf(req, session);
+      if (chat && (route === '/chat' || route.startsWith('/chat/'))) {
+        return await chat.handleHttp({ req, res, route, user, send, readBody: body });
+      }
       if (req.method === 'POST' && route === '/logout') {
         await store.deleteSession(session._id);
+        chat?.disconnectSession(session._id);
         res.setHeader('set-cookie', cookieHeader('', secureCookies));
         return send(res, 200, { ok: true });
       }
@@ -321,6 +327,13 @@ export function createPlatformRouter({ store, bootstrapTokenSha256, secureCookie
         return send(res, 201, { item: publicWorkItem(item) });
       }
       const itemMatch = /^\/work-items\/([a-f0-9-]{36})$/.exec(route);
+      if (req.method === 'GET' && itemMatch) {
+        const item = await store.getWorkItem(itemMatch[1]);
+        if (!item || !canPerform(user, item.module, 'workItemRead') || !canAccessWorkItemCompany(user, item.module, item.companyCnpj)) {
+          fail(404, 'NOT_FOUND', 'Tarefa não encontrada');
+        }
+        return send(res, 200, { item: publicWorkItem(item) });
+      }
       if (req.method === 'PATCH' && itemMatch) {
         const item = await store.getWorkItem(itemMatch[1]);
         if (!item) fail(404, 'NOT_FOUND', 'Tarefa não encontrada');

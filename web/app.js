@@ -1,17 +1,20 @@
+import { destroyChat, initChat, openChat } from './chat.js';
+import { mountPortal, setChatNotification } from './portal.js';
+
 const API = '/v1/platform';
 const DASHBOARD_PATH = '/home';
 const SECTOR_PREFIX = '/setor/';
 const $ = (id) => document.getElementById(id);
 
 const modules = [
-  { id: 'dp', label: 'Departamento Pessoal', icon: '◫', tone: 'teal', description: 'Rotinas trabalhistas, documentos e prazos.' },
-  { id: 'rh', label: 'Recursos Humanos', icon: '♙', tone: 'violet', description: 'Processos de pessoas e organização da equipe.' },
-  { id: 'tecnologia', label: 'Tecnologia', icon: '⌘', tone: 'blue', description: 'Atividades internas, prazos e andamento do setor.' },
-  { id: 'marketing', label: 'Marketing', icon: '◉', tone: 'amber', description: 'Campanhas, materiais e comunicação da Maximum.' },
-  { id: 'societario', label: 'Societário', icon: '⬡', tone: 'teal', description: 'Processos e histórico das empresas.' },
-  { id: 'contabil', label: 'Contábil', icon: '◈', tone: 'violet', description: 'Documentos e fechamento por competência.' },
-  { id: 'fiscal', label: 'Fiscal', icon: '▤', tone: 'blue', description: 'Notas, eventos e acompanhamento fiscal.' },
-  { id: 'diretoria', label: 'Diretoria', icon: '▧', tone: 'amber', description: 'Acompanhamento dos setores e da operação.' },
+  { id: 'dp', label: 'Departamento Pessoal', icon: 'person-badge' },
+  { id: 'rh', label: 'Recursos Humanos', icon: 'people' },
+  { id: 'tecnologia', label: 'Tecnologia', icon: 'laptop' },
+  { id: 'marketing', label: 'Marketing', icon: 'megaphone' },
+  { id: 'societario', label: 'Societário', icon: 'buildings' },
+  { id: 'contabil', label: 'Contábil', icon: 'calculator' },
+  { id: 'fiscal', label: 'Fiscal', icon: 'receipt' },
+  { id: 'diretoria', label: 'Diretoria', icon: 'briefcase' },
 ];
 const legacyModules = [
   { id: 'financeiro', label: 'Financeiro' },
@@ -155,7 +158,21 @@ function viewUrl(view) {
   return view === 'overview' ? DASHBOARD_PATH : `${DASHBOARD_PATH}#${view}`;
 }
 
+function setPortalContext(view) {
+  const currentSector = allModules.find((module) => module.id === view);
+  const assignedSectors = allModules.filter(({ id }) => Boolean(state.session?.user?.moduleGrants?.[id]));
+  const profileSector = assignedSectors.length === 1 ? assignedSectors[0].label
+    : isAdmin() ? 'Administração'
+      : assignedSectors.length > 1 ? 'Multissetorial' : 'Central Maximum';
+  const label = currentSector?.label || profileSector;
+  $('portalSector').textContent = label;
+  $('portalSector').title = label;
+  $('appView').dataset.view = view;
+}
+
 function showAuth(setupRequired, message = '', preserveRoute = false) {
+  destroyChat();
+  setChatNotification();
   state.session = null;
   state.selectedCompanyCnpj = null;
   if (location.pathname !== '/' || (!preserveRoute && location.hash)) {
@@ -195,6 +212,7 @@ function applySession(session) {
   $('profileName').textContent = session.user.name || session.user.email;
   $('profileRole').textContent = isAdmin() ? 'Administrador' : 'Equipe';
   $('profileInitials').textContent = initials(session.user.name);
+  $('profileShortName').textContent = firstName(session.user.name);
   $('greetingName').textContent = firstName(session.user.name);
   $('todayLabel').textContent = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Sao_Paulo' }).format(new Date());
   for (const button of document.querySelectorAll('.nav-link')) {
@@ -210,6 +228,8 @@ function applySession(session) {
   $('moduleNavigationLabel').hidden = !modules.some(({ id }) => canView(id));
   $('newCompanyButton').hidden = !isAdmin();
   $('newUserButton').hidden = !isAdmin();
+  $('portalUsers').hidden = !isAdmin();
+  $('portalAgents').hidden = !isAdmin();
   $('newAgentButton').hidden = !isAdmin();
   $('storageOverview').hidden = !isAdmin();
   $('homeAgentHealthCard').hidden = !isAdmin();
@@ -224,7 +244,7 @@ function applySession(session) {
   document.querySelector('[data-go="tecnologia"]').hidden = !canView('tecnologia');
   renderModuleCards();
   void initialLoad();
-  navigate(view, { replace: true });
+  if (navigate(view, { replace: true })) initChat(session, { notify: setChatNotification });
 }
 async function initialLoad() {
   const results = await Promise.allSettled([loadDashboard(), loadCompanies(), ...(isAdmin() ? [loadAgents(), loadStorage()] : [])]);
@@ -271,7 +291,7 @@ function navigate(view, { replace = false } = {}) {
   if (location.pathname !== targetUrl.split('#')[0]) {
     if (replace) location.replace(targetUrl);
     else location.assign(targetUrl);
-    return;
+    return false;
   }
   state.view = detail ? 'company-detail' : route;
   document.title = state.view === 'overview'
@@ -295,7 +315,7 @@ function navigate(view, { replace = false } = {}) {
     button.classList.toggle('active', current);
     if (current) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
-  $('breadcrumbCurrent').textContent = state.view === 'company-detail' ? companyName(state.selectedCompanyCnpj) : viewLabels[state.view];
+  setPortalContext(state.view);
   if (`${location.pathname}${location.hash}` !== targetUrl) history.replaceState(null, '', targetUrl);
   closeMenu();
   $('conteudo').focus({ preventScroll: true });
@@ -305,6 +325,7 @@ function navigate(view, { replace = false } = {}) {
   if (state.view === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead')) void loadFiscalDocuments().catch(displayError);
   if (state.view === 'company-detail') void loadCompanyDetail().catch(displayError);
   if (canUse(state.view, 'workItemRead')) void loadWorkItems(state.view).catch(displayError);
+  return true;
 }
 function openMenu() { $('sidebar').classList.add('open'); $('menuBackdrop').hidden = false; $('openMenu').setAttribute('aria-expanded', 'true'); }
 function closeMenu() { $('sidebar').classList.remove('open'); $('menuBackdrop').hidden = true; $('openMenu').setAttribute('aria-expanded', 'false'); }
@@ -315,20 +336,17 @@ function renderModuleCards() {
   const accessible = modules.filter((module) => canView(module.id));
   if (!accessible.length) return appendEmpty(target, 'Nenhum módulo liberado', 'Peça ao administrador acesso às áreas da sua carteira.', '◈');
   for (const module of accessible) {
-    const card = node('article', 'module-card');
-    const top = node('div', 'module-card-top');
-    const mark = node('span', `module-mark ${module.tone}`, module.icon);
-    mark.setAttribute('aria-hidden', 'true');
-    top.append(mark);
-    const heading = node('h3', '', module.label);
-    const description = node('p', '', module.description);
-    const link = node('a', 'module-open-button', `Abrir ${module.label}`);
-    link.href = viewUrl(module.id);
-    const arrow = node('span', 'arrow', '›');
+    const tile = node('a', 'portal-tile');
+    tile.href = viewUrl(module.id);
+    tile.setAttribute('aria-label', `Abrir ${module.label}`);
+    const icon = node('span', 'portal-tile-icon');
+    const glyph = node('i', `bi bi-${module.icon}`);
+    const arrow = node('i', 'bi bi-arrow-up-right portal-tile-arrow');
+    icon.setAttribute('aria-hidden', 'true');
     arrow.setAttribute('aria-hidden', 'true');
-    link.append(arrow);
-    card.append(top, heading, description, link);
-    target.append(card);
+    icon.append(glyph);
+    tile.append(icon, arrow, node('span', 'portal-tile-label', module.label));
+    target.append(tile);
   }
 }
 async function loadDashboard() {
@@ -752,10 +770,22 @@ async function loadWorkItems(module) {
   const qs = new URLSearchParams({ module });
   if (filter) qs.set('companyCnpj', filter);
   const data = await request(`/work-items?${qs.toString()}`);
+  const linkItemId = new URLSearchParams(location.search).get('atividade');
+  const items = Array.isArray(data.items) ? data.items : [];
+  let linkedItem = items.find(({ id }) => id === linkItemId);
+  if (!linkedItem && /^[0-9a-f-]{36}$/i.test(linkItemId || '') && !filter && !section.dataset.linkViewed) {
+    const result = await request(`/work-items/${encodeURIComponent(linkItemId)}`).catch((error) => {
+      if (![403, 404].includes(error.status)) throw error;
+      return null;
+    });
+    if (result?.item?.module === module) {
+      linkedItem = result.item;
+      items.unshift(linkedItem);
+    }
+  }
   if (!canUse(module, 'workItemRead') || !section.isConnected || Number(section.dataset.requestId) !== requestId) return;
   const target = section.querySelector('.work-items-list');
   target.replaceChildren();
-  const items = Array.isArray(data.items) ? data.items : [];
   const statusFilter = section.querySelector('.work-status-filter')?.value;
   const visibleItems = statusFilter ? items.filter(({ status }) => status === statusFilter) : items;
   if (module === 'tecnologia') {
@@ -769,8 +799,13 @@ async function loadWorkItems(module) {
     return appendEmpty(target, 'Nenhuma atividade encontrada', description, '◷');
   }
   const canUpdate = canUse(module, 'workItemUpdate');
+  let linkedRow;
   for (const item of visibleItems) {
     const row = node('div', 'list-row');
+    if (item === linkedItem) {
+      row.classList.add('work-item-highlight');
+      linkedRow = row;
+    }
     const main = node('div', 'list-row-main');
     const info = node('div');
     info.append(node('strong', '', item.title));
@@ -802,6 +837,10 @@ async function loadWorkItems(module) {
     }
     target.append(row);
   }
+  if (linkedRow && !section.dataset.linkViewed && state.view === module) {
+    section.dataset.linkViewed = 'true';
+    linkedRow.scrollIntoView({ block: 'center' });
+  }
 }
 async function createWorkItem(event) {
   event.preventDefault();
@@ -827,7 +866,6 @@ function updateCompanyHeading() {
   const company = state.companies.find((item) => item.cnpj === state.selectedCompanyCnpj);
   $('companyDetailTitle').textContent = company?.name || cnpjLabel(state.selectedCompanyCnpj);
   $('companyDetailCnpj').textContent = `CNPJ ${cnpjLabel(state.selectedCompanyCnpj)} · Consulta fiscal da carteira`;
-  $('breadcrumbCurrent').textContent = company?.name || 'Ficha da empresa';
 }
 function showCoverage(data, companyCnpj) {
   if (companyCnpj !== state.selectedCompanyCnpj || state.view !== 'company-detail') return;
@@ -1066,4 +1104,5 @@ function setupEvents() {
 }
 
 setupEvents();
+mountPortal(openChat);
 request('/session').then(applySession).catch((error) => showAuth(false, error.message));
