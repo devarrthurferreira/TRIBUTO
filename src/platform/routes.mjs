@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ApiError, sha256 } from '../api/validation.mjs';
 import { hashPassword, verifyPassword, newSecret, safeEqualHex } from './auth.mjs';
 import { lookupCep } from './cep.mjs';
-import { INTERNAL_WORK_ITEM_MODULES, MODULES, LEVELS, capabilitiesFor, permissionsFor, canAccess, canAccessCompany, canAccessWorkItemCompany, canPerform, publicUser } from './policy.mjs';
+import { INTERNAL_WORK_ITEM_MODULES, MODULES, LEVELS, capabilitiesFor, permissionsFor, canAccess, canAccessCompany, canAccessWorkItemCompany, canPerform, hasLoginCredentials, publicUser } from './policy.mjs';
 
 const COOKIE = 'tributo_session';
 const SESSION_MS = 12 * 60 * 60_000;
@@ -45,6 +45,12 @@ function field(value, name, min = 1, max = 200) {
   check(typeof value === 'string' && value.trim().length >= min && value.trim().length <= max, name);
   return value.trim();
 }
+function optional(value, normalize = candidate => candidate) {
+  return value == null || (typeof value === 'string' && !value.trim()) ? null : normalize(value);
+}
+function optionalField(value, name, min, max) {
+  return optional(value, candidate => field(candidate, name, min, max));
+}
 function email(value) {
   const normalized = field(value, 'email', 4, 254).toLowerCase();
   check(EMAIL.test(normalized), 'email');
@@ -61,34 +67,53 @@ function dateField(value, name) {
   check(parsed && !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value, name);
   return value;
 }
-function profileFor(input) {
-  check(input && typeof input === 'object' && !Array.isArray(input), 'dados pessoais');
-  const firstName = field(input.firstName, 'nome', 1, 50);
-  const lastName = field(input.lastName, 'sobrenome', 1, 50);
-  const cpf = field(input.cpf, 'CPF', 11, 20).replace(/[.\s-]/g, '');
+function cpfNumber(value) {
+  const cpf = field(value, 'CPF', 11, 20).replace(/[.\s-]/g, '');
   check(/^\d{11}$/.test(cpf) && !/^(\d)\1{10}$/.test(cpf), 'CPF');
   const digits = [...cpf].map(Number);
   const cpfDigit = (length) => digits.slice(0, length).reduce((sum, digit, index) => sum + digit * (length + 1 - index), 0) * 10 % 11 % 10;
   check(digits[9] === cpfDigit(9) && digits[10] === cpfDigit(10), 'CPF');
-  const birthDate = dateField(input.birthDate, 'nascimento');
-  check(birthDate >= '1900-01-01' && birthDate < LOCAL_DATE.format(new Date()), 'nascimento');
-  const phone = field(input.phone, 'telefone', 10, 24).replace(/[().\s-]/g, '');
-  check(/^(?:\+?55)?[1-9]\d{9,10}$/.test(phone), 'telefone');
-  check(typeof input.hasChildren === 'boolean', 'possui filhos');
-  const childrenCount = input.childrenCount ?? 0;
-  check(Number.isInteger(childrenCount) && (input.hasChildren ? childrenCount >= 1 && childrenCount <= 99 : childrenCount === 0), 'quantidade de filhos');
-  const address = input.address;
-  check(address && typeof address === 'object' && !Array.isArray(address), 'endereço');
-  const cep = field(address.cep, 'CEP', 8, 12).replace(/[\s-]/g, '');
-  check(/^\d{8}$/.test(cep), 'CEP');
-  return { firstName, lastName, cpf, birthDate, email: email(input.email), phone: phone.replace(/^\+/, ''), hasChildren: input.hasChildren, childrenCount,
-    address: { cep, street: field(address.street, 'logradouro', 2, 160), neighborhood: field(address.neighborhood, 'bairro', 1, 100), number: field(address.number, 'número', 1, 30) } };
+  return cpf;
 }
-function usernameFor({ firstName, lastName }) {
-  const normalize = (value) => value.normalize('NFD').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 35);
+function dateOfBirth(value) {
+  const birthDate = dateField(value, 'nascimento');
+  check(birthDate >= '1900-01-01' && birthDate < LOCAL_DATE.format(new Date()), 'nascimento');
+  return birthDate;
+}
+function phoneNumber(value) {
+  const phone = field(value, 'telefone', 10, 24).replace(/[().\s-]/g, '');
+  check(/^(?:\+?55)?[1-9]\d{9,10}$/.test(phone), 'telefone');
+  return phone.replace(/^\+/, '');
+}
+function postalCode(value) {
+  const cep = field(value, 'CEP', 8, 12).replace(/[\s-]/g, '');
+  check(/^\d{8}$/.test(cep), 'CEP');
+  return cep;
+}
+function addressFor(address) {
+  check(address && typeof address === 'object' && !Array.isArray(address), 'endereço');
+  return { cep: optional(address.cep, postalCode), street: optionalField(address.street, 'logradouro', 2, 160),
+    neighborhood: optionalField(address.neighborhood, 'bairro', 1, 100), number: optionalField(address.number, 'número', 1, 30) };
+}
+function profileFor(input) {
+  check(input && typeof input === 'object' && !Array.isArray(input), 'dados pessoais');
+  const hasChildren = optional(input.hasChildren);
+  check(hasChildren === null || typeof hasChildren === 'boolean', 'possui filhos');
+  const childrenCount = optional(input.childrenCount) ?? (hasChildren === false ? 0 : null);
+  check(childrenCount === null || (Number.isInteger(childrenCount)
+    && (hasChildren === false ? childrenCount === 0 : childrenCount >= 1 && childrenCount <= 99)), 'quantidade de filhos');
+  return { firstName: optionalField(input.firstName, 'nome', 1, 50), lastName: optionalField(input.lastName, 'sobrenome', 1, 50),
+    cpf: optional(input.cpf, cpfNumber), birthDate: optional(input.birthDate, dateOfBirth), email: optional(input.email, email),
+    phone: optional(input.phone, phoneNumber), hasChildren, childrenCount, address: optional(input.address, addressFor) };
+}
+function usernameFor({ firstName, lastName } = {}) {
+  const normalize = (value) => (value || '').normalize('NFD').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 35);
   const username = `${normalize(firstName)}.${normalize(lastName)}`;
-  check(USERNAME.test(username), 'nome e sobrenome do usuário');
-  return username;
+  return USERNAME.test(username) ? username : null;
+}
+function accessPassword(value) {
+  check(typeof value === 'string' && value.length >= 12 && value.length <= 128, 'senha de 12 a 128 caracteres');
+  return value;
 }
 function validCnpj(value) {
   if (typeof value !== 'string' || !CNPJ.test(value) || /^(\d)\1{13}$/.test(value)) return false;
@@ -240,7 +265,7 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
       if (req.method === 'POST' && route === '/login') {
         const input = await body(req);
         const identifier = loginIdentifier(input.identifier ?? input.email);
-        check(typeof input.password === 'string' && input.password.length <= 256, 'password');
+        check(typeof input.password === 'string' && input.password.length > 0 && input.password.length <= 256, 'password');
         const user = identifier.includes('@') ? await store.findUserByEmail(identifier) : await store.findUserByUsername(identifier);
         const key = loginKey(req, user?.email || identifier);
         if (await store.reserveLoginAttempt(key) > 5) fail(429, 'TOO_MANY_ATTEMPTS', 'Aguarde antes de tentar novamente');
@@ -377,16 +402,19 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
       if (req.method === 'POST' && route === '/users') {
         requireAdmin(user);
         const input = await body(req);
-        check(['admin', 'member'].includes(input.role), 'role');
-        check(typeof input.password === 'string' && input.password.length >= 12 && input.password.length <= 128, 'senha de 12 a 128 caracteres');
-        const profile = input.profile === undefined ? null : profileFor(input.profile);
-        const name = field(profile ? `${profile.firstName} ${profile.lastName}` : input.name, 'nome completo', 2, 100);
+        const role = optional(input.role) ?? 'member';
+        check(['admin', 'member'].includes(role), 'role');
+        const profile = optional(input.profile, profileFor);
+        const personalName = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ');
+        const name = personalName ? [...personalName].slice(0, 100).join('') : (optionalField(input.name, 'nome completo', 1, 100) ?? 'Usuário sem nome');
         const username = profile ? usernameFor(profile) : null;
-        const address = email(input.email);
-        const moduleGrants = validateModuleGrants(input.moduleGrants);
-        const companyCnpjs = await validateCompanyGrants(store, input.companyCnpjs);
+        const address = optional(input.email, email);
+        const moduleGrants = validateModuleGrants(optional(input.moduleGrants) ?? {});
+        const companyCnpjs = await validateCompanyGrants(store, optional(input.companyCnpjs) ?? []);
+        const password = optional(input.password, accessPassword);
+        const passwordHash = password === null ? null : await hashPassword(password);
         const member = { _id: randomUUID(), name, email: address, username, profile, moduleGrants, companyCnpjs,
-          passwordHash: await hashPassword(input.password), role: input.role, active: true, createdAt: new Date() };
+          passwordHash, role, active: hasLoginCredentials({ email: address, username, passwordHash }), createdAt: new Date() };
         const savedUsername = await store.createUser(member, user._id);
         return send(res, 201, { user: publicUser({ ...member, username: savedUsername }) });
       }
@@ -403,12 +431,23 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
         const target = await store.findUserById(userMatch[1]);
         if (!target) fail(404, 'NOT_FOUND', 'Usuário não encontrado');
         const changes = {};
-        if (input.name !== undefined) changes.name = field(input.name, 'name', 2, 100);
+        if (input.name !== undefined) changes.name = field(input.name, 'name', 1, 100);
         if (input.active !== undefined) { check(typeof input.active === 'boolean', 'active'); changes.active = input.active; }
         if (input.role !== undefined) { check(['admin', 'member'].includes(input.role), 'role'); changes.role = input.role; }
         if (input.companyCnpjs !== undefined) changes.companyCnpjs = await validateCompanyGrants(store, input.companyCnpjs);
         if (input.moduleGrants !== undefined) changes.moduleGrants = validateModuleGrants(input.moduleGrants);
+        const address = optional(input.email, email);
+        const password = optional(input.password, accessPassword);
+        const emailChanged = address !== null && address !== target.email;
+        if ((emailChanged || password !== null) && hasLoginCredentials(target)) {
+          fail(409, 'USER_ACCESS_ALREADY_READY', 'Este usuário já possui dados de acesso. Reabra a edição para ver o cadastro atualizado.');
+        }
+        if (emailChanged) changes.email = address;
+        if (password !== null) changes.passwordHash = await hashPassword(password);
         check(Object.keys(changes).length > 0, 'changes');
+        if (changes.active === true && !hasLoginCredentials({ ...target, ...changes })) {
+          fail(409, 'USER_ACCESS_PENDING', 'Informe uma senha e um e-mail ou usuário antes de ativar o acesso.');
+        }
         if (target._id === user._id && (changes.role && changes.role !== 'admin' || changes.active === false)) fail(409, 'SELF_LOCKOUT', 'Não é possível retirar o próprio acesso de administrador');
         const updated = await store.updateUser(target._id, changes);
         await store.audit('user.update', user._id, target._id, { fields: Object.keys(changes) });
@@ -544,6 +583,8 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
       if (error?.message === 'SETUP_COMPLETE') return send(res, 409, { error: 'SETUP_COMPLETE', message: 'Configuração inicial já concluída' });
       if (error?.code === 'DUPLICATE_USER_EMAIL') return send(res, 409, { error: error.code, message: 'E-mail de acesso já cadastrado' });
       if (error?.code === 'DUPLICATE_USER_CPF') return send(res, 409, { error: error.code, message: 'CPF já cadastrado' });
+      if (error?.code === 'USER_ACCESS_PENDING') return send(res, 409, { error: error.code, message: 'Informe uma senha e um e-mail ou usuário antes de ativar o acesso.' });
+      if (error?.code === 'USER_ACCESS_ALREADY_READY') return send(res, 409, { error: error.code, message: 'Este usuário já possui dados de acesso. Reabra a edição para ver o cadastro atualizado.' });
       if (error?.code === 'USERNAME_UNAVAILABLE') return send(res, 409, { error: error.code, message: 'Não foi possível gerar um nome de usuário disponível' });
       if (error?.code === 11000) return send(res, 409, { error: 'DUPLICATE', message: 'Registro já existente' });
       logger.error('Platform API failure', { error: error?.message ?? String(error) });

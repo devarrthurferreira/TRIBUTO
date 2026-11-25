@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { createPlatformRouter } from '../src/platform/routes.mjs';
-import { INTERNAL_WORK_ITEM_MODULES, canPerform, canAccessWorkItemCompany } from '../src/platform/policy.mjs';
+import { INTERNAL_WORK_ITEM_MODULES, canPerform, canAccessWorkItemCompany, hasLoginCredentials } from '../src/platform/policy.mjs';
 import { sha256 } from '../src/api/validation.mjs';
 
 const CNPJ_A = '12345678000195';
@@ -26,8 +26,8 @@ class MemoryPlatformStore {
   async createUser(user) {
     const { profile, username: base, ...account } = user;
     const users = [...this.users.values()];
-    if (users.some(({ email }) => email === account.email)) throw Object.assign(new Error('DUPLICATE_USER_EMAIL'), { code: 'DUPLICATE_USER_EMAIL' });
-    if (profile && [...this.profiles.values()].some(({ cpf }) => cpf === profile.cpf)) {
+    if (account.email && users.some(({ email }) => email === account.email)) throw Object.assign(new Error('DUPLICATE_USER_EMAIL'), { code: 'DUPLICATE_USER_EMAIL' });
+    if (profile?.cpf && [...this.profiles.values()].some(({ cpf }) => cpf === profile.cpf)) {
       throw Object.assign(new Error('DUPLICATE_USER_CPF'), { code: 'DUPLICATE_USER_CPF' });
     }
     let username = base;
@@ -36,7 +36,20 @@ class MemoryPlatformStore {
     if (profile) this.profiles.set(user._id, profile);
     return username;
   }
-  async updateUser(id, changes) { const value = { ...this.users.get(id), ...changes }; this.users.set(id, value); return value; }
+  async updateUser(id, changes) {
+    const previous = this.users.get(id);
+    const value = { ...previous, ...changes };
+    if ((changes.email || changes.passwordHash) && hasLoginCredentials(previous)) {
+      throw Object.assign(new Error('USER_ACCESS_ALREADY_READY'), { code: 'USER_ACCESS_ALREADY_READY' });
+    }
+    if (changes.email && [...this.users.values()].some(user => user._id !== id && user.email === changes.email)) {
+      throw Object.assign(new Error('DUPLICATE_USER_EMAIL'), { code: 'DUPLICATE_USER_EMAIL' });
+    }
+    if (value.active && !hasLoginCredentials(value)) throw Object.assign(new Error('USER_ACCESS_PENDING'), { code: 'USER_ACCESS_PENDING' });
+    this.users.set(id, value);
+    if (changes.passwordHash) for (const [key, session] of this.sessions) if (session.userId === id) this.sessions.delete(key);
+    return value;
+  }
   async changePassword(id, hash, currentSessionHash) { this.users.get(id).passwordHash = hash; for (const [key, value] of this.sessions) if (value.userId === id && key !== currentSessionHash) this.sessions.delete(key); }
   async createSession(value) { this.sessions.set(value._id, value); }
   async findSession(hash) { const value = this.sessions.get(hash); return value && value.expiresAt > new Date() ? value : null; }
@@ -221,6 +234,84 @@ test('cadastro guiado normaliza usuário, separa dados pessoais e usa o mesmo li
   }
   assert.equal((await login(accountData.email, password)).status, 429);
   assert.equal((await store.findUserById(created.body.user.id)).profile, undefined);
+}));
+
+test('cadastro opcional salva fichas incompletas e libera o login após configurar o acesso', async () => fixture(async ({ url }) => {
+  const path = '/v1/platform';
+  const admin = await setup(url);
+  const addUser = (data) => request(url, `${path}/users`, { method: 'POST', ...admin, data });
+  const patchUser = (id, data, auth = admin) => request(url, `${path}/users/${id}`, { method: 'PATCH', ...auth, data });
+  const login = (identifier, password) => request(url, `${path}/login`, { method: 'POST', data: { identifier, password } });
+  const password = 'Senha-sintetica-igual-19';
+  const first = await addUser({});
+  const second = await addUser({ email: ' ', password: '', role: '', companyCnpjs: null, moduleGrants: null,
+    profile: { firstName: '', lastName: null, cpf: '', birthDate: null, email: '', phone: null, address: { cep: '' } } });
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 201);
+  assert.notEqual(first.body.user.id, second.body.user.id);
+  for (const { body: { user } } of [first, second]) {
+    assert.equal(user.name, 'Usuário sem nome');
+    assert.equal(user.email, null);
+    assert.equal(user.username, undefined);
+    assert.equal(user.passwordHash, undefined);
+    assert.equal(user.role, 'member');
+    assert.equal(user.accessPending, true);
+    assert.equal(user.active, false);
+    assert.deepEqual(user.companyCnpjs, []);
+    assert.deepEqual(user.moduleGrants, {});
+  }
+
+  for (const profile of [{ cpf: '000.000.000-00' }, { birthDate: '2020-02-30' }, { address: { cep: '123' } }]) {
+    assert.equal((await addUser({ profile })).status, 400);
+  }
+  assert.equal((await addUser({ password: 'curta' })).status, 400);
+  const partial = await addUser({ profile: { firstName: 'Ana', hasChildren: true, address: { neighborhood: 'Centro' } } });
+  assert.equal(partial.status, 201);
+  assert.equal(partial.body.user.name, 'Ana');
+  const detail = await request(url, `${path}/users/${partial.body.user.id}`, admin);
+  assert.equal(detail.body.profile.hasChildren, true);
+  assert.equal(detail.body.profile.childrenCount, null);
+  assert.equal(detail.body.profile.address.neighborhood, 'Centro');
+  assert.equal(detail.body.profile.address.cep, null);
+  const localName = await addUser({ profile: { firstName: '王', lastName: '小明' }, email: 'email@example.test', password });
+  assert.equal(localName.status, 201);
+  assert.equal(localName.body.user.username, undefined);
+  assert.equal(localName.body.user.name, '王 小明');
+  assert.equal(localName.body.user.active, true);
+  assert.equal((await login('email@example.test', password)).status, 200);
+  const usernameOnly = await addUser({ profile: { firstName: 'João', lastName: 'Lima', email: 'pessoal@example.test' }, password });
+  assert.equal(usernameOnly.status, 201);
+  assert.equal(usernameOnly.body.user.email, null);
+  assert.equal(usernameOnly.body.user.username, 'joao.lima');
+  assert.equal(usernameOnly.body.user.accessPending, false);
+  assert.equal((await login('joao.lima', password)).status, 200);
+  assert.equal((await login('pessoal@example.test', password)).status, 401);
+
+  const pending = await addUser({ email: 'pendente@example.test' });
+  assert.equal(pending.status, 201);
+  const id = pending.body.user.id;
+  assert.equal((await login('pendente@example.test', '')).status, 400);
+  assert.equal((await login('pendente@example.test', password)).status, 401);
+  assert.equal((await patchUser(id, { active: true })).body.error, 'USER_ACCESS_PENDING');
+  const memberLogin = await login('joao.lima', password);
+  assert.equal((await patchUser(id, { active: true, password }, { cookie: memberLogin.cookie, csrf: memberLogin.body.csrfToken })).status, 403);
+  const ready = await patchUser(id, { password });
+  assert.equal(ready.status, 200);
+  assert.equal(ready.body.user.accessPending, false);
+  assert.equal(ready.body.user.active, false);
+  assert.equal((await login('pendente@example.test', password)).status, 401);
+  assert.equal((await patchUser(id, { active: true })).status, 200);
+  assert.equal((await login('pendente@example.test', password)).status, 200);
+  assert.equal((await patchUser(id, { email: 'outro@example.test' })).body.error, 'USER_ACCESS_ALREADY_READY');
+  assert.equal((await patchUser(id, { password })).body.error, 'USER_ACCESS_ALREADY_READY');
+
+  const firstId = first.body.user.id;
+  assert.equal((await patchUser(firstId, { email: 'email@example.test' })).body.error, 'DUPLICATE_USER_EMAIL');
+  assert.equal((await patchUser(firstId, { email: 'novo@example.test', password, active: true })).status, 200);
+  assert.equal((await login('novo@example.test', password)).status, 200);
+  const list = await request(url, `${path}/users`, admin);
+  assert.equal(list.body.users.find(({ id }) => id === second.body.user.id).accessPending, true);
+  assert.equal(list.body.users.find(({ id }) => id === firstId).accessPending, false);
 }));
 
 test('senha inicial de dez caracteres autentica o primeiro administrador', async () => fixture(async ({ store, url }) => {

@@ -40,8 +40,9 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
   const cepButton = id('newUserSearchCep');
   const companySearch = id('newUserCompanySearch');
   const companyOptions = id('newUserCompanyOptions');
+  const accessPending = id('newUserAccessPending');
   const addressFields = [['street', fields.Street], ['neighborhood', fields.Neighborhood]];
-  let step = 0, saving = false, cepRequest = 0, resolvedCep = '';
+  let step = 0, saving = false, cepRequest = 0, resolvedCep = '', editedAccessEmail = false;
   let filledAddress = new Map();
 
   function showError(message = '') {
@@ -58,11 +59,12 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
       indicator.classList.toggle('step-complete', i < step);
     });
     if (step === 3) {
-      fields.Username.value = [fields.FirstName.value, fields.LastName.value].map(usernamePart).join('.');
-      fields.AccessEmail.value = fields.Email.value.trim().toLowerCase();
-    }
+      const parts = [fields.FirstName.value, fields.LastName.value].map(usernamePart);
+      fields.Username.value = parts.every(Boolean) ? parts.join('.') : '';
+      if (!editedAccessEmail) fields.AccessEmail.value = fields.Email.value.trim().toLowerCase();
+      updateAccessState();
+    } else primary.textContent = 'Continuar';
     back.hidden = step === 0;
-    primary.textContent = step === 3 ? 'Criar acesso' : 'Continuar';
     content.scrollTop = 0;
     showError();
     if (focusHeading) panels[step].querySelector('h3').focus({ preventScroll: true });
@@ -72,7 +74,13 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
     const hasChildren = fields.HasChildren.value === 'yes';
     id('newUserChildrenRow').hidden = !hasChildren;
     fields.ChildrenCount.disabled = !hasChildren;
-    fields.ChildrenCount.required = hasChildren;
+  }
+
+  function updateAccessState() {
+    if (step !== 3) return;
+    const canSignIn = fields.Password.value.length >= 12 && Boolean(fields.Username.value || fields.AccessEmail.value.trim());
+    accessPending.hidden = canSignIn;
+    primary.textContent = saving ? 'Salvando…' : canSignIn ? 'Criar acesso' : 'Salvar cadastro';
   }
 
   function updateRole() {
@@ -133,15 +141,13 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
 
   function checkStep() {
     if (step === 0) {
-      for (const input of [fields.FirstName, fields.LastName]) input.setCustomValidity(usernamePart(input.value) ? '' : 'Informe um nome que permita gerar seu usuário.');
-      fields.Cpf.setCustomValidity(cpfIsValid(fields.Cpf.value) ? '' : 'Informe um CPF válido.');
-      fields.Phone.setCustomValidity(/^(?:55)?[1-9]\d{9,10}$/.test(digits(fields.Phone.value)) ? '' : 'Informe um telefone com DDD.');
-      fields.Cep.setCustomValidity(digits(fields.Cep.value).length === 8 ? '' : 'Digite os 8 dígitos do CEP.');
-      fields.Street.setCustomValidity(fields.Street.value.trim().length >= 2 ? '' : 'Informe o logradouro.');
-      fields.Neighborhood.setCustomValidity(fields.Neighborhood.value.trim() ? '' : 'Informe o bairro.');
-      fields.AddressNumber.setCustomValidity(fields.AddressNumber.value.trim() ? '' : 'Informe o número ou S/N.');
+      fields.Cpf.setCustomValidity(!fields.Cpf.value || cpfIsValid(fields.Cpf.value) ? '' : 'Informe um CPF válido.');
+      const phone = fields.Phone.value.trim().replace(/[().\s-]/g, '');
+      fields.Phone.setCustomValidity(!fields.Phone.value.trim() || /^(?:\+?55)?[1-9]\d{9,10}$/.test(phone) ? '' : 'Informe um telefone com DDD.');
+      fields.Cep.setCustomValidity(!fields.Cep.value || digits(fields.Cep.value).length === 8 ? '' : 'Digite os 8 dígitos do CEP.');
+      fields.Street.setCustomValidity(fields.Street.value.trim().length === 1 ? 'Informe um logradouro com pelo menos 2 caracteres.' : '');
     }
-    if (step === 3) fields.Password.setCustomValidity(fields.Password.value.length >= 12 ? '' : 'Digite pelo menos 12 caracteres.');
+    if (step === 3) fields.Password.setCustomValidity(fields.Password.value && fields.Password.value.length < 12 ? 'Digite pelo menos 12 caracteres.' : '');
     for (const input of panels[step].querySelectorAll('input, select')) {
       if (input.willValidate && !input.reportValidity()) return false;
     }
@@ -149,19 +155,22 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
   }
 
   function buildProfile() {
-    const hasChildren = fields.HasChildren.value === 'yes';
-    return {
+    const includeProvided = entries => Object.fromEntries(Object.entries(entries).filter(([, value]) => value !== '' && value !== undefined));
+    const children = fields.HasChildren.value;
+    const address = includeProvided({ cep: digits(fields.Cep.value), street: fields.Street.value.trim(), neighborhood: fields.Neighborhood.value.trim(), number: fields.AddressNumber.value.trim() });
+    return includeProvided({
       firstName: fields.FirstName.value.trim(), lastName: fields.LastName.value.trim(), cpf: digits(fields.Cpf.value),
-      birthDate: fields.BirthDate.value, email: fields.AccessEmail.value, phone: digits(fields.Phone.value), hasChildren,
-      childrenCount: hasChildren ? Number(fields.ChildrenCount.value) : 0,
-      address: { cep: digits(fields.Cep.value), street: fields.Street.value.trim(), neighborhood: fields.Neighborhood.value.trim(), number: fields.AddressNumber.value.trim() }
-    };
+      birthDate: fields.BirthDate.value, email: fields.Email.value.trim(), phone: digits(fields.Phone.value),
+      hasChildren: children ? children === 'yes' : undefined,
+      childrenCount: children === 'yes' && fields.ChildrenCount.value ? Number(fields.ChildrenCount.value) : undefined,
+      address: Object.keys(address).length ? address : undefined,
+    });
   }
 
   function toggleSaving(busy) {
     saving = busy;
     for (const button of [primary, back, ...form.querySelectorAll('[data-wizard-dismiss]')]) button.disabled = busy;
-    primary.textContent = busy ? 'Criando acesso…' : 'Criar acesso';
+    updateAccessState();
   }
 
   async function submit(event) {
@@ -175,7 +184,10 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
     showError();
     toggleSaving(true);
     let created;
-    try { created = await request('/users', { method: 'POST', body: { email: profile.email, password: fields.Password.value, role, companyCnpjs, moduleGrants, profile } }); }
+    const email = fields.AccessEmail.value.trim().toLowerCase();
+    const password = fields.Password.value;
+    const body = { ...(email ? { email } : {}), ...(password ? { password } : {}), role, companyCnpjs, moduleGrants, profile };
+    try { created = await request('/users', { method: 'POST', body }); }
     catch (failure) { showError(failure.message); }
     finally { toggleSaving(false); }
     if (created) {
@@ -186,6 +198,8 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
 
   fields.HasChildren.addEventListener('change', updateChildren);
   fields.Role.addEventListener('change', updateRole);
+  fields.AccessEmail.addEventListener('input', () => { editedAccessEmail = true; updateAccessState(); });
+  fields.Password.addEventListener('input', updateAccessState);
   fields.Cpf.addEventListener('input', () => { fields.Cpf.value = formatCpf(fields.Cpf.value); });
   fields.Cep.addEventListener('input', () => {
     fields.Cep.value = formatCep(fields.Cep.value);
@@ -208,6 +222,7 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
   dialog.addEventListener('close', () => {
     cepRequest++;
     resolvedCep = '';
+    editedAccessEmail = false;
     filledAddress.clear();
     form.reset();
     companyOptions.replaceChildren();

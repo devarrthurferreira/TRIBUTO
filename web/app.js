@@ -640,7 +640,7 @@ function renderClientAccess() {
   const { company, members } = activeClient;
   const filter = $('clientAccessSearch').value.trim().toLocaleLowerCase('pt-BR');
   const eligible = members.filter(member => member.active || member.hasAccess);
-  const visible = eligible.filter(member => `${member.name} ${member.email}`.toLocaleLowerCase('pt-BR').includes(filter));
+  const visible = eligible.filter(member => `${member.name} ${member.email || ''}`.toLocaleLowerCase('pt-BR').includes(filter));
   empty.textContent = eligible.length ? 'Nenhuma pessoa encontrada.' : 'Nenhum membro disponível para vincular à carteira.';
   empty.hidden = visible.length > 0;
   renderClientAccessCount();
@@ -648,7 +648,8 @@ function renderClientAccess() {
     const row = node('li', 'list-row client-access-row');
     const main = node('div', 'list-row-main');
     const info = node('div', 'client-access-info');
-    info.append(node('strong', '', member.name), node('small', '', member.email));
+    info.append(node('strong', '', member.name));
+    if (member.email) info.append(node('small', '', member.email));
     if (!member.active) info.append(node('small', '', 'Usuário inativo'));
     main.append(node('span', 'row-avatar', initials(member.name)), info);
     const action = node('button', 'button button-quiet');
@@ -746,11 +747,14 @@ async function loadUsers() {
     const main = node('div', 'list-row-main');
     const avatar = node('span', 'row-avatar teal', initials(user.name));
     const info = node('div');
-    info.append(node('strong', '', user.name), node('small', '', user.email));
+    info.append(node('strong', '', user.name));
+    if (user.email) info.append(node('small', '', user.email));
     if (user.username) info.append(node('small', '', user.username));
+    if (user.accessPending && !user.email && !user.username) info.append(node('small', '', `Cadastro ${user.id.slice(0, 8)}`));
     main.append(avatar, info);
     const side = node('div', 'row-aside');
     side.append(node('strong', '', user.role === 'admin' ? 'Administrador' : 'Membro'));
+    if (user.accessPending) side.append(node('span', 'status-pill status-warning', 'Acesso pendente'));
     const grants = Object.entries(user.moduleGrants || {}).filter(([, value]) => value).map(([key]) => allModules.find((module) => module.id === key)?.label || key);
     side.append(node('small', '', `${grants.length} módulos · ${user.companyCnpjs?.length || 0} empresas`));
     const edit = node('button', 'text-button', 'Editar acesso');
@@ -821,6 +825,13 @@ function openUserDialog(user) {
   formError('userError', '');
   $('userName').value = user.name || '';
   $('userEmail').value = user.email || '';
+  const pending = Boolean(user.accessPending);
+  $('userEmail').readOnly = !pending;
+  $('userPendingCredentials').hidden = !pending;
+  $('userPendingPassword').disabled = !pending;
+  $('userPendingHint').textContent = user.username
+    ? `O usuário ${user.username} pode entrar após a definição da senha e a ativação do acesso.`
+    : 'Para ativar o acesso, informe um e-mail e defina uma senha, caso ainda faltem.';
   $('userRole').value = user.role === 'admin' ? 'admin' : 'member';
   for (const input of form.querySelectorAll('input[name="companyCnpjs"]')) input.checked = user.companyCnpjs?.includes(input.value) || false;
   renderUserGrants(user);
@@ -849,12 +860,16 @@ async function saveUserAccess(event) {
   withBusy(button, true);
   try {
     const body = { name: $('userName').value.trim(), role: $('userRole').value, active: $('userActive').checked, companyCnpjs, moduleGrants };
-    await request(`/users/${encodeURIComponent(editId)}`, { method: 'PATCH', body });
+    if (!$('userEmail').readOnly) {
+      if ($('userEmail').value.trim()) body.email = $('userEmail').value.trim();
+      if ($('userPendingPassword').value) body.password = $('userPendingPassword').value;
+    }
+    const { user } = await request(`/users/${encodeURIComponent(editId)}`, { method: 'PATCH', body });
     $('userDialog').close();
     form.reset();
     form.dataset.editId = '';
     await loadUsers();
-    notice('Permissões atualizadas.');
+    notice(user.accessPending ? 'Cadastro atualizado. O acesso continua pendente.' : 'Acesso atualizado.');
   } catch (error) { formError('userError', error.message); }
   finally { withBusy(button, false); }
 }
@@ -1326,7 +1341,8 @@ function setupEvents() {
     renderCompanies: target => fillUserCompanyOptions(target, false),
     onCreated: user => {
       const username = user?.username;
-      notice(username ? `Acesso de ${username} criado.` : 'Acesso criado.');
+      notice(user?.accessPending ? 'Cadastro salvo. O acesso fica pendente até você completar os dados de entrada.'
+        : username ? `Acesso de ${username} criado.` : 'Acesso criado.');
       void loadUsers().catch(displayError);
     },
   });
@@ -1334,6 +1350,7 @@ function setupEvents() {
   $('newAgentButton').addEventListener('click', () => $('agentDialog').showModal());
   $('companyForm').addEventListener('submit', createCompany);
   $('userForm').addEventListener('submit', saveUserAccess);
+  $('userDialog').addEventListener('close', () => { $('userPendingPassword').value = ''; });
   $('userRole').addEventListener('change', updateGrantEditorRole);
   $('agentForm').addEventListener('submit', createAgent);
   $('workItemForm').addEventListener('submit', createWorkItem);

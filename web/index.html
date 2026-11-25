@@ -388,7 +388,11 @@
       <div class="dialog-header"><h2 id="userDialogTitle">Editar acesso</h2><button type="button" class="icon-button close-dialog" aria-label="Fechar">×</button></div>
       <p class="dialog-description">Conceda somente os módulos e empresas necessários para essa pessoa.</p>
       <div class="field"><label for="userName">Nome</label><input id="userName" name="name" required maxlength="120" placeholder="Nome da pessoa"></div>
-      <div class="field"><label for="userEmail">E-mail</label><input id="userEmail" type="email" readonly></div>
+      <div class="field"><label for="userEmail">E-mail de acesso</label><input id="userEmail" type="email" maxlength="254" autocomplete="off" readonly></div>
+      <div id="userPendingCredentials" hidden>
+        <p id="userPendingHint" class="muted"></p>
+        <div class="field"><label for="userPendingPassword">Senha de acesso</label><input id="userPendingPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" disabled><small>Se preencher, use pelo menos 12 caracteres.</small></div>
+      </div>
       <div class="field"><label for="userRole">Perfil</label><select id="userRole" name="role"><option value="member">Membro da equipe</option><option value="admin">Administrador</option></select></div>
       <label class="check-row"><input id="userActive" type="checkbox" checked> Acesso ativo</label>
       <p id="userFullAccessNote" class="muted" hidden>Administradores têm acesso a todos os módulos, ações e empresas.</p>
@@ -414,23 +418,24 @@
       <div class="user-wizard-content">
         <section class="user-wizard-step" aria-labelledby="userWizardPersonalTitle">
           <h3 id="userWizardPersonalTitle" tabindex="-1">Dados pessoais</h3>
+          <p>Todos os campos são opcionais.</p>
           <div class="user-wizard-fields">
-            <div class="field"><label for="newUserFirstName">Nome</label><input id="newUserFirstName" autocomplete="given-name" maxlength="50" required></div>
-            <div class="field"><label for="newUserLastName">Sobrenome</label><input id="newUserLastName" autocomplete="family-name" maxlength="50" required></div>
-            <div class="field"><label for="newUserCpf">CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" required></div>
-            <div class="field"><label for="newUserBirthDate">Nascimento</label><input id="newUserBirthDate" type="date" autocomplete="bday" required></div>
-            <div class="field"><label for="newUserEmail">E-mail</label><input id="newUserEmail" type="email" autocomplete="email" maxlength="254" required></div>
-            <div class="field"><label for="newUserPhone">Telefone</label><input id="newUserPhone" type="tel" autocomplete="tel" maxlength="19" placeholder="(00) 00000-0000" required></div>
-            <div class="field"><label for="newUserHasChildren">Possui filhos?</label><select id="newUserHasChildren" required><option value="" disabled selected>Selecione</option><option value="no">Não</option><option value="yes">Sim</option></select></div>
+            <div class="field"><label for="newUserFirstName">Nome</label><input id="newUserFirstName" autocomplete="given-name" maxlength="50"></div>
+            <div class="field"><label for="newUserLastName">Sobrenome</label><input id="newUserLastName" autocomplete="family-name" maxlength="50"></div>
+            <div class="field"><label for="newUserCpf">CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00"></div>
+            <div class="field"><label for="newUserBirthDate">Nascimento</label><input id="newUserBirthDate" type="date" autocomplete="bday"></div>
+            <div class="field"><label for="newUserEmail">E-mail</label><input id="newUserEmail" type="email" autocomplete="email" maxlength="254"></div>
+            <div class="field"><label for="newUserPhone">Telefone</label><input id="newUserPhone" type="tel" autocomplete="tel" maxlength="19" placeholder="(00) 00000-0000"></div>
+            <div class="field"><label for="newUserHasChildren">Possui filhos?</label><select id="newUserHasChildren"><option value="" selected>Não informado</option><option value="no">Não</option><option value="yes">Sim</option></select></div>
             <div class="field" id="newUserChildrenRow" hidden><label for="newUserChildrenCount">Quantidade de filhos</label><input id="newUserChildrenCount" type="number" min="1" max="99" step="1" inputmode="numeric"></div>
           </div>
           <fieldset class="user-wizard-address">
             <legend>Endereço</legend>
             <div class="user-wizard-fields">
-              <div class="field"><label for="newUserCep">CEP</label><div class="user-wizard-inline"><input id="newUserCep" autocomplete="postal-code" inputmode="numeric" maxlength="9" placeholder="00000-000" aria-describedby="newUserCepStatus" required><button id="newUserSearchCep" class="button button-quiet" type="button" aria-label="Buscar CEP">Buscar</button></div><small id="newUserCepStatus" role="status"></small></div>
-              <div class="field"><label for="newUserStreet">Logradouro</label><input id="newUserStreet" autocomplete="address-line1" maxlength="160" required></div>
-              <div class="field"><label for="newUserNeighborhood">Bairro</label><input id="newUserNeighborhood" maxlength="100" required></div>
-              <div class="field"><label for="newUserAddressNumber">Número</label><input id="newUserAddressNumber" maxlength="30" placeholder="Número ou S/N" required></div>
+              <div class="field"><label for="newUserCep">CEP</label><div class="user-wizard-inline"><input id="newUserCep" autocomplete="postal-code" inputmode="numeric" maxlength="9" placeholder="00000-000" aria-describedby="newUserCepStatus"><button id="newUserSearchCep" class="button button-quiet" type="button" aria-label="Buscar CEP">Buscar</button></div><small id="newUserCepStatus" role="status"></small></div>
+              <div class="field"><label for="newUserStreet">Logradouro</label><input id="newUserStreet" autocomplete="address-line1" maxlength="160"></div>
+              <div class="field"><label for="newUserNeighborhood">Bairro</label><input id="newUserNeighborhood" maxlength="100"></div>
+              <div class="field"><label for="newUserAddressNumber">Número</label><input id="newUserAddressNumber" maxlength="30" placeholder="Número ou S/N"></div>
             </div>
           </fieldset>
         </section>
@@ -453,10 +458,11 @@
         <section class="user-wizard-step" aria-labelledby="userWizardCredentialsTitle" hidden>
           <h3 id="userWizardCredentialsTitle" tabindex="-1">Dados de acesso</h3>
           <div class="user-wizard-fields">
-            <div class="field"><label for="newUserUsername">Usuário</label><input id="newUserUsername" autocomplete="off" readonly><small>O sistema acrescenta um número se o usuário já existir.</small></div>
-            <div class="field"><label for="newUserAccessEmail">E-mail de acesso</label><input id="newUserAccessEmail" type="email" readonly></div>
-            <div class="field user-wizard-wide"><label for="newUserPassword">Senha de acesso</label><input id="newUserPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required aria-describedby="newUserPasswordHint"><small id="newUserPasswordHint">Digite pelo menos 12 caracteres e compartilhe a senha por um canal seguro.</small></div>
+            <div class="field"><label for="newUserUsername">Usuário</label><input id="newUserUsername" autocomplete="off" readonly aria-describedby="newUserUsernameHint"><small id="newUserUsernameHint">Gerado a partir do nome e sobrenome. O sistema acrescenta um número se já existir.</small></div>
+            <div class="field"><label for="newUserAccessEmail">E-mail de acesso</label><input id="newUserAccessEmail" type="email" maxlength="254" autocomplete="off"></div>
+            <div class="field user-wizard-wide"><label for="newUserPassword">Senha de acesso</label><input id="newUserPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" aria-describedby="newUserPasswordHint"><small id="newUserPasswordHint">Se informar uma senha, use pelo menos 12 caracteres.</small></div>
           </div>
+          <p id="newUserAccessPending" class="user-wizard-note" role="status">Você pode salvar o cadastro e configurar o acesso depois. Para entrar na Central, a pessoa precisa de uma senha e de um usuário ou e-mail de acesso.</p>
         </section>
       </div>
       <div class="user-wizard-footer">

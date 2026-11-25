@@ -28,6 +28,9 @@ function user(row) {
   return {
     _id: row.id, name: row.name, username: row.username ?? null, email: row.email,
     passwordHash: row.password_hash, role: row.role, active: bool(row.active),
+    accessPending: row.access_pending === undefined
+      ? !row.password_hash || !(row.email || row.username)
+      : Number(row.access_pending) === 1,
     companyCnpjs: parse(row.company_cnpjs, []), moduleGrants: parse(row.module_grants, {}),
     createdAt: sqlDate(row.created_at), updatedAt: sqlDate(row.updated_at), passwordChangedAt: sqlDate(row.password_changed_at)
   };
@@ -87,7 +90,7 @@ const TABLES = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS platform_users (
     id CHAR(36) NOT NULL PRIMARY KEY, name VARCHAR(100) NOT NULL,
-    email VARCHAR(254) NOT NULL, password_hash VARCHAR(255) NOT NULL,
+    email VARCHAR(254) NULL, password_hash VARCHAR(255) NULL,
     role VARCHAR(10) NOT NULL, active TINYINT(1) NOT NULL,
     company_cnpjs LONGTEXT NOT NULL, module_grants LONGTEXT NOT NULL,
     created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NULL,
@@ -96,8 +99,8 @@ const TABLES = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS platform_user_profiles (
     user_id CHAR(36) NOT NULL PRIMARY KEY,
-    username VARCHAR(74) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    cpf CHAR(11) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    username VARCHAR(74) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    cpf CHAR(11) CHARACTER SET ascii COLLATE ascii_bin NULL,
     profile_json LONGTEXT NOT NULL,
     UNIQUE KEY uniq_platform_profile_username (username),
     UNIQUE KEY uniq_platform_profile_cpf (cpf)
@@ -149,12 +152,36 @@ const TABLES = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
 ];
 
+const OPTIONAL_ACCOUNT_COLUMNS = {
+  platform_users: { email: 'VARCHAR(254)', password_hash: 'VARCHAR(255)' },
+  platform_user_profiles: {
+    username: 'VARCHAR(74) CHARACTER SET ascii COLLATE ascii_bin',
+    cpf: 'CHAR(11) CHARACTER SET ascii COLLATE ascii_bin',
+  },
+};
+
 export class PlatformMySqlStore {
   constructor(pool) { this.pool = pool; }
 
   async initialize() {
     for (const statement of TABLES) await this.pool.query(statement);
+    await this.allowOptionalAccountFields();
     await this.cleanupExpired();
+  }
+
+  async allowOptionalAccountFields() {
+    const tables = Object.keys(OPTIONAL_ACCOUNT_COLUMNS);
+    const columns = await this.rows(`SELECT TABLE_NAME AS tableName, COLUMN_NAME AS columnName
+      FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME IN (?, ?) AND IS_NULLABLE = 'NO'`, tables);
+    const notNullable = new Set(columns.map(({ tableName, columnName }) => `${tableName}.${columnName}`));
+    for (const [table, definitions] of Object.entries(OPTIONAL_ACCOUNT_COLUMNS)) {
+      const changes = Object.entries(definitions).filter(([column]) => notNullable.has(`${table}.${column}`));
+      if (changes.length) {
+        // Existing UNIQUE indexes remain in place and allow multiple missing values.
+        await this.pool.query(`ALTER TABLE ${table} ${changes.map(([name, type]) => `MODIFY COLUMN ${name} ${type} NULL`).join(', ')}`);
+      }
+    }
   }
 
   async cleanupExpired() {
@@ -213,7 +240,7 @@ export class PlatformMySqlStore {
     await connection.execute(`INSERT INTO platform_users
       (id, name, email, password_hash, role, active, company_cnpjs, module_grants, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [record._id, record.name, record.email, record.passwordHash, record.role, Number(record.active), json(record.companyCnpjs), json(record.moduleGrants), record.createdAt]);
+    [record._id, record.name, record.email ?? null, record.passwordHash ?? null, record.role, Number(record.active), json(record.companyCnpjs), json(record.moduleGrants), record.createdAt]);
   }
   async findUserByEmail(email) {
     return user(await this.one(`SELECT u.*, p.username FROM platform_users u
@@ -233,7 +260,9 @@ export class PlatformMySqlStore {
   }
   async listUsers() {
     return (await this.rows(`SELECT u.id, u.name, u.email, u.role, u.active, u.company_cnpjs, u.module_grants,
-      u.created_at, u.updated_at, u.password_changed_at, p.username FROM platform_users u
+      u.created_at, u.updated_at, u.password_changed_at, p.username,
+      (COALESCE(u.password_hash, '') = '' OR (COALESCE(u.email, '') = '' AND COALESCE(p.username, '') = '')) AS access_pending
+      FROM platform_users u
       LEFT JOIN platform_user_profiles p ON p.user_id = u.id ORDER BY u.name`)).map((row) => {
       const result = user(row);
       delete result.passwordHash;
@@ -241,31 +270,60 @@ export class PlatformMySqlStore {
     });
   }
   async createUser(record, actorId) {
+    if (record.active && (!record.passwordHash || !(record.email || record.username))) throw userConflict('USER_ACCESS_PENDING');
     const { cpf, ...profile } = record.profile || {};
     for (let attempt = 1; attempt <= 999; attempt += 1) {
-      const username = attempt === 1 ? record.username : `${record.username}${attempt}`;
+      const username = record.username ? (attempt === 1 ? record.username : `${record.username}${attempt}`) : null;
       try {
         await this.transaction(async (connection) => {
           await this.insertUser(connection, record);
-          if (record.profile) await connection.execute('INSERT INTO platform_user_profiles (user_id, username, cpf, profile_json) VALUES (?, ?, ?, ?)',
-            [record._id, username, cpf, json(profile)]);
+          if (record.profile || username) await connection.execute('INSERT INTO platform_user_profiles (user_id, username, cpf, profile_json) VALUES (?, ?, ?, ?)',
+            [record._id, username, cpf ?? null, json(profile)]);
           await this.insertAudit(connection, 'user.create', actorId, record._id, { role: record.role });
         });
         return username;
       } catch (error) {
         if (duplicateKey(error, 'uniq_platform_user_email')) throw userConflict('DUPLICATE_USER_EMAIL');
         if (duplicateKey(error, 'uniq_platform_profile_cpf')) throw userConflict('DUPLICATE_USER_CPF');
-        if (!duplicateKey(error, 'uniq_platform_profile_username')) throw new Error('Falha ao gravar cadastro de usuário', { cause: error });
+        if (!username || !duplicateKey(error, 'uniq_platform_profile_username')) throw new Error('Falha ao gravar cadastro de usuário', { cause: error });
       }
     }
     throw userConflict('USERNAME_UNAVAILABLE');
   }
   async updateUser(id, changes) {
-    const fields = { name: 'name', active: 'active', role: 'role', companyCnpjs: 'company_cnpjs', moduleGrants: 'module_grants' };
+    const fields = { name: 'name', active: 'active', role: 'role', companyCnpjs: 'company_cnpjs', moduleGrants: 'module_grants',
+      email: 'email', passwordHash: 'password_hash' };
     const entries = Object.entries(changes).filter(([key]) => Object.hasOwn(fields, key));
     const values = entries.map(([key, value]) => key === 'companyCnpjs' || key === 'moduleGrants' ? json(value) : key === 'active' ? Number(value) : value);
-    await this.pool.execute(`UPDATE platform_users SET ${entries.map(([key]) => `${fields[key]} = ?`).join(', ')}, updated_at = ? WHERE id = ?`, [...values, new Date(), id]);
-    return this.findUserById(id);
+    try {
+      return await this.transaction(async connection => {
+        const [[row]] = await connection.execute(`SELECT u.*, p.username FROM platform_users u
+          LEFT JOIN platform_user_profiles p ON p.user_id = u.id WHERE u.id = ? FOR UPDATE`, [id]);
+        if (!row) return null;
+        const previous = user(row);
+        const passwordChanged = Object.hasOwn(changes, 'passwordHash');
+        if ((passwordChanged || Object.hasOwn(changes, 'email')) && !previous.accessPending) throw userConflict('USER_ACCESS_ALREADY_READY');
+
+        const account = { ...previous, ...changes };
+        account.accessPending = !account.passwordHash || !(account.email || account.username);
+        if (account.active && account.accessPending) throw userConflict('USER_ACCESS_PENDING');
+
+        const updatedAt = new Date();
+        const assignments = [...entries.map(([key]) => `${fields[key]} = ?`), 'updated_at = ?'];
+        const params = [...values, updatedAt];
+        if (passwordChanged) {
+          assignments.push('password_changed_at = ?');
+          params.push(updatedAt);
+        }
+        await connection.execute(`UPDATE platform_users SET ${assignments.join(', ')} WHERE id = ?`, [...params, id]);
+        if (passwordChanged) await connection.execute('DELETE FROM platform_sessions WHERE user_id = ?', [id]);
+        return { ...account, updatedAt: updatedAt.toISOString(),
+          ...(passwordChanged ? { passwordChangedAt: updatedAt.toISOString() } : {}) };
+      });
+    } catch (error) {
+      if (duplicateKey(error, 'uniq_platform_user_email')) throw userConflict('DUPLICATE_USER_EMAIL');
+      throw error;
+    }
   }
   async changePassword(userId, hash, currentSessionHash) {
     await this.transaction(async (connection) => {

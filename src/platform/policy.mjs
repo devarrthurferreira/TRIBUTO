@@ -76,8 +76,13 @@ export function canAccessWorkItemCompany(user, module, cnpj) {
   return canAccessCompany(user, cnpj);
 }
 
+export function hasLoginCredentials(user) {
+  return Boolean(user?.passwordHash && (user.email || user.username));
+}
+
 export function publicUser(user) {
   if (!user) return null;
   const { _id, name, username, email, role, active, companyCnpjs, moduleGrants, createdAt } = user;
-  return { id: _id, name, ...(username ? { username } : {}), email, role, active, companyCnpjs: companyCnpjs || [], moduleGrants: moduleGrants || {}, createdAt };
+  return { id: _id, name, ...(username ? { username } : {}), email, role, active, accessPending: user.accessPending ?? !hasLoginCredentials(user),
+    companyCnpjs: companyCnpjs || [], moduleGrants: moduleGrants || {}, createdAt };
 }
