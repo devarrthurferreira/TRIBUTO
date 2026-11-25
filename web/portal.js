@@ -78,17 +78,33 @@ function startNewsCarousel() {
   renderPause();
 }
 
-export function setChatNotification({ unread = 0 } = {}) {
+let talkUnread = 0;
+let whatsappUnread = 0;
+
+function renderNotificationBadge() {
+  const unread = talkUnread + whatsappUnread;
   const badge = get('portalBadge');
   const title = unread === 1 ? '1 mensagem não lida' : `${unread} mensagens não lidas`;
   badge.textContent = unread > 99 ? '99+' : String(unread);
   badge.hidden = unread === 0;
   badge.parentElement.setAttribute('aria-label', unread ? `Notificações, ${title}` : 'Notificações');
-  get('portalChatUnread').textContent = unread ? title : 'Mensagens';
-  get('portalChatPreview').textContent = unread ? 'Abra o chat interno para ler.' : 'Converse com sua equipe na Central.';
 }
 
-export function mountPortal(openChat) {
+export function setChatNotification({ unread = 0 } = {}) {
+  talkUnread = Number(unread) || 0;
+  get('portalChatUnread').textContent = talkUnread ? `Talk · ${talkUnread} ${talkUnread === 1 ? 'não lida' : 'não lidas'}` : 'Talk';
+  get('portalChatPreview').textContent = talkUnread ? 'Abra o Talk para ler.' : 'Converse com sua equipe na Central.';
+  renderNotificationBadge();
+}
+
+export function setWhatsAppNotification(unread = 0) {
+  whatsappUnread = Number(unread) || 0;
+  get('portalWhatsAppNotice').hidden = whatsappUnread <= 0;
+  get('portalWhatsAppUnread').textContent = `WhatsApp · ${whatsappUnread} ${whatsappUnread === 1 ? 'não lida' : 'não lidas'}`;
+  renderNotificationBadge();
+}
+
+export function mountPortal(openChat, openWhatsApp) {
   applyTheme(readTheme());
   get('portalTheme').addEventListener('click', () => {
     const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
@@ -122,5 +138,6 @@ export function mountPortal(openChat) {
 
   get('portalChatNotice').addEventListener('click', () => openChat());
   get('portalNewsChat').addEventListener('click', () => openChat());
+  get('portalWhatsAppNotice').addEventListener('click', () => openWhatsApp());
   startNewsCarousel();
 }

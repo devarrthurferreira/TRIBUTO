@@ -4,6 +4,8 @@ import { PlatformMySqlStore } from '../platform/mysql-store.mjs';
 import { createPlatformRouter } from '../platform/routes.mjs';
 import { ChatMySqlStore } from '../chat/mysql-store.mjs';
 import { createChat } from '../chat/service.mjs';
+import { WhatsAppMySqlStore } from '../whatsapp/mysql-store.mjs';
+import { createWhatsAppService, readWhatsAppConfig } from '../whatsapp/service.mjs';
 
 for (const key of ['MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE']) {
   if (!process.env[key]) throw new Error(`${key} obrigatória`);
@@ -26,8 +28,12 @@ if (await platformStore.countUsers() === 0 && !bootstrapTokenSha256) throw new E
 const chatStore = new ChatMySqlStore(store.pool);
 await chatStore.initialize();
 const chat = createChat({ store: platformStore, chatStore });
-const platformRouter = createPlatformRouter({ store: platformStore, chat, bootstrapTokenSha256, secureCookies: process.env.COOKIE_SECURE !== 'false' });
-const server = createApiServer({ store, agentRegistry: platformStore, platformRouter });
+const whatsappConfig = readWhatsAppConfig();
+const whatsappStore = whatsappConfig ? new WhatsAppMySqlStore(store.pool) : null;
+if (whatsappStore) await whatsappStore.initialize();
+const whatsapp = createWhatsAppService({ config: whatsappConfig, store: whatsappStore });
+const platformRouter = createPlatformRouter({ store: platformStore, chat, whatsapp, bootstrapTokenSha256, secureCookies: process.env.COOKIE_SECURE !== 'false' });
+const server = createApiServer({ store, agentRegistry: platformStore, platformRouter, whatsapp });
 const io = chat.attach(server);
 server.listen(port, host, () => console.log(`TRIBUTO API ouvindo em ${host}:${port}`));
 let stopping = false;

@@ -1,0 +1,113 @@
+.sector-navigation {
+  position: sticky;
+  top: var(--portal-header-size);
+  z-index: 17;
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  min-height: calc(100dvh - var(--portal-header-size));
+  color: var(--ink);
+  background: var(--portal-surface);
+  border-right: 1px solid var(--portal-edge);
+}
+.app-shell[data-sector-active] .sidebar:not(.open) { display: none; }
+.sector-rail {
+  --sector-rail-width: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 0 var(--sector-rail-width);
+  width: var(--sector-rail-width);
+  gap: 9px;
+  padding: 15px 8px 11px;
+  background: var(--portal-floor);
+}
+.sector-rail-button {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 43px;
+  height: 43px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 20px;
+  text-decoration: none;
+}
+.sector-rail-button:is(:hover, [aria-pressed="true"]) {
+  background: var(--portal-hover);
+  color: var(--blue);
+}
+.sector-rail-button[aria-pressed="true"] { border-color: var(--portal-edge); }
+.sector-rail-home { margin-top: auto; }
+.sector-unread {
+  position: absolute;
+  inset: 5px 5px auto auto;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--portal-floor);
+  border-radius: 50%;
+  background: #d12a42;
+}
+[data-theme="dark"] .sector-unread { background: #ff829a; }
+.sector-subnav {
+  width: clamp(172px, 16vw, 230px);
+  padding: 23px 12px 15px;
+  border-left: 1px solid var(--portal-edge);
+  background: var(--portal-surface);
+}
+.sector-subnav h2 { margin: 0 7px 15px; line-height: 1.35; font-size: 15px; font-weight: 700; }
+.sector-subnav-list { display: grid; gap: 5px; }
+.sector-subnav-link {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 39px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+.sector-subnav-link .bi { color: var(--blue); font-size: 15px; }
+.sector-subnav-link:is(:hover, [aria-current]) { background: var(--portal-hover); color: var(--blue); }
+.app-shell[data-sector-active] .main-content {
+  min-height: calc(100dvh - var(--portal-header-size));
+  padding-top: clamp(20px, 2.8vw, 42px);
+}
+.app-shell[data-sector-area="setor"]:not([data-sector-panel="activities"]) .view > .work-section,
+.app-shell[data-sector-area="setor"]:not([data-sector-panel="fiscal"]) #fiscalDocumentTools,
+.app-shell[data-sector-area="setor"][data-sector-panel="activities"] .view > :is(.feature-grid, .module-message, .technology-overview),
+.app-shell[data-sector-area="setor"][data-sector-panel="fiscal"] #view-fiscal > .work-section { display: none; }
+.app-shell[data-sector-active]:is([data-sector-area="talk"], [data-sector-area="whatsapp"]) .main-content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 0;
+}
+.sector-communication-screen { width: 100%; min-width: 0; }
+.sector-chat-mount, .sector-whatsapp-mount { min-height: calc(100dvh - var(--portal-header-size)); min-width: 0; }
+.sector-communication-screen:focus { outline: none; }
+
+@media (max-width: 700px) {
+  .sector-rail { --sector-rail-width: 47px; padding: 12px 4px 7px; gap: 7px; }
+  .sector-rail-button { width: 36px; height: 36px; font-size: 18px; border-radius: 10px; }
+  .sector-subnav {
+    position: absolute;
+    top: 0;
+    left: 47px;
+    width: min(210px, calc(100vw - 65px));
+    min-height: 100%;
+    border-right: 1px solid var(--portal-edge);
+    box-shadow: 10px 0 24px rgba(40, 12, 22, .1);
+  }
+  .app-shell[data-sector-active] .main-content { padding-inline: 13px; }
+}

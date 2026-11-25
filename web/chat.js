@@ -78,15 +78,19 @@ function restore(userId) {
 
 function remember(state, open = state.dialog.open) {
   try {
-    sessionStorage.setItem(`maximum-chat:${state.session.user.id}`, JSON.stringify({ open, room: state.room?.id || state.pendingRoom || null }));
+    sessionStorage.setItem(`maximum-chat:${state.session.user.id}`, JSON.stringify({ open: open && !state.mount, room: state.room?.id || state.pendingRoom || null }));
   } catch {
     // The current page can continue when the browser has disabled session storage.
   }
 }
 
 function open(state, roomId) {
-  if (!state.dialog.open) state.dialog.showModal();
-  state.launcher.setAttribute('aria-expanded', 'true');
+  if (state.mount && !state.mount.getClientRects().length) return;
+  if (!state.dialog.open) {
+    if (state.mount) state.dialog.show();
+    else state.dialog.showModal();
+  }
+  if (!state.mount) state.launcher.setAttribute('aria-expanded', 'true');
   if (roomId && roomId !== state.room?.id) {
     state.pendingRoom = roomId;
     showPendingRoom(state);
@@ -243,6 +247,10 @@ function showPendingRoom(state) {
   const room = findRoom(state, state.pendingRoom);
   if (room) selectRoom(state, room);
   if (state.hasSummary) state.pendingRoom = null;
+}
+
+function conversationVisible(state) {
+  return state.dialog.open && document.visibilityState !== 'hidden' && state.refs.messages.getClientRects().length > 0;
 }
 
 function renderRoomList(state) {
@@ -440,8 +448,7 @@ async function loadHistory(state, older = false) {
 }
 
 function markRead(state) {
-  if (state !== currentChat || !state.dialog.open || document.visibilityState === 'hidden' || !state.historyReady || !state.room || !nearEnd(state)) return;
-  if (state.dialog.dataset.mobileView === 'list' && matchMedia('(max-width: 620px)').matches) return;
+  if (state !== currentChat || !conversationVisible(state) || !state.historyReady || !state.room || !nearEnd(state)) return;
   const message = Array.from(state.messages.values()).at(-1);
   if (!message || state.marked.get(state.room.id) === message.id) return;
   const room = state.room.id;
@@ -466,8 +473,7 @@ function receiveMessage(state, message, fromSocket = false) {
   if (fromSocket && message.sender.id !== state.session.user.id && !state.recent.has(message.id)) {
     state.recent.add(message.id);
     if (state.recent.size > 256) state.recent.delete(state.recent.values().next().value);
-    const visibleConversation = state.dialog.open && state.room?.id === message.room && nearEnd(state) &&
-      document.visibilityState !== 'hidden' && !(state.dialog.dataset.mobileView === 'list' && matchMedia('(max-width: 620px)').matches);
+    const visibleConversation = conversationVisible(state) && state.room?.id === message.room && nearEnd(state);
     if (!visibleConversation) updateUnread(state, state.unread + 1, message);
   }
   requestSummary(state);
@@ -670,11 +676,12 @@ function bindChat(state) {
   launcher.addEventListener('click', () => open(state));
   refs.close.addEventListener('click', () => dialog.close());
   dialog.addEventListener('close', () => {
+    if (state.mount || dialog.open) return;
     launcher.setAttribute('aria-expanded', 'false');
     remember(state, false);
   });
   dialog.addEventListener('click', event => {
-    if (event.target !== dialog) return;
+    if (state.mount || event.target !== dialog) return;
     const bounds = dialog.getBoundingClientRect();
     if (event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close();
   });
@@ -735,12 +742,12 @@ function bindChat(state) {
   document.addEventListener('visibilitychange', () => markRead(state), { signal: state.abort.signal });
 }
 
-export function initChat(session, { notify } = {}) {
+export function initChat(session, { notify, surface } = {}) {
   if (!session?.user?.id || !session.csrfToken || currentChat?.session.user.id === session.user.id) return;
   if (currentChat) destroyChat();
   const state = {
     ...renderShell(),
-    session, notify,
+    session, notify, mount: null,
     connected: false, wasConnected: false, historyReady: false, hasSummary: false, hasMore: false,
     rooms: [], people: [], modules: [], roomLookup: new Map(),
     abort: new AbortController(), drafts: new Map(), messages: new Map(), marked: new Map(), recent: new Set(),
@@ -759,8 +766,24 @@ export function initChat(session, { notify } = {}) {
   }
   const saved = restore(session.user.id);
   state.pendingRoom = saved.room;
-  if (saved.open) open(state, saved.room);
-  else void refreshSummary(state).catch(() => reportSummaryFailure(state));
+  if (surface?.mount) setChatSurface(surface);
+  if (!state.mount && saved.open) open(state, saved.room);
+  else if (!state.dialog.open) void refreshSummary(state).catch(() => reportSummaryFailure(state));
+}
+
+export function setChatSurface({ mount = null, show = false } = {}) {
+  const state = currentChat;
+  if (!state) return;
+  if (mount !== state.mount) {
+    if (state.dialog.open) state.dialog.close();
+    state.mount = mount;
+    state.launcher.hidden = Boolean(mount);
+    state.refs.close.hidden = Boolean(mount);
+    state.dialog.dataset.chatSurface = mount ? 'sector' : 'home';
+    (mount || document.body).append(state.dialog);
+  }
+  if (show) open(state);
+  else if (mount && state.dialog.open) state.dialog.close();
 }
 
 export function openChat(roomId) {

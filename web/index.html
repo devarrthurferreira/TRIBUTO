@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="/icons.css">
   <link rel="stylesheet" href="/portal.css">
   <link rel="stylesheet" href="/chat.css">
+  <link rel="stylesheet" href="/sectors.css">
+  <link rel="stylesheet" href="/sector-whatsapp.css">
   <script defer src="/socket.io/socket.io.js"></script>
   <script type="module" src="/app.js"></script>
 </head>
@@ -85,6 +87,7 @@
           <div class="portal-popover-panel portal-notifications">
             <h2>Notificações</h2>
             <button id="portalChatNotice" type="button"><i class="bi bi-chat-dots" aria-hidden="true"></i><span><strong id="portalChatUnread">Mensagens</strong><small id="portalChatPreview">Abra o chat interno para conversar.</small></span></button>
+            <button id="portalWhatsAppNotice" type="button" hidden><i class="bi bi-whatsapp" aria-hidden="true"></i><span><strong id="portalWhatsAppUnread">WhatsApp</strong><small>Abra a caixa de entrada do setor.</small></span></button>
             <div id="homeAlerts" class="portal-notification-line"><i class="bi bi-clock-history" aria-hidden="true"></i><span><strong id="homeWorkAlerts">Carregando atividades</strong><small id="homeWorkAlertDescription">Pendências dos seus setores.</small></span></div>
           </div>
         </details>
@@ -124,9 +127,37 @@
     </aside>
 
     <div id="menuBackdrop" class="menu-backdrop" hidden></div>
+    <div id="sectorNavigation" class="sector-navigation" hidden>
+      <nav class="sector-rail" aria-label="Áreas do setor">
+        <button type="button" class="sector-rail-button" data-sector-area="setor" title="Setor" aria-label="Setor" aria-controls="sectorSubnav" aria-expanded="false">
+          <i class="bi bi-grid" aria-hidden="true"></i>
+        </button>
+        <button type="button" class="sector-rail-button" data-sector-area="talk" title="Talk" aria-label="Talk" aria-controls="sectorTalkScreen">
+          <i class="bi bi-chat-dots" aria-hidden="true"></i><span id="sectorTalkDot" class="sector-unread" hidden aria-hidden="true"></span>
+        </button>
+        <button type="button" class="sector-rail-button" data-sector-area="whatsapp" title="WhatsApp" aria-label="WhatsApp" aria-controls="sectorWhatsAppScreen">
+          <i class="bi bi-whatsapp" aria-hidden="true"></i><span id="sectorWhatsAppDot" class="sector-unread" hidden aria-hidden="true"></span>
+        </button>
+        <a class="sector-rail-button sector-rail-home" href="/home" title="Voltar ao Início" aria-label="Voltar ao Início">
+          <i class="bi bi-house-door" aria-hidden="true"></i>
+        </a>
+      </nav>
+      <nav id="sectorSubnav" class="sector-subnav" aria-labelledby="sectorSubnavTitle" hidden>
+        <h2 id="sectorSubnavTitle">Setor</h2>
+        <div id="sectorSubnavList" class="sector-subnav-list"></div>
+      </nav>
+    </div>
     <div class="content-wrap">
       <main id="conteudo" tabindex="-1" class="main-content">
         <div id="notice" class="notice" role="status" hidden></div>
+        <section id="sectorTalkScreen" class="sector-communication-screen" aria-labelledby="sectorTalkTitle" hidden>
+          <h1 id="sectorTalkTitle" class="sr-only">Talk</h1>
+          <div id="sectorTalkMount" class="sector-chat-mount"></div>
+        </section>
+        <section id="sectorWhatsAppScreen" class="sector-communication-screen" aria-labelledby="sectorWhatsAppTitle" hidden>
+          <h1 id="sectorWhatsAppTitle" class="sr-only">WhatsApp do setor</h1>
+          <div id="sectorWhatsAppMount" class="sector-whatsapp-mount"></div>
+        </section>
 
         <section class="view portal-home" id="view-overview" aria-labelledby="overviewTitle">
           <div class="portal-home-layout">
@@ -194,10 +225,6 @@
             <article class="stat-card"><strong id="technologyOpen">—</strong><span>Abertas</span></article>
             <article class="stat-card"><strong id="technologyInProgress">—</strong><span>Em andamento</span></article>
             <article class="stat-card"><strong id="technologyDone">—</strong><span>Concluídas</span></article>
-          </div>
-          <div id="technologyAdminActions" class="feature-grid technology-actions" hidden>
-            <article class="feature-card"><h3>Equipe e acessos</h3><p>Crie usuários e defina o acesso por setor e por ação.</p><button type="button" class="text-button" data-go="users">Gerenciar acessos <span aria-hidden="true">›</span></button></article>
-            <article class="feature-card"><h3>Agentes de coleta</h3><p>Consulte os vínculos e a comunicação dos agentes.</p><button type="button" class="text-button" data-go="agents">Gerenciar agentes <span aria-hidden="true">›</span></button></article>
           </div>
           <div id="technologyRestricted" class="module-message" hidden><span aria-hidden="true">⌘</span><div><strong>Atividades com acesso restrito</strong><p>Seu perfil pode acessar Tecnologia. A visualização das atividades é liberada em Equipe e acessos.</p></div></div>
         </section>

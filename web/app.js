@@ -1,5 +1,6 @@
 import { destroyChat, initChat, openChat } from './chat.js';
 import { mountPortal, setChatNotification } from './portal.js';
+import { mountSectorNavigation } from './sectors.js';
 
 const API = '/v1/platform';
 const DASHBOARD_PATH = '/home';
@@ -173,6 +174,8 @@ function setPortalContext(view) {
 function showAuth(setupRequired, message = '', preserveRoute = false) {
   destroyChat();
   setChatNotification();
+  sectorNavigation.leave();
+  sectorNavigation.setTalkUnread(0);
   state.session = null;
   state.selectedCompanyCnpj = null;
   if (location.pathname !== '/' || (!preserveRoute && location.hash)) {
@@ -240,11 +243,22 @@ function applySession(session) {
   $('fiscalDocumentTools').hidden = !canReadFiscalDocuments;
   $('technologyOverview').hidden = !canUse('tecnologia', 'workItemRead');
   $('technologyRestricted').hidden = canUse('tecnologia', 'workItemRead');
-  $('technologyAdminActions').hidden = !isAdmin();
   document.querySelector('[data-go="tecnologia"]').hidden = !canView('tecnologia');
   renderModuleCards();
   void initialLoad();
-  if (navigate(view, { replace: true })) initChat(session, { notify: setChatNotification });
+  const surface = navigate(view, { replace: true });
+  if (surface) {
+    initChat(session, { surface, notify: (notification) => {
+      setChatNotification(notification);
+      sectorNavigation.setTalkUnread(notification.unread);
+    } });
+    const url = new URL(location.href);
+    if (state.view === 'overview' && url.searchParams.has('talk')) {
+      url.searchParams.delete('talk');
+      history.replaceState(null, '', url);
+      openChat();
+    }
+  }
 }
 async function initialLoad() {
   const results = await Promise.allSettled([loadDashboard(), loadCompanies(), ...(isAdmin() ? [loadAgents(), loadStorage()] : [])]);
@@ -318,6 +332,12 @@ function navigate(view, { replace = false } = {}) {
   setPortalContext(state.view);
   if (`${location.pathname}${location.hash}` !== targetUrl) history.replaceState(null, '', targetUrl);
   closeMenu();
+  const sector = allModules.find(({ id }) => id === state.view);
+  const surface = sectorNavigation.activate(sector ? {
+    id: sector.id, label: sector.label, session: state.session, admin: isAdmin(),
+    content: $(`view-${sector.id}`), activities: canUse(sector.id, 'workItemRead'),
+    fiscalDocuments: sector.id === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead'),
+  } : null, { home: state.view === 'overview' });
   $('conteudo').focus({ preventScroll: true });
   if (state.view === 'users') void loadUsers().catch(displayError);
   if (state.view === 'agents') void loadAgents().catch(displayError);
@@ -325,7 +345,7 @@ function navigate(view, { replace = false } = {}) {
   if (state.view === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead')) void loadFiscalDocuments().catch(displayError);
   if (state.view === 'company-detail') void loadCompanyDetail().catch(displayError);
   if (canUse(state.view, 'workItemRead')) void loadWorkItems(state.view).catch(displayError);
-  return true;
+  return surface;
 }
 function openMenu() { $('sidebar').classList.add('open'); $('menuBackdrop').hidden = false; $('openMenu').setAttribute('aria-expanded', 'true'); }
 function closeMenu() { $('sidebar').classList.remove('open'); $('menuBackdrop').hidden = true; $('openMenu').setAttribute('aria-expanded', 'false'); }
@@ -1104,5 +1124,10 @@ function setupEvents() {
 }
 
 setupEvents();
-mountPortal(openChat);
+const sectorNavigation = mountSectorNavigation();
+mountPortal(() => {
+  if (sectorNavigation.open('talk')) return;
+  if (state.view === 'overview') openChat();
+  else location.assign('/home?talk=1');
+}, () => sectorNavigation.open('whatsapp'));
 request('/session').then(applySession).catch((error) => showAuth(false, error.message));

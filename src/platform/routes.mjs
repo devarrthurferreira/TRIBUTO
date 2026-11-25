@@ -115,7 +115,7 @@ function dueAt(value) {
   return value;
 }
 
-export function createPlatformRouter({ store, chat, bootstrapTokenSha256, secureCookies = true, logger = console }) {
+export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha256, secureCookies = true, logger = console }) {
   function loginKey(req, address) { return sha256(`${req.socket.remoteAddress || 'unknown'}:${address}`); }
   async function startSession(res, user) {
     const token = newSecret();
@@ -165,6 +165,9 @@ export function createPlatformRouter({ store, chat, bootstrapTokenSha256, secure
       if (req.method !== 'GET' && req.method !== 'HEAD') requireCsrf(req, session);
       if (chat && (route === '/chat' || route.startsWith('/chat/'))) {
         return await chat.handleHttp({ req, res, route, user, send, readBody: body });
+      }
+      if (whatsapp && (route === '/whatsapp' || route.startsWith('/whatsapp/'))) {
+        return await whatsapp.handleHttp({ req, res, route, user, send, readBody: body });
       }
       if (req.method === 'POST' && route === '/logout') {
         await store.deleteSession(session._id);

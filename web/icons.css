@@ -43,3 +43,10 @@
 .bi-chat-square-text::before { content: "\f264"; }
 .bi-clock-history::before { content: "\f292"; }
 .bi-shield-lock::before { content: "\f538"; }
+.bi-whatsapp::before { content: "\f618"; }
+.bi-house-door::before { content: "\f423"; }
+.bi-list-task::before { content: "\f477"; }
+.bi-folder2-open::before { content: "\f3d8"; }
+.bi-sliders::before { content: "\f56b"; }
+.bi-diagram-3::before { content: "\f2ee"; }
+.bi-arrow-clockwise::before { content: "\f116"; }
