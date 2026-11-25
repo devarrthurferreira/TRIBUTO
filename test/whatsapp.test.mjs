@@ -188,3 +188,31 @@ test('WhatsApp routes verify webhook and connect authorized inbox, read state an
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test('Baileys pairing is restricted to administrators in the configured sector', async () => {
+  const admin = { _id: randomUUID(), role: 'admin', active: true, moduleGrants: {} };
+  const observer = { _id: randomUUID(), role: 'member', active: true, moduleGrants: { tecnologia: 'manage' } };
+  const qrImage = 'data:image/png;base64,dGVzdA==';
+  let paired = false;
+  const baileysScope = { sector: 'tecnologia', phoneId: 'baileys:5532990000000' };
+  const bridge = {
+    sector: 'tecnologia',
+    scope: () => paired ? baileysScope : null,
+    async connect() { paired = true; },
+    async disconnect() { paired = false; },
+    async status({ includeQr } = {}) {
+      return paired ? { state: 'qr', ...(includeQr ? { qrImage } : {}) } : { state: 'disconnected' };
+    },
+  };
+  const whatsapp = createWhatsAppService({ bridge, store: fixtureStore() });
+  const get = (route, user, input) => whatsapp.handleHttp({
+    req: { method: input ? 'POST' : 'GET', url: '/v1/platform' + route + '?sector=tecnologia' },
+    route, user, readBody: async () => input, send: (_, status, data) => ({ status, data }),
+  });
+  const action = { sector: 'tecnologia', action: 'connect' };
+  assert.equal((await get('/whatsapp/connections', admin)).data.connection.status, 'disconnected');
+  await assert.rejects(get('/whatsapp/connections', observer, action), { status: 403 });
+  assert.equal((await get('/whatsapp/connections', admin, action)).data.connection.qrImage, qrImage);
+  assert.equal((await get('/whatsapp/connections', observer)).data.connection.qrImage, undefined);
+  assert.equal((await get('/whatsapp/connections', admin, { ...action, action: 'disconnect' })).data.connection.status, 'disconnected');
+});

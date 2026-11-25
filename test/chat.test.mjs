@@ -34,7 +34,7 @@ test('chat em polling autentica destinatários, guarda mensagens e protege anexo
       return roomKeys.map(roomKey => {
         const history = messages.filter(message => message.roomKey === roomKey);
         const readThrough = reads.get(`${userId}:${roomKey}`) || 0;
-        return { roomKey, lastMessage: history.at(-1), unread: history.filter(message => Number(message.id) > readThrough && message.senderId !== userId).length };
+        return { roomKey, lastMessage: history.at(-1), unread: history.filter(message => !message.deletedAt && Number(message.id) > readThrough && message.senderId !== userId).length };
       });
     },
     async listMessages(roomKey, beforeSequence) {
@@ -51,6 +51,23 @@ test('chat em polling autentica destinatários, guarda mensagens e protege anexo
       });
       messages.push(message);
       return { message, inserted: true };
+    },
+    async reviseMessage({ id, roomKey, senderId, text }) {
+      const index = messages.findIndex(message => message.id === id && message.roomKey === roomKey && message.senderId === senderId);
+      if (index === -1) return { message: null, changed: false };
+      const previous = messages[index];
+      if (previous.deletedAt || text === previous.text) return { message: previous, changed: false };
+      if (text === '' && !previous.attachments.length && !previous.reference) return { message: null, changed: false, empty: true };
+      const now = new Date().toISOString();
+      const message = { ...previous, text: text ?? '' };
+      if (text === null) {
+        for (const { id: attachmentId } of previous.attachments) files.delete(attachmentId);
+        Object.assign(message, { attachments: [], reference: null, deletedAt: now });
+      } else {
+        message.editedAt = now;
+      }
+      messages[index] = message;
+      return { message, changed: true };
     },
     async markRead(userId, roomKey, through) {
       if (!messages.some(message => message.id === through && message.roomKey === roomKey)) return false;
@@ -120,6 +137,35 @@ test('chat em polling autentica destinatários, guarda mensagens e protege anexo
     assert.equal((await (await request(bruno)).json()).unread, 1);
     assert.equal((await request(bruno, '/read', { room: 'sector:tecnologia', through: sent.message.id })).status, 200);
     assert.equal((await (await request(bruno)).json()).unread, 0);
+    const target = { room: 'sector:tecnologia', id: sent.message.id };
+    const unauthorizedEdit = await recipient.timeout(3000).emitWithAck('chat:edit', { ...target, text: 'Outro autor' });
+    assert.equal(unauthorizedEdit.code, 'CHAT_NOT_FOUND');
+    const unauthorizedDelete = await recipient.timeout(3000).emitWithAck('chat:delete', target);
+    assert.equal(unauthorizedDelete.code, 'CHAT_NOT_FOUND');
+    const outsideEdit = await outsider.timeout(3000).emitWithAck('chat:edit', { ...target, text: 'Outro setor' });
+    assert.equal(outsideEdit.code, 'CHAT_FORBIDDEN');
+    const editEvent = once(recipient, 'chat:message-updated');
+    const edited = await sender.timeout(3000).emitWithAck('chat:edit', { ...target, text: 'Bom dia, atualizado' });
+    assert.equal(edited.message.text, 'Bom dia, atualizado');
+    assert.ok(edited.message.editedAt);
+    assert.equal(edited.message.attachments[0].id, sent.message.attachments[0].id);
+    assert.equal((await editEvent)[0].message.text, edited.message.text);
+    const editedHistory = (await (await request(bruno, '/messages?room=sector%3Atecnologia')).json()).messages[0];
+    assert.equal(editedHistory.editedAt, edited.message.editedAt);
+    const deletionEvent = once(recipient, 'chat:message-updated');
+    const deleted = await sender.timeout(3000).emitWithAck('chat:delete', target);
+    assert.ok(deleted.message.deletedAt);
+    assert.equal(deleted.message.text, '');
+    assert.equal(deleted.message.reference, null);
+    assert.deepEqual(deleted.message.attachments, []);
+    assert.equal((await deletionEvent)[0].message.deletedAt, deleted.message.deletedAt);
+    assert.equal((await request(bruno, attachmentPath)).status, 404);
+    const deletedHistory = (await (await request(bruno, '/messages?room=sector%3Atecnologia')).json()).messages[0];
+    assert.equal(deletedHistory.deletedAt, deleted.message.deletedAt);
+    const repeatedDeletion = await sender.timeout(3000).emitWithAck('chat:delete', target);
+    assert.equal(repeatedDeletion.message.deletedAt, deleted.message.deletedAt);
+    const afterDeleteEdit = await sender.timeout(3000).emitWithAck('chat:edit', { ...target, text: 'Recriar mensagem' });
+    assert.equal(afterDeleteEdit.code, 'CHAT_DELETED');
 
     const privateEvent = once(outsider, 'chat:message');
     const privateSent = await sender.timeout(3000).emitWithAck('chat:send', { ...input, clientId: randomUUID(), room: `direct:${carla._id}`, attachments: [] });

@@ -7,6 +7,36 @@ const DELIVERY_LABELS = {
   queued: 'Na fila', pending: 'Enviando', accepted: 'Aceita para envio', sent: 'Enviada', delivered: 'Entregue',
   read: 'Lida', failed: 'Falha no envio', uncertain: 'Envio não confirmado'
 };
+const NAVIGATION = [
+  { id: 'chats', title: 'Chats', icon: 'chat-dots' },
+  { id: 'contacts', title: 'Contatos', icon: 'people' },
+  { id: 'tags', title: 'Tags', icon: 'hash' },
+  { id: 'connections', title: 'Conexões', icon: 'link-45deg' },
+  { id: 'overview', title: 'Visão geral', icon: 'grid', pages: [
+    { id: 'now', title: 'Agora' },
+    { id: 'history', title: 'Histórico de chamados' },
+    { id: 'statistics', title: 'Estatísticas de chamados' },
+    { id: 'absence', title: 'Controle de ausência' }
+  ] },
+  { id: 'settings', title: 'Mais opções', icon: 'sliders', pages: [
+    { id: 'users', title: 'Usuários' },
+    { id: 'roles', title: 'Cargos' },
+    { id: 'robots', title: 'Robôs' },
+    { id: 'departments', title: 'Departamentos' },
+    { id: 'integrations', title: 'Integrações' }
+  ] }
+];
+const CONNECTION_LABELS = {
+  disabled: 'Indisponível', disconnected: 'Desconectada', connecting: 'Conectando',
+  reconnecting: 'Reconectando', qr: 'Aguardando leitura do QR', connected: 'Conectada', error: 'Falha na conexão'
+};
+const PROVIDER_LABELS = { cloud: 'WhatsApp Business Cloud', baileys: 'WhatsApp Web' };
+const TICKET_LABELS = { open: 'Aberto', closed: 'Encerrado' };
+const QR_IMAGE = /^data:image\/png;base64,[a-z\d+/=]+$/i;
+const TAG_COLORS = [
+  ['#147a58', 'Verde'], ['#3261ab', 'Azul'], ['#7d4ba5', 'Roxo'],
+  ['#a45c0b', 'Âmbar'], ['#b44252', 'Rosa'], ['#526276', 'Cinza']
+];
 
 function element(tag, className, content) {
   const node = document.createElement(tag);
@@ -46,14 +76,14 @@ function searchKey(value) {
   return String(value || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase('pt-BR');
 }
 
-async function request(path, { signal, body, token } = {}) {
+async function request(path, { signal, body, token, method = body ? 'POST' : 'GET' } = {}) {
   const headers = { Accept: 'application/json' };
   if (body) {
     headers['Content-Type'] = 'application/json';
     headers['X-CSRF-Token'] = token;
   }
   const response = await fetch(API + path, {
-    method: body ? 'POST' : 'GET',
+    method,
     credentials: 'same-origin',
     headers,
     body: body && JSON.stringify(body),
@@ -91,16 +121,20 @@ function makeShell(container) {
     <header class="wa-header">
       <span class="wa-header-icon"><i class="bi bi-whatsapp" aria-hidden="true"></i></span>
       <div class="wa-heading">
-        <h2>WhatsApp</h2>
+        <h2>Central de WhatsApp</h2>
         <p data-wa="connection">Carregando a caixa de entrada…</p>
       </div>
       <button type="button" data-wa="refresh" class="wa-control" title="Atualizar WhatsApp"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i> Atualizar</button>
     </header>
+    <nav data-wa="navigation" class="wa-navigation" aria-label="Seções do WhatsApp"></nav>
+    <nav data-wa="subnavigation" class="wa-subnavigation" aria-label="Opções da seção" hidden></nav>
     <div data-wa="status" class="wa-status" role="status" hidden></div>
+    <div data-wa="workspace" class="wa-workspace" hidden></div>
     <div data-wa="offline" class="wa-unavailable" hidden></div>
     <div data-wa="layout" class="wa-layout" hidden>
       <aside data-wa="directory" class="wa-directory" aria-label="Conversas do WhatsApp">
         <label class="wa-search"><i class="bi bi-search" aria-hidden="true"></i><span class="wa-visually-hidden">Buscar conversas do WhatsApp</span><input type="search" data-wa="search" placeholder="Buscar por nome ou número"></label>
+        <label data-wa="tagFilterRow" class="wa-form-field" hidden><span class="wa-visually-hidden">Filtrar chats por tag</span><select data-wa="tagFilter"></select></label>
         <div data-wa="conversations" class="wa-conversations"></div>
         <button type="button" data-wa="moreConversations" class="wa-control" hidden>Mais conversas</button>
       </aside>
@@ -110,7 +144,15 @@ function makeShell(container) {
           <header class="wa-thread-header">
             <button type="button" data-wa="back" class="wa-control wa-back" aria-label="Voltar às conversas"><i class="bi bi-arrow-left" aria-hidden="true"></i></button>
             <div class="wa-thread-label"><h3 data-wa="name" tabindex="-1"></h3><p data-wa="phone"></p></div>
+            <div class="wa-thread-tools" data-wa="threadTools" hidden>
+              <button type="button" class="wa-control" data-wa="tagThread" aria-expanded="false" hidden>Tags</button>
+              <button type="button" class="wa-control" data-wa="ticket" hidden></button>
+            </div>
           </header>
+          <form data-wa="threadTags" class="wa-thread-tags" hidden>
+            <fieldset class="wa-inline-tags"><legend>Tags da conversa</legend><div data-wa="threadTagOptions"></div></fieldset>
+            <button class="wa-control" type="submit">Salvar tags</button>
+          </form>
           <div data-wa="scroll" class="wa-scroll">
             <button type="button" data-wa="older" class="wa-control wa-older" hidden>Mensagens anteriores</button>
             <div data-wa="messages" class="wa-messages" aria-label="Histórico de mensagens"></div>
@@ -133,10 +175,12 @@ function renderConversations(state) {
   const { ui, conversations, selected } = state;
   const focused = ui.conversations.contains(document.activeElement) ? document.activeElement.dataset.conversationId : null;
   const query = searchKey(ui.search.value.trim());
-  const matches = conversations.filter((entry) => searchKey(`${entry.name || ''} ${entry.phone || ''}`).includes(query));
+  const tag = ui.tagFilter.value;
+  const matches = conversations.filter((entry) => searchKey(`${entry.name || ''} ${entry.phone || ''}`).includes(query)
+    && (!tag || entry.tags?.includes(tag)));
   if (!matches.length) {
-    ui.conversations.replaceChildren(emptyState('chat-dots', query ? 'Nenhum resultado' : 'Nenhuma conversa ainda',
-      query ? 'Busque por outro nome ou número.' : 'As mensagens recebidas no número conectado aparecerão aqui.'));
+    ui.conversations.replaceChildren(emptyState('chat-dots', query || tag ? 'Nenhum resultado' : 'Nenhuma conversa ainda',
+      query || tag ? 'Experimente outro nome, número ou tag.' : 'As mensagens recebidas no número conectado aparecerão aqui.'));
     return;
   }
   let restoreFocus;
@@ -173,9 +217,13 @@ function setCanReply(state, allowed) {
   state.canReply = Boolean(allowed);
   state.ui.form.hidden = !allowed;
   state.ui.replyInfo.hidden = Boolean(allowed);
-  state.ui.replyInfo.textContent = state.sectorCanReply
-    ? 'A resposta fica disponível durante 24 horas após uma mensagem do contato.'
-    : 'Seu acesso ao WhatsApp deste setor permite consultar conversas.';
+  state.ui.replyInfo.textContent = state.absence?.enabled
+    ? 'Respostas pausadas pelo controle de ausência.'
+    : state.sectorCanReply
+    ? state.provider === 'cloud'
+      ? 'A resposta fica disponível durante 24 horas após uma mensagem do contato.'
+      : 'A conexão do setor precisa estar disponível para enviar respostas.'
+    : 'O envio está indisponível para este acesso ou conexão.';
 }
 
 function syncComposer(state) {
@@ -213,6 +261,10 @@ function renderThread(state, entry) {
   state.ui.conversation.hidden = false;
   state.ui.name.textContent = contactName(entry);
   state.ui.phone.textContent = entry.phone || '';
+  state.ui.tagThread.hidden = !state.canAssignTags || !state.tags.length;
+  state.ui.ticket.hidden = !state.canManageTickets || !Object.hasOwn(TICKET_LABELS, entry.status);
+  state.ui.ticket.textContent = entry.status === 'closed' ? 'Reabrir chamado' : 'Encerrar chamado';
+  state.ui.threadTools.hidden = state.ui.tagThread.hidden && state.ui.ticket.hidden;
 }
 
 function closeThread(state) {
@@ -228,15 +280,27 @@ function closeThread(state) {
 
 function applySummary(state, data, page) {
   state.connected = Boolean(data.configured);
-  state.ui.layout.hidden = !state.connected;
-  state.ui.offline.hidden = state.connected;
-  state.ui.connection.textContent = state.connected ? 'Caixa de entrada do setor' : 'Número não conectado';
+  state.provider = data.provider || state.provider || 'cloud';
+  state.absence = data.absence || null;
+  state.canManageConnection = Boolean(data.canManage ?? state.isAdmin);
+  state.canManageTickets = Boolean(data.canManageTickets ?? data.canReply);
+  state.unread = state.connected ? Math.max(0, Number(data.unread) || 0) : 0;
+  state.ui.connection.textContent = state.connected ? 'Atendimento do setor' : 'Número não conectado';
   state.sectorCanReply = Boolean(data.canReply);
-  state.onUnread?.(state.connected ? Math.max(0, Number(data.unread) || 0) : 0);
+  state.onUnread?.(state.unread);
   if (!state.connected) {
-    state.ui.offline.replaceChildren(emptyState('whatsapp', 'Nenhum número conectado', 'Peça ao setor de Tecnologia para vincular o número deste setor à Central Maximum.'));
-    return;
+    if (state.selected) closeThread(state);
+    state.conversations = [];
+    state.page = 1;
+    state.hasMoreConversations = false;
+    const panel = emptyState('whatsapp', 'Nenhum número conectado', state.canManageConnection
+      ? 'Vincule um número em Conexões para ativar a caixa de entrada.'
+      : 'Peça ao setor de Tecnologia para vincular o número deste setor à Central Maximum.');
+    if (state.canManageConnection) panel.append(actionButton('Abrir conexões', () => openWorkspace(state, 'connections')));
+    state.ui.offline.replaceChildren(panel);
   }
+  updateLayout(state);
+  if (!state.connected) return;
   const entries = Array.isArray(data.conversations) ? data.conversations : [];
   if (page === 1) {
     const latestIds = new Set(entries.map(({ id }) => id));
@@ -248,7 +312,8 @@ function applySummary(state, data, page) {
   }
   if (page >= state.page) {
     state.page = page;
-    state.ui.moreConversations.hidden = !data.hasMore;
+    state.hasMoreConversations = Boolean(data.hasMore);
+    state.ui.moreConversations.hidden = !state.hasMoreConversations;
   }
   const selected = state.conversations.find(({ id }) => id === state.selected);
   if (selected) {
@@ -256,6 +321,427 @@ function applySummary(state, data, page) {
     setCanReply(state, selected.canReply && state.sectorCanReply);
   } else if (state.selected) closeThread(state);
   renderConversations(state);
+}
+
+function actionButton(label, handle, { symbol, primary = false } = {}) {
+  const button = element('button', primary ? 'wa-send' : 'wa-control');
+  button.type = 'button';
+  if (symbol) button.append(icon(symbol));
+  button.append(document.createTextNode(label));
+  button.addEventListener('click', () => void handle(button));
+  return button;
+}
+
+function updateLayout(state) {
+  const chats = state.active === 'chats';
+  state.ui.layout.hidden = !chats || !state.connected;
+  state.ui.offline.hidden = !chats || state.connected;
+  state.ui.workspace.hidden = chats;
+  state.ui.refresh.title = chats ? 'Atualizar WhatsApp' : 'Atualizar seção';
+}
+
+function workspaceRequest(state, path, options = {}) {
+  const { body, signal = state.signal, method } = options;
+  return body
+    ? request(path, { signal, method, token: state.token, body: { sector: state.sector, ...body } })
+    : request(path + '?' + new URLSearchParams({ sector: state.sector }), { signal });
+}
+
+function chooseTab(target, pages, navigate, current) {
+  for (const page of pages) {
+    let button = target.querySelector(`[data-tab="${page.id}"]`);
+    if (!button) {
+      button = element('button', 'wa-tab');
+      button.type = 'button';
+      button.dataset.tab = page.id;
+      if (page.icon) button.append(icon(page.icon));
+      button.append(document.createTextNode(page.title));
+      button.addEventListener('click', () => navigate(page.id));
+      target.append(button);
+    }
+    if (page.id === current) button.setAttribute('aria-current', 'true');
+    else button.removeAttribute('aria-current');
+  }
+}
+
+function openWorkspace(state, section, page) {
+  const group = NAVIGATION.find(({ id }) => id === section);
+  if (!group) return;
+  const child = group.pages?.find(({ id }) => id === page) || group.pages?.[0];
+  if (state.active === section && state.activePage === child?.id) return;
+  state.viewRequest?.abort();
+  clearTimeout(state.connectionTimer);
+  state.ui.subnavigation.replaceChildren();
+  state.active = section;
+  state.activePage = child?.id;
+  chooseTab(state.ui.navigation, NAVIGATION, (id) => openWorkspace(state, id), section);
+  if (group.pages) chooseTab(state.ui.subnavigation, group.pages, (id) => openWorkspace(state, section, id), child.id);
+  state.ui.subnavigation.hidden = !group.pages;
+  state.ui.threadTags.hidden = true;
+  state.ui.tagThread.setAttribute('aria-expanded', 'false');
+  updateLayout(state);
+  setStatus(state);
+  if (section === 'chats') {
+    void refresh(state, true);
+    void refreshTags(state).catch(() => {});
+    return;
+  }
+  void loadWorkspace(state);
+}
+
+function startPanel(state, heading, description = '') {
+  const section = element('section', 'wa-workspace-panel');
+  section.setAttribute('aria-label', heading);
+  const intro = element('header', 'wa-panel-heading');
+  intro.append(element('h3', '', heading));
+  if (description) intro.append(element('p', '', description));
+  section.append(intro);
+  state.ui.workspace.replaceChildren(section);
+  return section;
+}
+
+function listOrEmpty(target, entries, makeRow, empty) {
+  const list = element('ul', 'wa-workspace-list');
+  if (entries.length) {
+    for (const entry of entries) list.append(makeRow(entry));
+    target.append(list);
+  } else target.append(emptyState(...empty));
+}
+
+function directoryRow(name, details, extra) {
+  const row = element('li', 'wa-directory-row');
+  const text = element('div', 'wa-directory-name');
+  text.append(element('strong', '', name));
+  if (details) text.append(element('small', '', details));
+  row.append(text);
+  if (extra) row.append(extra);
+  return row;
+}
+
+function renderContacts(state) {
+  const section = startPanel(state, 'Contatos', 'Contatos identificados nas conversas deste setor.');
+  const query = element('input', 'wa-search-input');
+  query.type = 'search';
+  query.placeholder = 'Buscar por nome ou número';
+  query.setAttribute('aria-label', 'Buscar contatos');
+  const results = element('div', 'wa-workspace-results');
+  section.append(query, results);
+  const refreshContacts = () => {
+    results.replaceChildren();
+    const search = searchKey(query.value);
+    const list = state.conversations.filter((entry) => searchKey(`${contactName(entry)} ${entry.phone || ''}`).includes(search));
+    listOrEmpty(results, list, (entry) => directoryRow(contactName(entry), entry.name === entry.phone ? null : entry.phone,
+      actionButton('Ver conversa', () => {
+        openWorkspace(state, 'chats');
+        openThread(state, entry);
+      }, { symbol: 'chat-dots' })), ['people', search ? 'Nenhum contato encontrado' : 'Nenhum contato disponível',
+      search ? 'Experimente outra busca.' : 'Os contatos aparecem após a primeira conversa pelo número do setor.']);
+    if (state.hasMoreConversations) results.append(actionButton('Mais contatos', async (button) => {
+      button.disabled = true;
+      try {
+        await refreshSummary(state, state.page + 1);
+        if (state.active === 'contacts') refreshContacts();
+      } catch (error) { showError(state, error); }
+      finally { button.disabled = false; }
+    }));
+  };
+  query.addEventListener('input', refreshContacts);
+  refreshContacts();
+}
+
+function updateTagChoices(state) {
+  const current = state.ui.tagFilter.value;
+  state.ui.tagFilter.replaceChildren(new Option('Todas as tags', ''), ...state.tags.map(({ id, name }) => new Option(name, id)));
+  if (state.tags.some(({ id }) => id === current)) state.ui.tagFilter.value = current;
+  state.ui.tagFilterRow.hidden = !state.tags.length;
+  if (state.connected) renderConversations(state);
+  const entry = state.conversations.find(({ id }) => id === state.selected);
+  if (entry) renderThread(state, entry);
+}
+
+async function refreshTags(state, signal = state.signal) {
+  const data = await workspaceRequest(state, '/tags', { signal });
+  if (signal.aborted) return null;
+  state.tags = Array.isArray(data.tags) ? data.tags : [];
+  state.canManageTags = Boolean(data.canManage);
+  state.canAssignTags = Boolean(data.canAssign ?? data.canManage);
+  updateTagChoices(state);
+  return data;
+}
+
+function renderTags(state) {
+  const section = startPanel(state, 'Tags', 'Organize as conversas com tags compartilhadas pelo setor.');
+  if (state.canManageTags) {
+    const form = element('form', 'wa-inline-form');
+    form.innerHTML = '<label class="wa-form-field">Nome da tag<input required maxlength="60" placeholder="Ex.: Aguardando retorno"></label><label class="wa-form-field">Cor<select></select></label><button type="submit" class="wa-send">Criar tag</button>';
+    const [name, color, save] = form.querySelectorAll('input, select, button');
+    color.append(...TAG_COLORS.map(([value, label]) => new Option(label, value)));
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      save.disabled = true;
+      try {
+        await workspaceRequest(state, '/tags', { body: { name: name.value.trim(), color: color.value } });
+        await loadWorkspace(state, { preserve: true });
+      } catch (error) { showError(state, error); }
+      finally { save.disabled = false; }
+    });
+    section.append(form);
+  }
+  listOrEmpty(section, state.tags, (tag) => {
+    const colorName = TAG_COLORS.find(([value]) => value === tag.color)?.[1];
+    return directoryRow(tag.name, colorName, icon('hash'));
+  }, ['hash', 'Nenhuma tag cadastrada', state.canManageTags ? 'Crie uma tag para começar a classificar as conversas.' : 'As tags criadas pelo setor aparecerão aqui.']);
+}
+
+function toggleThreadTags(state) {
+  const entry = state.conversations.find(({ id }) => id === state.selected);
+  if (!entry || !state.canAssignTags) return;
+  state.ui.threadTags.hidden = !state.ui.threadTags.hidden;
+  state.ui.tagThread.setAttribute('aria-expanded', String(!state.ui.threadTags.hidden));
+  if (state.ui.threadTags.hidden) return;
+  const choices = state.tags.map((tag) => {
+    const label = element('label', 'wa-checkbox');
+    const checkbox = element('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = tag.id;
+    checkbox.checked = Array.isArray(entry.tags) && entry.tags.includes(tag.id);
+    label.append(checkbox, document.createTextNode(tag.name));
+    return label;
+  });
+  state.ui.threadTagOptions.replaceChildren(...choices);
+  state.ui.threadTagOptions.querySelector('input')?.focus();
+}
+
+async function saveThreadTags(state, event) {
+  event.preventDefault();
+  const conversation = state.selected;
+  if (!conversation || !state.canAssignTags || state.ui.threadTags.hidden) return;
+  const tagIds = [...state.ui.threadTagOptions.querySelectorAll('input:checked')].map(({ value }) => value);
+  const button = event.submitter;
+  if (button) button.disabled = true;
+  try {
+    await workspaceRequest(state, '/tags', { method: 'PATCH', body: { conversation, tagIds } });
+    if (state.selected === conversation && !state.ui.threadTags.hidden) toggleThreadTags(state);
+    await refreshSummary(state);
+  } catch (error) { showError(state, error); }
+  finally { if (button) button.disabled = false; }
+}
+
+async function updateTicket(state) {
+  const entry = state.conversations.find(({ id }) => id === state.selected);
+  if (!entry || !state.canManageTickets || !Object.hasOwn(TICKET_LABELS, entry.status)) return;
+  state.ui.ticket.disabled = true;
+  try {
+    await workspaceRequest(state, '/ticket', { body: { conversation: entry.id, status: entry.status === 'closed' ? 'open' : 'closed' } });
+    await refreshSummary(state);
+  } catch (error) { showError(state, error); }
+  finally { state.ui.ticket.disabled = false; }
+}
+
+function connectionAction(state, action) {
+  return async (button) => {
+    button.disabled = true;
+    try {
+      const data = await workspaceRequest(state, '/connections', { body: { action } });
+      if (state.active === 'connections' && !state.signal.aborted) {
+        renderConnection(state, data);
+        if (action === 'disconnect' && data.unlinkConfirmed === false) {
+          setStatus(state, 'A conexão local foi interrompida. Confira o aparelho na lista de dispositivos do WhatsApp.');
+        }
+      }
+      await refreshSummary(state);
+    } catch (error) { showError(state, error); }
+    finally { button.disabled = false; }
+  };
+}
+
+function renderConnection(state, data) {
+  const { connection = {}, canManage } = data;
+  if (connection.provider) state.provider = connection.provider;
+  const section = startPanel(state, 'Conexões', 'Acompanhe o número de WhatsApp vinculado a este setor.');
+  const status = CONNECTION_LABELS[connection.status] || CONNECTION_LABELS.disabled;
+  const card = element('article', 'wa-workspace-card wa-connection-card');
+  const line = element('header', 'wa-connection-header');
+  const title = element('div');
+  title.append(element('h4', '', PROVIDER_LABELS[connection.provider] || 'WhatsApp'), element('p', '', connection.phone || 'Número do setor'));
+  const pill = element('span', `wa-pill ${connection.status === 'connected' ? 'wa-pill-active' : ''}`, status);
+  line.append(title, pill);
+  card.append(line);
+
+  if (canManage && connection.status === 'qr' && typeof connection.qrImage === 'string'
+    && connection.qrImage.length < 500_000 && QR_IMAGE.test(connection.qrImage)) {
+    const pairing = element('div', 'wa-pairing');
+    const qr = element('img', 'wa-qr');
+    qr.src = connection.qrImage;
+    qr.alt = 'Código QR de pareamento do WhatsApp deste setor';
+    qr.width = qr.height = 230;
+    const instructions = element('div');
+    instructions.append(element('h4', '', 'Leia o código no telefone do setor'));
+    const steps = element('ol', 'wa-qr-steps');
+    for (const step of ['Abra o WhatsApp no telefone.', 'Em Aparelhos conectados, toque em Conectar um aparelho.', 'Aponte a câmera para o código ao lado.']) steps.append(element('li', '', step));
+    instructions.append(steps);
+    pairing.append(qr, instructions);
+    card.append(pairing);
+  } else if (connection.reason) {
+    card.append(element('p', 'wa-supporting-text', connection.reason));
+  } else if (!canManage) {
+    card.append(element('p', 'wa-supporting-text', 'O pareamento do número é administrado pela equipe responsável.'));
+  } else if (connection.status === 'disabled') {
+    card.append(element('p', 'wa-supporting-text', 'O servidor ainda precisa habilitar um provedor de WhatsApp para este setor.'));
+  }
+  const actions = element('div', 'wa-workspace-actions');
+  if (canManage && connection.provider === 'baileys') {
+    if (['disconnected', 'error'].includes(connection.status)) actions.append(actionButton('Conectar número', connectionAction(state, 'connect'), { symbol: 'link-45deg', primary: true }));
+    if (['qr', 'connecting', 'reconnecting', 'connected'].includes(connection.status)) actions.append(actionButton(connection.status === 'connected' ? 'Desconectar número' : 'Cancelar pareamento', connectionAction(state, 'disconnect')));
+  }
+  if (actions.childElementCount) card.append(actions);
+  section.append(card);
+  clearTimeout(state.connectionTimer);
+  if (['qr', 'connecting', 'reconnecting'].includes(connection.status)) {
+    state.connectionTimer = setTimeout(() => {
+      if (!document.hidden && state.active === 'connections') void loadWorkspace(state, { preserve: true });
+    }, 4_000);
+  }
+}
+
+function renderOverview(state, data) {
+  if (state.activePage === 'now') {
+    const section = startPanel(state, 'Agora', 'Acompanhe o atendimento atual do setor.');
+    const metrics = element('div', 'wa-metrics');
+    const numbers = data.now || {};
+    for (const [key, label] of [['conversations', 'Conversas'], ['unread', 'Mensagens não lidas'], ['awaiting', 'Chamados abertos']]) {
+      const card = element('article', 'wa-workspace-card wa-metric');
+      const value = numbers[key] ?? (key === 'unread' ? state.unread : undefined);
+      card.append(element('strong', '', Number.isFinite(value) ? value : '—'), element('span', '', label));
+      metrics.append(card);
+    }
+    section.append(metrics);
+    return;
+  }
+  if (state.activePage === 'history') {
+    const section = startPanel(state, 'Histórico de chamados', 'Registros de atendimento deste setor.');
+    const history = Array.isArray(data.history) ? data.history : [];
+    listOrEmpty(section, history, (entry) => {
+      const state = TICKET_LABELS[entry.status] || entry.status || '';
+      const time = timestamp(entry.updatedAt || entry.at, true);
+      return directoryRow(contactName(entry), [state, time].filter(Boolean).join(' · '));
+    }, ['clock-history', 'Nenhum chamado registrado', 'O histórico será atualizado à medida que o setor registrar atendimentos.']);
+    return;
+  }
+  const section = startPanel(state, 'Estatísticas de chamados', 'Totais apurados no atendimento deste setor.');
+  const values = data.statistics || {};
+  const metrics = element('div', 'wa-metrics');
+  for (const [keys, label] of [[['conversations', 'total'], 'Chamados'], [['open', 'awaiting'], 'Abertos'], [['closed'], 'Encerrados'], [['unread'], 'Mensagens não lidas'], [['inbound', 'received'], 'Mensagens recebidas'], [['outbound', 'sent'], 'Mensagens enviadas']]) {
+    const value = keys.map((key) => values[key]).find(Number.isFinite);
+    if (!Number.isFinite(value)) continue;
+    const card = element('article', 'wa-workspace-card wa-metric');
+    card.append(element('strong', '', value), element('span', '', label));
+    metrics.append(card);
+  }
+  section.append(metrics.childElementCount ? metrics : emptyState('grid', 'Sem estatísticas disponíveis', 'Os totais serão exibidos assim que estiverem disponíveis para este setor.'));
+}
+
+function renderAbsence(state, data) {
+  const section = startPanel(state, 'Controle de ausência', 'Pause as respostas do setor e defina um aviso para a equipe.');
+  if (!data.absence) {
+    section.append(emptyState('clock-history', 'Ausência indisponível', 'A configuração ainda não está disponível para este setor.'));
+    return;
+  }
+  const form = element('form', 'wa-settings-form wa-workspace-card');
+  form.innerHTML = '<label class="wa-checkbox"><input type="checkbox">Ativar ausência</label><label class="wa-form-field">Aviso interno<textarea rows="3" maxlength="500"></textarea></label>';
+  const checkbox = form.querySelector('input');
+  const note = form.querySelector('textarea');
+  checkbox.checked = Boolean(data.absence.enabled);
+  note.value = data.absence.message || '';
+  checkbox.disabled = note.disabled = !data.canManage;
+  if (data.canManage) {
+    const button = element('button', 'wa-send', 'Salvar ausência');
+    button.type = 'submit';
+    form.append(button);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      try {
+        await workspaceRequest(state, '/settings', { body: { absence: { enabled: checkbox.checked, message: note.value.trim() } } });
+        if (state.activePage === 'absence') {
+          await loadWorkspace(state, { preserve: true });
+          setStatus(state, 'Configuração de ausência salva.');
+        }
+      } catch (error) { showError(state, error); }
+      finally { button.disabled = false; }
+    });
+  }
+  section.append(form);
+}
+
+function renderSettings(state, data) {
+  const key = state.activePage;
+  const config = NAVIGATION.find(({ id }) => id === 'settings').pages.find(({ id }) => id === key);
+  const messages = {
+    users: ['people', 'Nenhum usuário vinculado', 'Usuários com acesso ao setor aparecerão nesta lista.'],
+    roles: ['shield-lock', 'Nenhum cargo disponível', 'Os cargos e permissões serão exibidos quando o setor tiver perfis configurados.'],
+    robots: ['gear', 'Nenhum robô configurado', 'As automações configuradas para este setor aparecerão aqui.'],
+    departments: ['buildings', 'Nenhum departamento disponível', 'Os departamentos vinculados serão exibidos aqui.'],
+    integrations: ['link-45deg', 'Nenhuma integração disponível', 'As conexões e integrações do setor aparecerão aqui.']
+  };
+  const section = startPanel(state, config.title);
+  if (key === 'users' && state.isAdmin) {
+    const admin = element('a', 'wa-control wa-workspace-link', 'Gerenciar equipe e acessos');
+    admin.href = '/home#users';
+    section.append(admin);
+  }
+  if (key === 'integrations') section.append(actionButton('Gerenciar conexões', () => openWorkspace(state, 'connections'), { symbol: 'link-45deg' }));
+  const entries = Array.isArray(data[key]) ? data[key] : [];
+  listOrEmpty(section, entries, (item) => {
+    const description = item.email || item.description || item.permissions?.join?.(', ') || item.role || '';
+    const status = CONNECTION_LABELS[item.status] || item.status;
+    return directoryRow(item.name || item.label || 'Registro', description, status ? element('span', 'wa-pill', status) : null);
+  }, messages[key]);
+}
+
+async function loadWorkspace(state, { preserve = false } = {}) {
+  const { active, activePage } = state;
+  if (active === 'chats' || state.signal.aborted) return;
+  state.viewRequest?.abort();
+  const controller = new AbortController();
+  state.viewRequest = controller;
+  const signal = controller.signal;
+  const fromCurrentRequest = () => !state.signal.aborted && !signal.aborted && state.viewRequest === controller;
+  if (!preserve) {
+    const page = NAVIGATION.find(({ id }) => id === active);
+    startPanel(state, page.pages?.find(({ id }) => id === activePage)?.title || page.title, 'Carregando…');
+  }
+  try {
+    if (active === 'contacts') {
+      const data = await summary(state.sector, signal, 1);
+      if (!fromCurrentRequest()) return;
+      applySummary(state, data, 1);
+      renderContacts(state);
+    } else if (active === 'tags') {
+      await refreshTags(state, signal);
+      if (fromCurrentRequest()) renderTags(state);
+    } else if (active === 'connections') {
+      const data = await workspaceRequest(state, '/connections', { signal });
+      if (fromCurrentRequest()) renderConnection(state, data);
+    } else if (active === 'settings' || activePage === 'absence') {
+      const data = await workspaceRequest(state, '/settings', { signal });
+      if (fromCurrentRequest()) {
+        if (activePage === 'absence') renderAbsence(state, data);
+        else renderSettings(state, data);
+      }
+    } else {
+      const data = await workspaceRequest(state, '/overview', { signal });
+      if (fromCurrentRequest()) renderOverview(state, data);
+    }
+  } catch (error) {
+    if (fromCurrentRequest()) {
+      if (!preserve) {
+        const section = startPanel(state, 'Impossível carregar a seção');
+        section.append(emptyState('broadcast', 'Os dados não puderam ser consultados', error.message));
+        section.append(actionButton('Tentar novamente', () => loadWorkspace(state), { symbol: 'arrow-clockwise' }));
+      } else showError(state, error);
+    }
+  }
 }
 
 function showError(state, error) {
@@ -272,7 +758,7 @@ async function markRead(state, selected) {
   const conversation = state.conversations.find(({ id }) => id === selected);
   const scroll = state.ui.scroll;
   const atEnd = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 55;
-  if (state.signal.aborted || document.hidden || !state.mobileThread || !atEnd || !latestInbound || !conversation?.unread || state.readThrough.get(selected) === latestInbound.id) return;
+  if (state.signal.aborted || state.active !== 'chats' || document.hidden || !state.mobileThread || !atEnd || !latestInbound || !conversation?.unread || state.readThrough.get(selected) === latestInbound.id) return;
   state.readThrough.set(selected, latestInbound.id);
   try {
     await request('/read', { signal: state.signal, token: state.token, body: { sector: state.sector, conversation: selected, through: latestInbound.id } });
@@ -309,6 +795,8 @@ async function readThread(state, { older = false, scrollToEnd = false } = {}) {
 
 function openThread(state, entry) {
   if (state.selected !== entry.id) {
+    state.ui.threadTags.hidden = true;
+    state.ui.tagThread.setAttribute('aria-expanded', 'false');
     state.selected = entry.id;
     state.messages = [];
     state.historyReady = false;
@@ -328,13 +816,13 @@ function openThread(state, entry) {
 }
 
 async function refresh(state, force = false) {
-  if (state.refreshing || (!force && (document.hidden || !state.connected))) return;
+  if (state.refreshing || (!force && (document.hidden || state.active !== 'chats'))) return;
   state.refreshing = true;
   state.ui.refresh.disabled = true;
   try {
     await refreshSummary(state);
-    if (state.connected && state.selected && (state.mobileThread || !state.mobile.matches)) await readThread(state);
-    setStatus(state);
+    if (state.active === 'chats' && state.connected && state.selected && (state.mobileThread || !state.mobile.matches)) await readThread(state);
+    if (state.active === 'chats') setStatus(state);
   } catch (error) {
     showError(state, error);
   } finally {
@@ -373,12 +861,20 @@ export function mountSectorWhatsApp(container, { sector, session, onUnread } = {
   const state = {
     ...makeShell(container), sector, onUnread, token: session?.csrfToken, signal: controller.signal,
     mobile: window.matchMedia('(max-width: 730px)'), connected: false, selected: null, conversations: [], messages: [], sequence: 0, page: 1,
-    drafts: new Map(), sending: new Set(), readThrough: new Map()
+    drafts: new Map(), sending: new Set(), readThrough: new Map(), tags: [],
+    isAdmin: session?.user?.role === 'admin'
   };
   const { ui } = state;
   setMobileThread(state, false);
-  ui.refresh.addEventListener('click', () => void refresh(state, true));
+  ui.refresh.addEventListener('click', () => {
+    if (state.active === 'chats') void refresh(state, true);
+    else void loadWorkspace(state);
+  });
   ui.search.addEventListener('input', () => renderConversations(state));
+  ui.tagFilter.addEventListener('change', () => renderConversations(state));
+  ui.tagThread.addEventListener('click', () => toggleThreadTags(state));
+  ui.threadTags.addEventListener('submit', (event) => void saveThreadTags(state, event));
+  ui.ticket.addEventListener('click', () => void updateTicket(state));
   ui.scroll.addEventListener('scroll', () => void markRead(state, state.selected));
   ui.moreConversations.addEventListener('click', async () => {
     ui.moreConversations.disabled = true;
@@ -397,12 +893,16 @@ export function mountSectorWhatsApp(container, { sector, session, onUnread } = {
   });
   ui.form.addEventListener('submit', (event) => void submitReply(state, event));
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && state.connected) void refresh(state);
+    if (document.hidden) return;
+    if (state.active === 'chats') void refresh(state);
+    if (state.active === 'connections') void loadWorkspace(state, { preserve: true });
   }, { signal: state.signal });
   const timer = setInterval(() => void refresh(state), REFRESH_MS);
-  void refresh(state, true);
+  openWorkspace(state, 'chats');
   return () => {
     controller.abort();
+    state.viewRequest?.abort();
+    clearTimeout(state.connectionTimer);
     clearInterval(timer);
     state.root.remove();
   };

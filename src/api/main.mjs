@@ -6,6 +6,8 @@ import { ChatMySqlStore } from '../chat/mysql-store.mjs';
 import { createChat } from '../chat/service.mjs';
 import { WhatsAppMySqlStore } from '../whatsapp/mysql-store.mjs';
 import { createWhatsAppService, readWhatsAppConfig } from '../whatsapp/service.mjs';
+import { createBaileysBridge, readBaileysConfig } from '../whatsapp/baileys.mjs';
+import { createWhatsAppWorkspace } from '../whatsapp/workspace.mjs';
 
 for (const key of ['MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE']) {
   if (!process.env[key]) throw new Error(`${key} obrigatória`);
@@ -28,10 +30,15 @@ if (await platformStore.countUsers() === 0 && !bootstrapTokenSha256) throw new E
 const chatStore = new ChatMySqlStore(store.pool);
 await chatStore.initialize();
 const chat = createChat({ store: platformStore, chatStore });
-const whatsappConfig = readWhatsAppConfig();
-const whatsappStore = whatsappConfig ? new WhatsAppMySqlStore(store.pool) : null;
-if (whatsappStore) await whatsappStore.initialize();
-const whatsapp = createWhatsAppService({ config: whatsappConfig, store: whatsappStore });
+const whatsappConfig = process.env.WHATSAPP_MODE === 'baileys' ? null : readWhatsAppConfig();
+const baileysConfig = readBaileysConfig();
+const whatsappStore = new WhatsAppMySqlStore(store.pool);
+const whatsappWorkspace = createWhatsAppWorkspace({ pool: store.pool, whatsAppStore: whatsappStore, platformStore });
+await whatsappStore.initialize();
+await whatsappWorkspace.initialize();
+const bridge = baileysConfig ? createBaileysBridge({ config: baileysConfig, store: whatsappStore, pool: store.pool }) : null;
+if (bridge) await bridge.initialize();
+const whatsapp = createWhatsAppService({ config: whatsappConfig, store: whatsappStore, bridge, workspace: whatsappWorkspace });
 const platformRouter = createPlatformRouter({ store: platformStore, chat, whatsapp, bootstrapTokenSha256, secureCookies: process.env.COOKIE_SECURE !== 'false' });
 const server = createApiServer({ store, agentRegistry: platformStore, platformRouter, whatsapp });
 const io = chat.attach(server);
@@ -41,6 +48,7 @@ async function stop() {
   if (stopping) return;
   stopping = true;
   try {
+    await bridge?.close();
     await io.close();
     await store.close();
     process.exit(0);

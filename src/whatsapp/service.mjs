@@ -102,7 +102,7 @@ function plainResponse(res, value) {
   res.end(value);
 }
 
-export function createWhatsAppService({ config, store, fetcher = fetch }) {
+export function createWhatsAppService({ config, store, bridge, workspace, fetcher = fetch }) {
   async function handleWebhook(req, res, pathname) {
     if (pathname !== WHATSAPP_WEBHOOK) return false;
     if (!config) throw unavailable();
@@ -173,19 +173,46 @@ export function createWhatsAppService({ config, store, fetcher = fetch }) {
 
   async function handleHttp({ req, res, route, user, send, readBody }) {
     const query = new URL(req.url, 'http://localhost').searchParams;
-    const input = req.method === 'POST' ? await readBody(req) : null;
+    const input = ['POST', 'PATCH'].includes(req.method) ? await readBody(req) : null;
     const sector = input?.sector ?? query.get('sector');
     if (!SECTORS.has(sector)) throw invalid('sector');
     if (!canAccess(user, sector)) throw new ApiError(403, 'WHATSAPP_FORBIDDEN', 'Sem acesso ao WhatsApp deste setor.');
-    const configured = Boolean(config && config.sector === sector);
-    const canReply = configured && canAccess(user, sector, 'edit');
+    const canManage = user.role === 'admin';
+    const sectorBridge = bridge?.sector === sector ? bridge : null;
+    const scope = (sectorBridge?.scope() || (config?.sector === sector ? config : null));
+    const configured = Boolean(scope);
+    const provider = sectorBridge || !config ? 'baileys' : 'cloud';
+    if (route === '/whatsapp/connections') {
+      let unlinkConfirmed;
+      if (req.method === 'POST') {
+        if (!canManage) throw new ApiError(403, 'WHATSAPP_FORBIDDEN', 'Somente administradores podem gerenciar conexões.');
+        if (!sectorBridge) throw unavailable();
+        if (input.action === 'connect') await sectorBridge.connect();
+        else if (input.action === 'disconnect') {
+          const wasLinked = Boolean(sectorBridge.scope());
+          const result = await sectorBridge.disconnect();
+          if (wasLinked) unlinkConfirmed = result?.unlinkConfirmed;
+        }
+        else throw invalid('action');
+      } else if (req.method !== 'GET') throw unavailable();
+      const data = sectorBridge ? await sectorBridge.status({ includeQr: canManage }) : { state: configured ? 'connected' : 'disabled' };
+      return send(res, 200, { canManage, unlinkConfirmed, connection: { ...data, status: data.state, provider } });
+    }
+    const connectionState = sectorBridge ? (await sectorBridge.status()).state : configured ? 'connected' : 'disabled';
+    const result = await workspace?.handle({ route, method: req.method, user, sector, input, scope, connectionState,
+      provider: provider === 'baileys' ? 'Baileys' : 'WhatsApp Cloud API' });
+    if (result) return send(res, 200, result);
+    const absence = configured ? await workspace?.absence(sector) : null;
+    const canReply = configured && !absence?.enabled && connectionState === 'connected' && canAccess(user, sector, 'edit');
+    const canManageTickets = configured && canAccess(user, sector, 'edit');
     if (req.method === 'GET' && route === '/whatsapp') {
-      if (!configured) return send(res, 200, { configured, canReply, conversations: [], unread: 0, hasMore: false });
+      if (!configured) return send(res, 200, { configured, provider, canReply, canManage, conversations: [], unread: 0, hasMore: false });
       const rawPage = query.get('page') ?? '1';
       if (!/^[1-9]\d{0,3}$/.test(rawPage)) throw invalid('page');
-      const result = await store.listConversations(config, user._id, (Number(rawPage) - 1) * 50);
-      result.conversations = result.conversations.map((item) => ({ ...item, canReply: item.canReply && canReply }));
-      return send(res, 200, { configured, canReply, ...result });
+      const result = await store.listConversations(scope, user._id, (Number(rawPage) - 1) * 50, { enforceWindow: !sectorBridge });
+      const conversations = result.conversations.map((item) => ({ ...item, canReply: item.canReply && canReply }));
+      return send(res, 200, { ...result, configured, provider, canReply, canManage, canManageTickets, absence,
+        conversations: workspace ? await workspace.decorate(conversations) : conversations });
     }
     if (!configured) throw unavailable();
     const conversation = input?.conversation ?? query.get('conversation');
@@ -193,28 +220,28 @@ export function createWhatsAppService({ config, store, fetcher = fetch }) {
     if (req.method === 'GET' && route === '/whatsapp/messages') {
       const before = query.get('before');
       if (before !== null && !isSequence(before)) throw invalid('before');
-      const result = await store.history(config, conversation, before);
+      const result = await store.history(scope, conversation, before, { enforceWindow: !sectorBridge });
       if (!result) throw new ApiError(404, 'WHATSAPP_CONVERSATION', 'Conversa indisponível.');
       return send(res, 200, { ...result, canReply: result.canReply && canReply });
     }
     if (req.method === 'POST' && route === '/whatsapp/read') {
       if (!isSequence(input.through)) throw invalid('through');
-      if (!await store.markRead(config, user._id, conversation, input.through)) {
+      if (!await store.markRead(scope, user._id, conversation, input.through)) {
         throw new ApiError(404, 'WHATSAPP_CONVERSATION', 'Conversa ou mensagem indisponível.');
       }
       return send(res, 200, { ok: true });
     }
     if (req.method !== 'POST' || route !== '/whatsapp/reply') throw unavailable();
-    if (!canReply) throw new ApiError(403, 'WHATSAPP_FORBIDDEN', 'Sem permissão para responder por este setor.');
+    if (!canReply) throw new ApiError(403, 'WHATSAPP_FORBIDDEN', absence?.enabled ? 'As respostas estão pausadas pelo controle de ausência.' : 'Envio indisponível para este acesso ou conexão.');
     if (!isUuid(input.clientId)) throw invalid('clientId');
     const text = typeof input.text === 'string' ? input.text.trim() : '';
     if (!text || text.length > 4096 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) throw invalid('text');
-    const reserved = await store.reserveReply(config, conversation, { actorId: user._id, clientId: input.clientId, text });
+    const reserved = await store.reserveReply(scope, conversation, { actorId: user._id, clientId: input.clientId, text, enforceWindow: !sectorBridge });
     if (reserved.reason === 'missing') throw new ApiError(404, 'WHATSAPP_CONVERSATION', 'Conversa indisponível.');
     if (reserved.reason === 'closed') throw new ApiError(409, 'WHATSAPP_WINDOW_CLOSED', 'A janela de atendimento de 24 horas foi encerrada.');
     if (reserved.reason === 'conflict') throw new ApiError(409, 'WHATSAPP_DUPLICATE', 'Identificador já utilizado.');
     if (!reserved.fresh) return send(res, 200, { message: reserved.message });
-    const delivery = await sendExternal(reserved.phone, text, input.clientId);
+    const delivery = sectorBridge ? await sectorBridge.send(reserved.phone, text, input.clientId, scope) : await sendExternal(reserved.phone, text, input.clientId);
     const message = await store.finishReply(conversation, input.clientId, delivery);
     return send(res, 201, { message });
   }

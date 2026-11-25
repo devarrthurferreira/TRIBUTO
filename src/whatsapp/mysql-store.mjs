@@ -115,7 +115,7 @@ export class WhatsAppMySqlStore {
     });
   }
 
-  async listConversations(scope, userId, offset = 0) {
+  async listConversations(scope, userId, offset = 0, { enforceWindow = true } = {}) {
     const [rows] = await this.pool.execute(`SELECT c.id, c.peer_phone, c.peer_name, c.last_inbound_at, c.last_activity_at,
       (SELECT m.message_text FROM platform_wa_messages m
         WHERE m.conversation_id = c.id ORDER BY m.sequence_no DESC LIMIT 1) last_message,
@@ -136,12 +136,12 @@ export class WhatsAppMySqlStore {
       conversations: rows.slice(0, PAGE_SIZE).map(row => ({
         id: row.id, name: row.peer_name || row.peer_phone, phone: row.peer_phone,
         lastMessage: row.last_message || '', lastAt: isoDate(row.last_activity_at), unread: Number(row.unread),
-        canReply: replyWindowOpen(isoDate(row.last_inbound_at))
+        canReply: !enforceWindow || replyWindowOpen(isoDate(row.last_inbound_at))
       }))
     };
   }
 
-  async history(scope, id, before) {
+  async history(scope, id, before, { enforceWindow = true } = {}) {
     const conversation = await this.conversation(this.pool, scope, id);
     if (!conversation) return null;
     const [rows] = await this.pool.execute(`SELECT * FROM platform_wa_messages WHERE conversation_id = ?
@@ -149,7 +149,7 @@ export class WhatsAppMySqlStore {
       ORDER BY sequence_no DESC LIMIT ${PAGE_SIZE + 1}`, before ? [id, before] : [id]);
     return {
       messages: rows.slice(0, PAGE_SIZE).reverse().map(message), hasMore: rows.length > PAGE_SIZE,
-      canReply: replyWindowOpen(isoDate(conversation.last_inbound_at))
+      canReply: !enforceWindow || replyWindowOpen(isoDate(conversation.last_inbound_at))
     };
   }
 
@@ -164,7 +164,7 @@ export class WhatsAppMySqlStore {
     return true;
   }
 
-  async reserveReply(scope, id, { clientId, actorId, text }) {
+  async reserveReply(scope, id, { clientId, actorId, text, enforceWindow = true }) {
     return this.transaction(async (connection) => {
       const conversation = await this.conversation(connection, scope, id, true);
       if (!conversation) return { reason: 'missing' };
@@ -175,7 +175,7 @@ export class WhatsAppMySqlStore {
         return { message: message(existing), fresh: false };
       }
       const now = new Date();
-      if (!replyWindowOpen(isoDate(conversation.last_inbound_at), now.getTime())) return { reason: 'closed' };
+      if (enforceWindow && !replyWindowOpen(isoDate(conversation.last_inbound_at), now.getTime())) return { reason: 'closed' };
       await connection.execute(`INSERT INTO platform_wa_messages
         (conversation_id, client_id, actor_id, direction, message_type, message_text, delivery_status, occurred_at)
         VALUES (?, ?, ?, 'outbound', 'text', ?, 'pending', ?)`, [id, clientId, actorId, text, now]);

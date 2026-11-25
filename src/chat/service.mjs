@@ -34,6 +34,15 @@ function roomForViewer(key, userId) {
   return kind === 'sector' ? key : `direct:${userId === first ? second : first}`;
 }
 
+function messageText(value) {
+  if (typeof value !== 'string') throw new ApiError(400, 'CHAT_MESSAGE', 'Mensagem inválida.');
+  const text = value.trim();
+  if (text.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) {
+    throw new ApiError(400, 'CHAT_TEXT', 'A mensagem deve ter até 4.000 caracteres.');
+  }
+  return text;
+}
+
 export function createChat({ store, chatStore, logger = console }) {
   let io;
   const sendAttempts = new Map();
@@ -74,6 +83,7 @@ export function createChat({ store, chatStore, logger = console }) {
       id: message.id, clientId: message.clientId, room: roomForViewer(message.roomKey, user._id),
       sender: { id: message.senderId, name: message.senderName },
       text: message.text, createdAt: message.createdAt, attachments: message.attachments,
+      editedAt: message.editedAt ?? null, deletedAt: message.deletedAt ?? null,
       reference: message.reference ? await resolveReference(user, message.reference) : null
     };
   }
@@ -146,34 +156,23 @@ export function createChat({ store, chatStore, logger = console }) {
     return auth && matchesPlatformCsrf(auth.session, socket.handshake.auth?.csrfToken) ? auth : null;
   }
 
-  async function broadcast(message) {
+  async function broadcast(event, message) {
     const candidates = [...io.of('/').sockets.values()].filter(socket =>
       message.roomKey.startsWith('sector:') || message.roomKey.split(':').slice(1).includes(socket.data.userId));
     await Promise.all(candidates.map(async socket => {
       const auth = await authenticateSocket(socket);
       if (!auth) return socket.disconnect(true);
-      if (canReadRoom(auth.user, message.roomKey)) socket.emit('chat:message', { message: await publicMessage(message, auth.user) });
+      if (canReadRoom(auth.user, message.roomKey)) socket.emit(event, { message: await publicMessage(message, auth.user) });
     }));
   }
 
-  async function sendMessage(socket, input, acknowledge) {
-    if (typeof acknowledge !== 'function') return;
-    const auth = await authenticateSocket(socket);
-    if (!auth) {
-      acknowledge({ ok: false, error: 'Entre novamente para enviar mensagens.', code: 'UNAUTHORIZED' });
-      socket.disconnect(true);
-      return;
-    }
+  async function sendMessage(auth, input) {
     const { user } = auth;
-    takeSendSlot(user._id);
     const key = await roomKey(user, input?.room, { sending: true });
-    if (!validId(input?.clientId) || (input.text !== undefined && typeof input.text !== 'string')) {
+    if (!validId(input?.clientId)) {
       throw new ApiError(400, 'CHAT_MESSAGE', 'Mensagem inválida.');
     }
-    const text = input.text?.trim() || '';
-    if (text.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) {
-      throw new ApiError(400, 'CHAT_TEXT', 'A mensagem deve ter até 4.000 caracteres.');
-    }
+    const text = messageText(input.text === undefined ? '' : input.text);
     const attachments = normalizeAttachments(input.attachments);
     const reference = input.reference == null ? null : await resolveReference(user, input.reference);
     if (input.reference != null && !reference) throw new ApiError(403, 'CHAT_REFERENCE', 'Item indisponível para compartilhamento.');
@@ -183,8 +182,41 @@ export function createChat({ store, chatStore, logger = console }) {
       reference: reference && { type: reference.type, id: reference.id }
     });
     if (!message || message.roomKey !== key) throw new ApiError(409, 'CHAT_DUPLICATE', 'Identificador de mensagem já utilizado.');
-    acknowledge({ ok: true, message: await publicMessage(message, user) });
-    if (inserted) void broadcast(message).catch(error => logger.error('Chat delivery failed', { code: error.code }));
+    return { message, event: inserted ? 'chat:message' : null };
+  }
+
+  async function reviseMessage(auth, input, deleting) {
+    const { user } = auth;
+    const key = await roomKey(user, input?.room);
+    if (!validSequence(input.id)) throw new ApiError(400, 'CHAT_MESSAGE', 'Mensagem inválida.');
+    const text = deleting ? null : messageText(input.text);
+    const { message, changed, empty } = await chatStore.reviseMessage({ id: input.id, roomKey: key, senderId: user._id, text });
+    if (empty) throw new ApiError(400, 'CHAT_EMPTY', 'A edição deixaria a mensagem vazia.');
+    if (!message) throw new ApiError(404, 'CHAT_NOT_FOUND', 'Mensagem indisponível para alteração.');
+    if (!deleting && message.deletedAt) throw new ApiError(409, 'CHAT_DELETED', 'Esta mensagem foi excluída.');
+    return { message, event: changed ? 'chat:message-updated' : null };
+  }
+
+  async function handleSocketAction(socket, input, acknowledge, action) {
+    if (typeof acknowledge !== 'function') return;
+    try {
+      const auth = await authenticateSocket(socket);
+      if (!auth) {
+        acknowledge({ ok: false, error: 'Entre novamente para acessar o chat.', code: 'UNAUTHORIZED' });
+        socket.disconnect(true);
+        return;
+      }
+      takeSendSlot(auth.user._id);
+      const { message, event } = await action(auth, input);
+      acknowledge({ ok: true, message: await publicMessage(message, auth.user) });
+      if (event) void broadcast(event, message).catch(error => logger.error('Chat delivery failed', { code: error.code }));
+    } catch (error) {
+      if (!(error instanceof ApiError)) logger.error('Chat action failed', { code: error.code });
+      acknowledge({
+        ok: false, code: error instanceof ApiError ? error.code : 'CHAT_ERROR',
+        error: error instanceof ApiError ? error.message : 'Falha ao atualizar a conversa.'
+      });
+    }
   }
 
   function attach(server) {
@@ -204,15 +236,9 @@ export function createChat({ store, chatStore, logger = console }) {
       });
     });
     io.on('connection', socket => {
-      socket.on('chat:send', (input, acknowledge) => {
-        void sendMessage(socket, input, acknowledge).catch(error => {
-          if (!(error instanceof ApiError)) logger.error('Chat send failed', { code: error.code });
-          if (typeof acknowledge === 'function') acknowledge({
-            ok: false, code: error instanceof ApiError ? error.code : 'CHAT_ERROR',
-            error: error instanceof ApiError ? error.message : 'Falha ao enviar mensagem.'
-          });
-        });
-      });
+      socket.on('chat:send', (input, acknowledge) => void handleSocketAction(socket, input, acknowledge, sendMessage));
+      socket.on('chat:edit', (input, acknowledge) => void handleSocketAction(socket, input, acknowledge, (auth, body) => reviseMessage(auth, body, false)));
+      socket.on('chat:delete', (input, acknowledge) => void handleSocketAction(socket, input, acknowledge, (auth, body) => reviseMessage(auth, body, true)));
     });
     const cleanup = setInterval(() => {
       const now = Date.now();

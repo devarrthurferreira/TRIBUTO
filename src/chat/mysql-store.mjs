@@ -34,21 +34,37 @@ const TABLES = [
     room_key VARCHAR(160) NOT NULL,
     last_sequence BIGINT UNSIGNED NOT NULL,
     PRIMARY KEY (user_id, room_key)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
+  `CREATE TABLE IF NOT EXISTS platform_chat_revisions (
+    message_sequence BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+    edited_at DATETIME(3) NULL,
+    deleted_at DATETIME(3) NULL,
+    CONSTRAINT fk_chat_revision_message FOREIGN KEY (message_sequence)
+      REFERENCES platform_chat_messages (sequence_no) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`
 ];
+
+const messageColumns = 'm.*, rev.edited_at, rev.deleted_at';
+const revisionJoin = 'LEFT JOIN platform_chat_revisions rev ON rev.message_sequence = m.sequence_no';
 
 function toAttachment(row) {
   return { id: row.id, name: row.name, mime: row.mime, size: Number(row.size_bytes) };
 }
 
 function toMessage(row, attachments = []) {
-  const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : `${row.created_at.replace(' ', 'T')}Z`;
+  const deletedAt = sqlDate(row.deleted_at);
   return {
     id: String(row.sequence_no), clientId: row.client_id, roomKey: row.room_key,
-    senderId: row.sender_id, senderName: row.sender_name, text: row.message_text,
-    createdAt, attachments,
-    reference: row.reference_type && row.reference_id ? { type: row.reference_type, id: row.reference_id } : null
+    senderId: row.sender_id, senderName: row.sender_name, text: deletedAt ? '' : row.message_text,
+    createdAt: sqlDate(row.created_at), editedAt: sqlDate(row.edited_at), deletedAt,
+    attachments: deletedAt ? [] : attachments,
+    reference: !deletedAt && row.reference_type && row.reference_id ? { type: row.reference_type, id: row.reference_id } : null
   };
+}
+
+function sqlDate(value) {
+  if (value instanceof Date) return value.toISOString();
+  return value ? `${value.replace(' ', 'T')}Z` : null;
 }
 
 function placeholders(values) {
@@ -74,9 +90,9 @@ export class ChatMySqlStore {
   }
 
   async listMessages(roomKey, beforeSequence = null) {
-    const [rows] = await this.pool.execute(`SELECT * FROM platform_chat_messages WHERE room_key = ?
-      ${beforeSequence === null ? '' : 'AND sequence_no < CAST(? AS UNSIGNED)'}
-      ORDER BY sequence_no DESC LIMIT ${PAGE_SIZE + 1}`, beforeSequence === null ? [roomKey] : [roomKey, beforeSequence]);
+    const [rows] = await this.pool.execute(`SELECT ${messageColumns} FROM platform_chat_messages m ${revisionJoin}
+      WHERE m.room_key = ? ${beforeSequence === null ? '' : 'AND m.sequence_no < CAST(? AS UNSIGNED)'}
+      ORDER BY m.sequence_no DESC LIMIT ${PAGE_SIZE + 1}`, beforeSequence === null ? [roomKey] : [roomKey, beforeSequence]);
     const messages = await this.attachmentsFor(this.pool, rows.slice(0, PAGE_SIZE).reverse());
     return { messages, hasMore: rows.length > PAGE_SIZE };
   }
@@ -120,11 +136,59 @@ export class ChatMySqlStore {
       connection.release();
     }
     // A fresh read avoids taking an exclusive lock on a duplicate row while other retries are waiting.
-    const [[row]] = await this.pool.execute(`SELECT * FROM platform_chat_messages
-      WHERE sender_id = ? AND client_id = ? AND room_key = ?`, [senderId, clientId, roomKey]);
+    const [[row]] = await this.pool.execute(`SELECT ${messageColumns} FROM platform_chat_messages m ${revisionJoin}
+      WHERE m.sender_id = ? AND m.client_id = ? AND m.room_key = ?`, [senderId, clientId, roomKey]);
     if (!row) return { message: null, inserted: false };
     const [message] = await this.attachmentsFor(this.pool, [row]);
     return { message, inserted: false };
+  }
+
+  async reviseMessage({ id, roomKey, senderId, text }) {
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[row]] = await connection.execute(`SELECT * FROM platform_chat_messages
+        WHERE sequence_no = CAST(? AS UNSIGNED) AND room_key = ? AND sender_id = ? FOR UPDATE`, [id, roomKey, senderId]);
+      if (!row) {
+        await connection.rollback();
+        return { message: null, changed: false };
+      }
+      const [[revision]] = await connection.execute(`SELECT edited_at, deleted_at FROM platform_chat_revisions
+        WHERE message_sequence = CAST(? AS UNSIGNED)`, [id]);
+      if (revision) Object.assign(row, revision);
+      const [previous] = await this.attachmentsFor(connection, [row]);
+      if (previous.deletedAt || text === previous.text) {
+        await connection.commit();
+        return { message: previous, changed: false };
+      }
+      if (text === '' && !previous.attachments.length && !previous.reference) {
+        await connection.rollback();
+        return { message: null, changed: false, empty: true };
+      }
+      const revisedAt = new Date(Math.max(Date.now(), Date.parse(previous.editedAt || previous.createdAt) + 1));
+      if (text === null) {
+        await connection.execute(`UPDATE platform_chat_messages SET message_text = '', reference_type = NULL, reference_id = NULL
+          WHERE sequence_no = CAST(? AS UNSIGNED)`, [id]);
+        await connection.execute('DELETE FROM platform_chat_attachments WHERE message_sequence = CAST(? AS UNSIGNED)', [id]);
+        row.deleted_at = revisedAt;
+      } else {
+        await connection.execute('UPDATE platform_chat_messages SET message_text = ? WHERE sequence_no = CAST(? AS UNSIGNED)', [text, id]);
+        row.message_text = text;
+        row.edited_at = revisedAt;
+      }
+      await connection.execute(`INSERT INTO platform_chat_revisions (message_sequence, edited_at, deleted_at)
+        VALUES (CAST(? AS UNSIGNED), ?, ?)
+        ON DUPLICATE KEY UPDATE edited_at = VALUES(edited_at), deleted_at = VALUES(deleted_at)`,
+      [id, row.edited_at ? new Date(sqlDate(row.edited_at)) : null, row.deleted_at ?? null]);
+      const message = toMessage(row, previous.attachments);
+      await connection.commit();
+      return { message, changed: true };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   async getAttachment(id) {
@@ -147,15 +211,17 @@ export class ChatMySqlStore {
 
   async listRoomActivity(userId, roomKeys) {
     if (!roomKeys.length) return [];
-    const [rows] = await this.pool.execute(`SELECT m.*, activity.unread
+    const [rows] = await this.pool.execute(`SELECT ${messageColumns}, activity.unread
       FROM (
         SELECT history.room_key, MAX(history.sequence_no) latest,
-          SUM(history.sender_id <> ? AND history.sequence_no > COALESCE(read_cursor.last_sequence, 0)) unread
+          SUM(history.sender_id <> ? AND history.sequence_no > COALESCE(read_cursor.last_sequence, 0)
+            AND history_revision.deleted_at IS NULL) unread
         FROM platform_chat_messages history
         LEFT JOIN platform_chat_reads read_cursor ON read_cursor.user_id = ? AND read_cursor.room_key = history.room_key
+        LEFT JOIN platform_chat_revisions history_revision ON history_revision.message_sequence = history.sequence_no
         WHERE history.room_key IN (${placeholders(roomKeys)})
         GROUP BY history.room_key
-      ) activity JOIN platform_chat_messages m ON m.sequence_no = activity.latest`, [userId, userId, ...roomKeys]);
+      ) activity JOIN platform_chat_messages m ON m.sequence_no = activity.latest ${revisionJoin}`, [userId, userId, ...roomKeys]);
     const activity = new Map(rows.map(row => [row.room_key, row]));
     return roomKeys.map(roomKey => {
       const row = activity.get(roomKey);

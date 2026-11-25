@@ -65,6 +65,7 @@ function activityLabel(value) {
 
 function messagePreview(message) {
   if (!message) return '';
+  if (message.deletedAt) return 'Mensagem excluída';
   return message.text || message.reference?.label || (message.attachments?.length ? 'Anexo' : '');
 }
 
@@ -175,12 +176,13 @@ function updateSend(state) {
   if (!state.room) return;
   const draft = draftFor(state);
   const hasContent = Boolean(draft.text.trim() || draft.files.length || draft.reference);
-  state.refs.composer.hidden = Boolean(state.room.readOnly);
-  state.refs.readOnly.hidden = !state.room.readOnly;
+  state.refs.composer.hidden = Boolean(state.room.readOnly || state.mutation);
+  state.refs.readOnly.hidden = !state.room.readOnly || Boolean(state.mutation);
   state.refs.send.disabled = !state.connected || !state.historyReady || !hasContent || draft.sending;
   state.refs.text.disabled = draft.sending;
   state.refs.attach.disabled = draft.sending;
   state.refs.addReference.disabled = draft.sending || !state.modules.length;
+  updateMutationControls(state);
 }
 
 async function api(state, suffix = '', options = {}) {
@@ -319,6 +321,9 @@ function selectRoom(state, room, focus = false) {
   state.hasMore = false;
   state.historyReady = false;
   state.roomSeq += 1;
+  state.mutation = null;
+  state.pendingUpdates.clear();
+  state.refs.mutation.hidden = true;
   state.dialog.dataset.mobileView = 'conversation';
   state.refs.blank.hidden = true;
   state.refs.thread.hidden = false;
@@ -350,9 +355,24 @@ function orderedMessages(messages) {
   return new Map([...messages].sort(([first], [second]) => BigInt(first) < BigInt(second) ? -1 : 1));
 }
 
+function latestMessage(current, incoming) {
+  if (!current) return incoming;
+  if (current.deletedAt) return current;
+  if (incoming.deletedAt) return incoming;
+  return (incoming.editedAt || '') >= (current.editedAt || '') ? incoming : current;
+}
+
+function actionButton(label, action) {
+  const button = el('button', 'chat-message-action', label);
+  button.type = 'button';
+  button.dataset.messageAction = action;
+  return button;
+}
+
 function messageElement(state, message) {
   const sentByMe = message.sender.id === state.session.user.id;
   const item = el('li', `chat-message${sentByMe ? ' chat-message-mine' : ''}`);
+  item.dataset.messageId = message.id;
   const avatar = el('span', 'chat-avatar chat-message-avatar', initials(message.sender.name));
   avatar.setAttribute('aria-hidden', 'true');
   const block = el('div', 'chat-message-content');
@@ -361,6 +381,18 @@ function messageElement(state, message) {
   time.dateTime = message.createdAt;
   meta.append(el('strong', '', sentByMe ? 'Você' : message.sender.name), time);
   const body = el('div', 'chat-bubble');
+  if (message.deletedAt) {
+    body.classList.add('chat-deleted');
+    body.append(el('p', '', 'Mensagem excluída'));
+    block.append(meta, body);
+    item.append(avatar, block);
+    return item;
+  }
+  if (message.editedAt) {
+    const edited = el('span', 'chat-edited', 'Editada');
+    edited.title = `Editada às ${timeLabel(message.editedAt)}`;
+    meta.append(edited);
+  }
   if (message.text) body.append(el('p', '', message.text));
   for (const attachment of message.attachments || []) {
     const link = el('a', 'chat-inline-link');
@@ -390,6 +422,16 @@ function messageElement(state, message) {
     }
   }
   block.append(meta, body);
+  if (sentByMe) {
+    const actions = el('div', 'chat-message-actions');
+    for (const [action, label] of [['edit', 'Editar'], ['delete', 'Excluir']]) {
+      const button = actionButton(label, action);
+      button.setAttribute('aria-label', `${label} mensagem`);
+      button.addEventListener('click', () => startMutation(state, message.id, action));
+      actions.append(button);
+    }
+    block.append(actions);
+  }
   item.append(avatar, block);
   return item;
 }
@@ -397,6 +439,9 @@ function messageElement(state, message) {
 function renderMessages(state, scrollToBottom = false) {
   const list = state.refs.messages;
   const previousScroll = list.scrollTop;
+  const active = document.activeElement?.closest('[data-message-id]');
+  const messageId = active?.dataset.messageId;
+  const action = document.activeElement?.dataset.messageAction;
   list.replaceChildren();
   if (!state.messages.size) {
     list.append(el('p', 'chat-empty-state', 'Ainda não há mensagens. Comece a conversa abaixo.'));
@@ -416,6 +461,7 @@ function renderMessages(state, scrollToBottom = false) {
   list.append(timeline);
   if (scrollToBottom) scrollEnd(state);
   else list.scrollTop = previousScroll;
+  if (messageId && action) focusMessageAction(state, messageId, action);
 }
 
 async function loadHistory(state, older = false) {
@@ -432,8 +478,8 @@ async function loadHistory(state, older = false) {
   try {
     const { messages, hasMore } = await api(state, `/messages?${params}`);
     if (state !== currentChat || seq !== state.roomSeq) return;
-    const merged = new Map(messages.map(row => [row.id, row]));
-    for (const [id, message] of state.messages) if (!merged.has(id)) merged.set(id, message);
+    const merged = new Map(messages.map(row => [row.id, latestMessage(row, state.pendingUpdates.get(row.id) || row)]));
+    for (const [id, message] of state.messages) merged.set(id, latestMessage(message, merged.get(id) || message));
     state.messages = orderedMessages(merged);
     state.hasMore = Boolean(hasMore);
     state.historyReady = true;
@@ -465,7 +511,7 @@ function receiveMessage(state, message, fromSocket = false) {
   if (state !== currentChat || !message?.id) return;
   if (message.room === state.room?.id && !state.messages.has(message.id)) {
     const atEnd = nearEnd(state);
-    state.messages.set(message.id, message);
+    state.messages.set(message.id, latestMessage(message, state.pendingUpdates.get(message.id) || message));
     state.messages = orderedMessages(state.messages);
     if (state.historyReady) renderMessages(state, atEnd || message.sender.id === state.session.user.id);
     markRead(state);
@@ -477,6 +523,97 @@ function receiveMessage(state, message, fromSocket = false) {
     if (!visibleConversation) updateUnread(state, state.unread + 1, message);
   }
   requestSummary(state);
+}
+
+function applyMessageUpdate(state, message) {
+  if (state !== currentChat || !message?.id) return;
+  if (message.room === state.room?.id) {
+    const previous = state.messages.get(message.id);
+    if (previous) {
+      const updated = latestMessage(previous, message);
+      if (updated !== previous) {
+        state.messages.set(message.id, updated);
+        renderMessages(state);
+      }
+    } else {
+      state.pendingUpdates.set(message.id, latestMessage(state.pendingUpdates.get(message.id), message));
+      if (state.pendingUpdates.size > 100) state.pendingUpdates.delete(state.pendingUpdates.keys().next().value);
+    }
+    if (message.deletedAt && state.mutation?.id === message.id && !state.mutation.pending) closeMutation(state);
+  }
+  requestSummary(state);
+}
+
+function focusMessageAction(state, id, action) {
+  state.refs.messages.querySelector(`[data-message-id="${CSS.escape(id)}"] [data-message-action="${action}"]`)?.focus({ preventScroll: true });
+}
+
+function updateMutationControls(state) {
+  if (!state.mutation) return;
+  const { mutationText, mutationCancel, mutationSubmit } = state.refs;
+  const { type, pending } = state.mutation;
+  mutationText.disabled = pending;
+  mutationCancel.disabled = pending;
+  mutationSubmit.disabled = pending || !state.connected || (type === 'edit' && mutationText.value === state.mutation.originalText);
+}
+
+function startMutation(state, id, type) {
+  const message = state.messages.get(id);
+  if (!message || message.deletedAt || state.mutation?.pending) return;
+  const { mutation, mutationTitle, mutationHint, mutationLabel, mutationText, mutationSubmit, mutationCancel } = state.refs;
+  const deleting = type === 'delete';
+  state.mutation = { id, type, room: message.room, originalText: message.text, pending: false };
+  mutationTitle.textContent = deleting ? 'Excluir mensagem?' : 'Editar mensagem';
+  mutationHint.textContent = deleting ? 'O texto, os anexos e os vínculos serão removidos da conversa.' : '';
+  mutationHint.hidden = !deleting;
+  mutationLabel.hidden = deleting;
+  mutationText.value = message.text;
+  mutationSubmit.textContent = deleting ? 'Excluir mensagem' : 'Salvar alteração';
+  mutationSubmit.classList.toggle('chat-control-danger', deleting);
+  mutation.hidden = false;
+  setNotice(state);
+  updateSend(state);
+  (deleting ? mutationCancel : mutationText).focus();
+}
+
+function closeMutation(state, focus = true) {
+  const previous = state.mutation;
+  state.mutation = null;
+  state.refs.mutation.hidden = true;
+  state.refs.mutationText.value = '';
+  updateSend(state);
+  if (focus && previous) focusMessageAction(state, previous.id, previous.type);
+}
+
+async function submitMutation(state, event) {
+  event.preventDefault();
+  const action = state.mutation;
+  if (!action || action.pending || !state.socket?.connected || state.refs.mutationSubmit.disabled) return;
+  const { id, room, type } = action;
+  const input = { id, room };
+  if (type === 'edit') input.text = state.refs.mutationText.value.trim();
+  action.pending = true;
+  updateMutationControls(state);
+  setNotice(state);
+  try {
+    const result = await state.socket.timeout(15000).emitWithAck(`chat:${type}`, input);
+    if (state !== currentChat) return;
+    if (!result?.ok) throw new Error(result?.error || 'Não foi possível atualizar a mensagem.');
+    applyMessageUpdate(state, result.message);
+    if (state.mutation === action) {
+      closeMutation(state, type === 'edit');
+      if (type === 'delete') state.refs.title.focus({ preventScroll: true });
+    }
+  } catch (error) {
+    if (state === currentChat && state.mutation === action) {
+      setNotice(state, error.message === 'operation has timed out'
+        ? 'Não foi possível confirmar a alteração. Atualize a conversa para conferir.'
+        : error.message);
+    }
+  } finally {
+    action.pending = false;
+    if (state.mutation === action) updateMutationControls(state);
+  }
 }
 
 function addFiles(state, files) {
@@ -601,6 +738,7 @@ function connectSocket(state) {
     setNotice(state, 'O chat perdeu a conexão. O envio volta quando reconectar.');
   });
   socket.on('chat:message', ({ message } = {}) => receiveMessage(state, message, true));
+  socket.on('chat:message-updated', ({ message } = {}) => applyMessageUpdate(state, message));
 }
 
 function renderShell() {
@@ -619,7 +757,7 @@ function renderShell() {
     <header class="chat-header">
       <span class="chat-header-icon"><i class="bi bi-chat-dots" aria-hidden="true"></i></span>
       <div class="chat-header-heading">
-        <h2 id="maximumChatHeading">Chat interno</h2>
+        <h2 id="maximumChatHeading">Talk</h2>
         <p data-chat="connection" class="chat-connection" data-status="connecting"><i class="bi bi-circle-fill" aria-hidden="true"></i><span>Conectando…</span></p>
       </div>
       <button type="button" class="chat-icon-button" data-chat="close" aria-label="Fechar chat" title="Fechar chat"><i class="bi bi-x-lg" aria-hidden="true"></i></button>
@@ -645,6 +783,15 @@ function renderShell() {
           <button type="button" class="chat-more" data-chat="more" hidden><i class="bi bi-chevron-up" aria-hidden="true"></i> Mensagens anteriores</button>
           <div class="chat-messages" data-chat="messages" role="log" aria-label="Mensagens" aria-live="polite" aria-relevant="additions"></div>
           <p class="chat-read-only" data-chat="readOnly" hidden>Esta conversa está disponível para consulta.</p>
+          <form class="chat-mutation" data-chat="mutation" aria-labelledby="maximumChatMutationTitle" hidden>
+            <strong id="maximumChatMutationTitle" data-chat="mutationTitle"></strong>
+            <p data-chat="mutationHint" hidden></p>
+            <label data-chat="mutationLabel"><span class="sr-only">Texto da mensagem</span><textarea data-chat="mutationText" rows="2" maxlength="4000"></textarea></label>
+            <div class="chat-mutation-controls">
+              <button type="button" class="chat-control" data-chat="mutationCancel">Cancelar</button>
+              <button type="submit" class="chat-control chat-control-primary" data-chat="mutationSubmit"></button>
+            </div>
+          </form>
           <form class="chat-composer" data-chat="composer">
             <div class="chat-link-chooser" data-chat="linkChooser" hidden>
               <label>Setor<select data-chat="modulePicker" aria-label="Setor"></select></label>
@@ -739,6 +886,9 @@ function bindChat(state) {
     refs.text.focus();
   });
   refs.composer.addEventListener('submit', event => void sendMessage(state, event));
+  refs.mutation.addEventListener('submit', event => void submitMutation(state, event));
+  refs.mutationText.addEventListener('input', () => updateMutationControls(state));
+  refs.mutationCancel.addEventListener('click', () => closeMutation(state));
   document.addEventListener('visibilitychange', () => markRead(state), { signal: state.abort.signal });
 }
 
@@ -747,10 +897,10 @@ export function initChat(session, { notify, surface } = {}) {
   if (currentChat) destroyChat();
   const state = {
     ...renderShell(),
-    session, notify, mount: null,
+    session, notify, mount: null, mutation: null,
     connected: false, wasConnected: false, historyReady: false, hasSummary: false, hasMore: false,
     rooms: [], people: [], modules: [], roomLookup: new Map(),
-    abort: new AbortController(), drafts: new Map(), messages: new Map(), marked: new Map(), recent: new Set(),
+    abort: new AbortController(), drafts: new Map(), messages: new Map(), marked: new Map(), recent: new Set(), pendingUpdates: new Map(),
     unread: 0, roomSeq: 0, summarySeq: 0, taskSeq: 0
   };
   currentChat = state;
