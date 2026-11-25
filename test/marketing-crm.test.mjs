@@ -62,7 +62,9 @@ test('CRM valida segmentos, páginas de captura e a ordem dos e-mails de automa�
   assert.deepEqual(segmentFields({ name: 'Interesses', tags: [' Cursos ', 'CURSOS', 'Saúde'] }).tags, ['cursos', 'saúde']);
   assert.throws(() => segmentFields({ name: 'Interesses', tags: [] }), { status: 400 });
   assert.equal(landingFields({ title: 'Um lançamento', slug: 'Curso-Fiscal' }).slug, 'curso-fiscal');
+  assert.equal(landingFields({ title: 'Descadastro', slug: 'saiba-mais', kind: 'unsubscribe' }).buttonText, 'Confirmar descadastro');
   assert.throws(() => landingFields({ title: 'Outro', slug: '../campanha' }), { status: 400 });
+  assert.throws(() => landingFields({ title: 'Retorno', slug: 'saiba-mais', kind: 'redirect' }), { status: 400 });
   const flow = { name: 'Boas-vindas', landingId, status: 'active', steps: [
     { delayDays: 0, subject: 'Primeiro contato', content: 'Olá' },
     { delayDays: 3, subject: 'Conteúdo', content: 'Detalhes' },
@@ -70,7 +72,9 @@ test('CRM valida segmentos, páginas de captura e a ordem dos e-mails de automa�
   assert.deepEqual(automationFields(flow).steps.map(step => step.delayDays), [0, 3]);
   assert.throws(() => automationFields({ ...flow, steps: [{ ...flow.steps[0], delayDays: -1 }] }), { status: 400 });
   assert.throws(() => automationFields({ ...flow, steps: [{ ...flow.steps[0], subject: 'Olá\nNovo assunto' }] }), { status: 400 });
-  assert.deepEqual(campaignGrowth({ type: 'newsletter', landingId }), { type: 'newsletter', segmentId: null, landingId });
+  assert.deepEqual(campaignGrowth({ type: 'newsletter', landingId }), { type: 'newsletter', segmentId: null, landingId, unsubscribePageId: null });
+  assert.equal(campaignGrowth({}, { unsubscribePageId: landingId }).unsubscribePageId, landingId);
+  assert.equal(campaignGrowth({ unsubscribePageId: '' }, { unsubscribePageId: landingId }).unsubscribePageId, null);
   assert.throws(() => campaignGrowth({ type: 'outro' }), { status: 400 });
 });
 

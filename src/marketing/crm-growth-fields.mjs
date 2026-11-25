@@ -4,6 +4,7 @@ export const CRM_ID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 export const CRM_TOKEN = /^[a-f0-9]{64}$/;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const TYPES = new Set(['promotion', 'newsletter', 'welcome', 'announcement']);
+const PAGE_KINDS = new Set(['landing', 'unsubscribe']);
 
 export function invalidGrowth(message) {
   throw new ApiError(400, 'CRM_INVALID_INPUT', message);
@@ -36,6 +37,7 @@ export function campaignGrowth(input, current = {}) {
     type: Object.hasOwn(input, 'type') ? choice(input.type, TYPES, 'o tipo de campanha') : current.type ?? 'promotion',
     segmentId: Object.hasOwn(input, 'segmentId') ? reference(input.segmentId, 'um segmento') : current.segmentId ?? null,
     landingId: Object.hasOwn(input, 'landingId') ? reference(input.landingId, 'uma página') : current.landingId ?? null,
+    unsubscribePageId: Object.hasOwn(input, 'unsubscribePageId') ? reference(input.unsubscribePageId, 'uma página de descadastro') : current.unsubscribePageId ?? null,
   };
 }
 export function segmentFields(input, current = {}) {
@@ -47,13 +49,18 @@ export function segmentFields(input, current = {}) {
 export function landingFields(input, current = {}) {
   const slug = growthText(input.slug ?? current.slug, 'o endereço da página', 80, true).toLowerCase();
   if (slug.length < 3 || !SLUG.test(slug)) invalidGrowth('Use letras, números e hífens no endereço da página.');
+  const kind = pageKind(input.kind ?? current.kind);
   return {
     title: growthText(input.title ?? current.title, 'o título da página', 160, true), slug,
     description: growthText(input.description ?? current.description, 'a descrição da página', 4000),
-    buttonText: growthText(input.buttonText ?? current.buttonText ?? 'Quero receber novidades', 'o texto do botão', 80, true),
+    buttonText: growthText(input.buttonText ?? current.buttonText ?? (kind === 'unsubscribe' ? 'Confirmar descadastro' : 'Quero receber novidades'), 'o texto do botão', 80, true),
     tags: tagList(input.tags ?? current.tags ?? []),
     status: choice(input.status ?? current.status ?? 'draft', new Set(['draft', 'published']), 'a situação da página'),
+    kind,
   };
+}
+export function pageKind(value) {
+  return choice(value ?? 'landing', PAGE_KINDS, 'o tipo de página');
 }
 export function automationFields(input, current = {}) {
   const steps = input.steps ?? current.steps;

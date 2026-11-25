@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto';
 import http from 'node:http';
 import test from 'node:test';
 import { readCrmMailConfig, sendCrmEmail, verifiedDeliveryEvent } from '../src/marketing/delivery.mjs';
+import { buildCrmEmailMarkup } from '../src/marketing/crm-email-template.mjs';
 import { createPublicCrmRouter } from '../src/marketing/public-crm.mjs';
 
 const mailEnv = {
@@ -65,6 +66,25 @@ test('campanha usa os blocos publicados como HTML de e-mail, com link individual
     assert.doesNotMatch(payload.html, /javascript:|<form|<script/);
     return Response.json({ id: 'provedor-builder' });
   });
+});
+
+test('templates recentes aceitam imagem clicável, estilos e links HTTPS sem executar conteúdo do usuário', () => {
+  const options = { subject: 'Informativo', action: 'https://central.example.test/inscricao/informativo', origin: 'https://central.example.test', blocks: [
+    { type: 'hero', title: 'Informativo <Maximum>', text: 'Novidades', url: '#inscricao', linkLabel: 'Leia a edição', fontSize: 38, padding: 22 },
+    { type: 'image', url: 'https://images.example.test/banner.png', linkUrl: '/inscricao/informativo', alt: 'Capa' },
+    { type: 'links', text: 'Leia no site|https://example.test\nIgnorar|javascript:alert(1)' },
+    { type: 'list', text: 'Primeira novidade\nSegunda novidade' },
+  ] };
+  const html = buildCrmEmailMarkup(options);
+  assert.match(html, /font-size:38px/);
+  assert.match(html, /Informativo &lt;Maximum&gt;/);
+  assert.match(html, /Leia a edição/);
+  assert.match(html, /href="https:\/\/central\.example\.test\/inscricao\/informativo"[^>]*><img src="https:\/\/images\.example\.test\/banner\.png"/);
+  assert.match(html, /<li>Primeira novidade<\/li>/);
+  assert.doesNotMatch(html, /javascript:|<script|<iframe/);
+  const previous = buildCrmEmailMarkup({ ...options, legacy: true });
+  assert.match(previous, /padding:12px 24px/);
+  assert.doesNotMatch(previous, /Leia a edição|font-size:38px|<a[^>]*><img/);
 });
 
 test('captura e ações públicas exigem confirmação via POST e não expõem dados enviados', async () => {

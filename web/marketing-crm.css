@@ -146,22 +146,9 @@
 .mcrm-provider strong { display: block; }
 .mcrm-provider span { color: var(--muted); }
 
-.mcrm-workspace {
-  display: grid;
-  grid-template-columns: clamp(144px, 18cqw, 194px) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-  margin-bottom: 70px;
-}
-.mcrm-sidebar {
-  background: var(--mcrm-surface);
-  border: 1px solid var(--mcrm-edge);
-  border-radius: 15px;
-  padding: 7px;
-}
-
 .mcrm-board {
   min-width: 0;
+  margin-bottom: 70px;
   overflow: hidden;
   border: 1px solid var(--mcrm-edge);
   border-radius: 16px;
@@ -177,35 +164,6 @@
   padding: 14px 18px;
   border-bottom: 1px solid var(--mcrm-edge);
 }
-
-.mcrm-tabs {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 4px;
-}
-
-.mcrm-tabs [role="tab"] {
-  display: flex;
-  align-items: center;
-  text-align: left;
-  gap: 10px;
-  min-height: 42px;
-  min-width: 0;
-  padding: 7px 12px;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.mcrm-tabs [role="tab"]:is(:hover, [aria-selected="true"]) {
-  background: var(--mcrm-soft);
-  color: var(--mcrm-accent);
-}
-.mcrm-tabs [aria-selected="true"] { border-color: var(--mcrm-edge); }
-.mcrm-tabs [role="tab"] i { font-size: 15px; }
 
 .mcrm-board-heading, .mcrm-board-actions, .mcrm-campaign-views { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .mcrm-board-heading { justify-content: space-between; gap: 11px 14px; padding: 16px 18px 0; }
@@ -443,7 +401,6 @@
   .mcrm-campaign-list { grid-template-columns: 1fr; }
 }
 @container (max-width: 585px) {
-  .mcrm-workspace { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .mcrm-provider { flex-wrap: wrap; }
   .mcrm-board-tools, .mcrm-board-heading, .mcrm-panel { padding-inline: 10px; }
   .mcrm-contact-list { overflow: visible; }
@@ -469,7 +426,6 @@
   }
 }
 @container (max-width: 410px) {
-  .mcrm-tabs [role="tab"] { padding-inline: 6px; }
   .mcrm-kpi { flex-direction: column; align-items: flex-start; gap: 6px; }
   .mcrm-kpi-icon { flex-basis: 28px; width: 29px; height: 29px; font-size: 14px; }
   .mcrm-filters, .mcrm-filter, .mcrm-search { width: 100%; }

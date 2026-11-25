@@ -17,13 +17,13 @@ const CAMPAIGN_STATUS = {
 };
 const CAMPAIGN_TYPES = { promotion: 'Promocional', newsletter: 'Newsletter', welcome: 'Boas-vindas', announcement: 'Lançamento ou comunicado' };
 const LANDING_STATUS = { draft: 'Rascunho', published: 'Publicada' };
+const PAGE_KINDS = { landing: 'Inscrição', unsubscribe: 'Descadastro' };
 const SECTIONS = {
-  subscribers: { label: 'Contatos', singular: 'contato', icon: 'people', create: 'Novo contato', statuses: CONTACT_STATUS },
-  campaigns: { label: 'Campanhas', singular: 'campanha', icon: 'envelope', create: 'Criar campanha', statuses: CAMPAIGN_STATUS },
-  landings: { label: 'Páginas', singular: 'página', icon: 'file-earmark', create: 'Criar página', statuses: LANDING_STATUS },
+  subscribers: { label: 'Contatos', singular: 'contato', create: 'Novo contato', statuses: CONTACT_STATUS },
+  campaigns: { label: 'Campanhas', singular: 'campanha', create: 'Criar campanha', statuses: CAMPAIGN_STATUS },
+  landings: { label: 'Páginas', singular: 'página', create: 'Criar página', statuses: LANDING_STATUS },
 };
 const REPORT_PERCENT = new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 });
-const SECTION_KEYS = Object.keys(SECTIONS);
 
 function node(tag, className, value) {
   const element = document.createElement(tag);
@@ -64,6 +64,13 @@ function statusPill(key, labels) {
   const pill = node('span', 'mcrm-pill', labels[key] || 'Indefinido');
   pill.dataset.status = key;
   return pill;
+}
+
+function pageKind(page) { return page.kind === 'unsubscribe' ? 'unsubscribe' : 'landing'; }
+
+function publishedPath(page) {
+  const pattern = pageKind(page) === 'unsubscribe' ? /^\/crm\/descadastro\/[a-z0-9]+(?:-[a-z0-9]+)*$/ : /^\/inscricao\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
+  return page.status === 'published' && pattern.test(page.path) ? page.path : '';
 }
 
 function setOptions(select, options, current = '') {
@@ -184,7 +191,7 @@ const resultFields = [
 ];
 const numericValues = new Set(resultFields.map(({ name }) => name));
 
-export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {}) {
+export function mountMarketingCrm(root, { request, onAuthError, onOpenPage, onSectionChange } = {}) {
   root.classList.add('mcrm');
   root.innerHTML = `
     <header class="mcrm-header">
@@ -195,16 +202,13 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
     </header>
     <div class="mcrm-kpis" data-crm="metrics" aria-label="Indicadores do CRM"></div>
     <aside class="mcrm-provider"><i class="bi bi-broadcast" aria-hidden="true"></i><p><strong data-crm="providerTitle"></strong><span data-crm="providerNote"></span></p><button class="mcrm-action" type="button" data-crm="refresh" hidden>Atualizar dados</button></aside>
-    <div class="mcrm-workspace">
-      <nav class="mcrm-sidebar" aria-label="Navegação do CRM">
-        <div class="mcrm-tabs" role="tablist" aria-label="Áreas do CRM" aria-orientation="vertical" data-crm="tabs"></div>
-      </nav>
-      <section class="mcrm-board" aria-label="Gestão do CRM">
+    <section class="mcrm-board" aria-labelledby="mcrm-section-title">
         <div class="mcrm-board-heading">
-          <h2 data-crm="sectionTitle"></h2>
+          <h2 id="mcrm-section-title" data-crm="sectionTitle" tabindex="-1"></h2>
           <div class="mcrm-board-actions">
             <button class="mcrm-action" type="button" data-crm="importContacts" hidden>Importar CSV</button>
             <button class="mcrm-action" type="button" data-crm="exportContacts" hidden><i class="bi bi-download" aria-hidden="true"></i>Exportar CSV</button>
+            <button class="mcrm-action" type="button" data-crm="createUnsubscribe" hidden>Criar página de descadastro</button>
             <button class="mcrm-action mcrm-primary" type="button" data-crm="create" hidden></button>
           </div>
         </div>
@@ -217,12 +221,12 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
             <label class="mcrm-search"><i class="bi bi-search" aria-hidden="true"></i><span class="sr-only">Buscar no CRM</span><input type="search" data-crm="search"></label>
             <label class="mcrm-filter" data-crm="statusFilter"><span class="sr-only">Filtrar por situação</span><select data-crm="status"></select></label>
             <label class="mcrm-filter" data-crm="interestFilter" hidden><span class="sr-only">Filtrar por interesse</span><select data-crm="interest"></select></label>
+            <label class="mcrm-filter" data-crm="pageKindFilter" hidden><span class="sr-only">Filtrar por tipo de página</span><select data-crm="pageKind"><option value="">Todos os tipos de página</option><option value="landing">Inscrição</option><option value="unsubscribe">Descadastro</option></select></label>
           </div>
         </div>
         <p class="mcrm-message" data-crm="message" role="status" hidden></p>
-        <div class="mcrm-panel" id="mcrm-panel" role="tabpanel" data-crm="panel"></div>
-      </section>
-    </div>
+        <div class="mcrm-panel" id="mcrm-panel" data-crm="panel"></div>
+    </section>
     <div class="mcrm-speed-actions">
       <div class="mcrm-speed-list" id="mcrm-speed-list" aria-label="Atalhos do CRM" data-crm="speedList" hidden>
         <button class="mcrm-action" type="button" data-crm="speedCampaign"><span class="mcrm-speed-icon" aria-hidden="true">+</span>Criar campanha</button>
@@ -246,15 +250,6 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
       </form>
     </dialog>`;
   const ui = Object.fromEntries([...root.querySelectorAll('[data-crm]')].map((item) => [item.dataset.crm, item]));
-  const tabs = Object.fromEntries(Object.entries(SECTIONS).map(([key, section]) => {
-    const tab = action(section.label, () => selectView(key), { symbol: section.icon });
-    tab.className = '';
-    tab.id = `mcrm-${key}-tab`;
-    tab.setAttribute('role', 'tab');
-    tab.setAttribute('aria-controls', 'mcrm-panel');
-    ui.tabs.append(tab);
-    return [key, tab];
-  }));
   let active = false;
   let canCreate = false;
   let canUpdate = false;
@@ -310,7 +305,7 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
     }
   }
 
-  function selectView(next, moveFocus = false, nextCampaignView = 'working') {
+  function selectView(next, moveFocus = false, nextCampaignView = 'working', notify = true) {
     if (view !== next || (next === 'campaigns' && campaignView !== nextCampaignView)) {
       view = next;
       campaignView = nextCampaignView;
@@ -318,8 +313,9 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
       displayMessage();
       resetOptions();
       render();
+      if (notify) onSectionChange?.({ section: view, campaignView });
     }
-    if (moveFocus) tabs[view].focus();
+    if (moveFocus) ui.sectionTitle.focus();
   }
 
   function renderSummary() {
@@ -349,11 +345,6 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
     if (data?.deliveryConfigured && !data.analyticsConfigured) ui.providerNote.textContent += ' Configure o webhook para receber eventos do provedor.';
     ui.refresh.hidden = !data;
     ui.refresh.disabled = loading;
-    for (const [name, tab] of Object.entries(tabs)) {
-      tab.setAttribute('aria-selected', String(name === view));
-      tab.tabIndex = name === view ? 0 : -1;
-    }
-    ui.panel.setAttribute('aria-labelledby', tabs[view].id);
     ui.panel.setAttribute('aria-busy', String(loading));
     const section = SECTIONS[view];
     ui.sectionTitle.textContent = section.label;
@@ -366,6 +357,8 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
     ui.history.setAttribute('aria-pressed', String(campaignView === 'history'));
     ui.importContacts.hidden = !data || !canCreate || view !== 'subscribers';
     ui.exportContacts.hidden = !data || !canUpdate || view !== 'subscribers';
+    ui.createUnsubscribe.hidden = !data || !canCreate || view !== 'landings';
+    ui.pageKindFilter.hidden = view !== 'landings';
     ui.speedCampaign.hidden = !canCreate || !data;
     ui.statusFilter.hidden = !section.statuses;
     if (view === 'subscribers' && data) {
@@ -384,6 +377,7 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
       .filter(([status]) => (status === 'sent') === (campaignView === 'history')));
     setOptions(ui.status, { '': 'Todas as situações', ...statuses });
     ui.interest.value = '';
+    ui.pageKind.value = '';
   }
 
   function renderEmpty(title, description, symbol, retry = false) {
@@ -403,10 +397,11 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
     const status = ui.status.value;
     const query = searchText(ui.search.value.trim());
     const interest = view === 'subscribers' ? ui.interest.value : '';
+    const kind = view === 'landings' ? ui.pageKind.value : '';
     const records = data[view].filter((record) => {
       const fields = [record.name, record.title, record.email, record.slug, record.source, record.subject, ...(record.tags || [])];
       return (view !== 'campaigns' || (record.status === 'sent') === (campaignView === 'history'))
-        && (!status || status === record.status) && (!interest || (record.tags || []).includes(interest))
+        && (!status || status === record.status) && (!interest || (record.tags || []).includes(interest)) && (!kind || pageKind(record) === kind)
         && (!query || fields.some((value) => searchText(value).includes(query)));
     });
     if (records.length) {
@@ -418,7 +413,7 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
       else ui.panel.replaceChildren(total, content);
       return;
     }
-    const filtered = Boolean(status || query || interest);
+    const filtered = Boolean(status || query || interest || kind);
     const history = view === 'campaigns' && campaignView === 'history';
     const emptyLabels = { subscribers: 'Nenhum contato cadastrado', campaigns: history ? 'Nenhuma campanha enviada' : 'Nenhuma campanha em trabalho', landings: 'Nenhuma página cadastrada' };
     const emptyNotes = { subscribers: 'Cadastre contatos ou importe uma lista CSV.', campaigns: history ? 'Os indicadores aparecem após o primeiro envio.' : 'Vincule uma página publicada para criar uma campanha.',
@@ -482,8 +477,10 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
       const identity = node('div');
       identity.append(node('h2', '', campaign.name), node('p', '', campaign.subject || 'Sem assunto'));
       const landing = data.landings.find((entry) => entry.id === campaign.landingId);
+      const unsubscribe = data.landings.find((entry) => entry.id === campaign.unsubscribePageId && pageKind(entry) === 'unsubscribe');
       const segment = data.segments.find((entry) => entry.id === campaign.segmentId);
       identity.append(node('p', 'mcrm-resource-meta', [CAMPAIGN_TYPES[campaign.type] || 'Promocional', landing?.title, segment && `Público: ${segment.name}`].filter(Boolean).join(' · ')));
+      if (unsubscribe) identity.append(node('p', 'mcrm-resource-meta', `Descadastro: ${unsubscribe.title}`));
       head.append(identity, statusPill(campaign.status, CAMPAIGN_STATUS));
       card.append(head);
       if (campaign.status !== 'draft') card.append(metricList(splitMetricInfo(campaign)));
@@ -519,22 +516,29 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
     for (const item of records) {
       const card = node('article', 'mcrm-campaign');
       const header = node('header', 'mcrm-campaign-head');
-      header.append(node('h2', '', item.title), statusPill(item.status, LANDING_STATUS));
+      const identity = node('div');
+      const kind = pageKind(item);
+      const unsubscribe = kind === 'unsubscribe';
+      const publicPath = publishedPath(item);
+      identity.append(node('h2', '', item.title), statusPill(kind, PAGE_KINDS));
+      header.append(identity, statusPill(item.status, LANDING_STATUS));
       card.append(header);
       const options = node('footer', 'mcrm-campaign-actions');
       if (item.description) card.append(node('p', 'mcrm-resource-meta', item.description));
       if (item.hasUnpublishedChanges) card.append(node('p', 'mcrm-resource-meta', 'Alterações em rascunho'));
       if (item.publishedAt) card.append(node('p', 'mcrm-resource-meta', `Publicada em ${date(item.publishedAt)}`));
-      card.append(metricList([['Leads confirmados', item.leadCount], ['Aguardando confirmação', item.pendingCount]]));
-      if (item.status === 'published' && /^\/inscricao\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(item.path)) {
+      if (unsubscribe) card.append(node('p', 'mcrm-resource-meta', 'A confirmação usa o link individual de descadastro enviado por e-mail.'));
+      else card.append(metricList([['Leads confirmados', item.leadCount], ['Aguardando confirmação', item.pendingCount]]));
+      if (publicPath) {
         const link = node('a', 'mcrm-action');
-        link.href = item.path;
+        link.href = publicPath;
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
-        link.append(icon('arrow-up-right'), document.createTextNode('Abrir página'));
-        options.append(link, action('Copiar link', () => void copyLandingLink(item.path), { symbol: 'link-45deg' }));
+        link.append(icon('arrow-up-right'), document.createTextNode(unsubscribe ? 'Prévia de descadastro' : 'Abrir página'));
+        options.append(link);
+        if (!unsubscribe) options.append(action('Copiar link', () => void copyLandingLink(publicPath), { symbol: 'link-45deg' }));
       }
-      options.append(action('Ver dados', (event) => showPageAnalysis(item, event.currentTarget), { symbol: 'graph-up' }));
+      if (!unsubscribe) options.append(action('Ver dados', (event) => showPageAnalysis(item, event.currentTarget), { symbol: 'graph-up' }));
       if (canUpdate) {
         options.append(action('Editar página', () => onOpenPage?.(item.id), { primary: true }));
         if (item.status === 'published') options.append(action('Retirar do ar', (event) => confirmPageAction(item, event.currentTarget, false)));
@@ -665,7 +669,7 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
 
   function openCampaign(campaign, trigger) {
     if (campaign ? !canUpdate : !canCreate) return;
-    const published = data.landings.filter((item) => item.status === 'published' || item.id === campaign?.landingId);
+    const published = data.landings.filter((item) => pageKind(item) === 'landing' && (item.status === 'published' || item.id === campaign?.landingId));
     if (!campaign && !published.length) {
       const panel = node('div', 'mcrm-form-explanation');
       panel.append(node('p', '', 'Publique uma página para usar seus blocos na campanha.'),
@@ -675,9 +679,17 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
     }
     const landings = Object.fromEntries([['', campaign ? 'Sem página vinculada' : 'Selecione uma página publicada'], ...published.map(({ id, title, status }) =>
       [id, status === 'published' ? title : `${title} (fora do ar)`])]);
+    const unsubscribe = data.landings.filter((item) => pageKind(item) === 'unsubscribe'
+      && (item.status === 'published' || item.id === campaign?.unsubscribePageId));
+    const unsubscribePages = Object.fromEntries([['', 'Automática (mais recente ou padrão)'], ...unsubscribe.map(({ id, title, status }) =>
+      [id, status === 'published' ? title : `${title} (fora do ar)`])]);
+    if (campaign?.unsubscribePageId && !Object.hasOwn(unsubscribePages, campaign.unsubscribePageId)) {
+      unsubscribePages[campaign.unsubscribePageId] = 'Página vinculada indisponível';
+    }
     const fields = fieldGrid([...campaignFields.slice(0, 2),
       { name: 'landingId', label: 'Página da campanha', type: 'select', options: landings, wide: true, required: !campaign,
         hint: 'A Central gera o HTML do e-mail com os blocos publicados e inclui o link da página.' },
+      { name: 'unsubscribePageId', label: 'Página de descadastro', type: 'select', options: unsubscribePages, wide: true },
       ...campaignFields.slice(2)], { type: 'promotion', ...campaign });
     fields.querySelector('[name="subject"]').required = !campaign;
     const path = `${API_PATH}/campaigns${campaign ? `/${encodeURIComponent(campaign.id)}` : ''}`;
@@ -698,9 +710,10 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
     content.append(frame);
     if (landing) {
       content.append(node('p', 'mcrm-resource-meta', `Página vinculada: ${landing.title}`));
-      if (landing.status === 'published' && /^\/inscricao\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(landing.path)) {
+      const linkPath = publishedPath(landing);
+      if (linkPath) {
         const link = node('a', 'mcrm-action', 'Abrir página publicada');
-        link.href = landing.path;
+        link.href = linkPath;
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
         content.append(link);
@@ -891,22 +904,18 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
     });
   }
 
-  ui.tabs.addEventListener('keydown', (event) => {
-    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    const index = SECTION_KEYS.indexOf(view);
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? SECTION_KEYS.length - 1
-      : (index + (event.key === 'ArrowUp' ? -1 : 1) + SECTION_KEYS.length) % SECTION_KEYS.length;
-    selectView(SECTION_KEYS[next], true);
-  });
   ui.search.addEventListener('input', renderResults);
   ui.status.addEventListener('change', renderResults);
   ui.interest.addEventListener('change', renderResults);
+  ui.pageKind.addEventListener('change', renderResults);
   ui.refresh.addEventListener('click', () => void reload());
   ui.working.addEventListener('click', () => selectView('campaigns', false, 'working'));
   ui.history.addEventListener('click', () => selectView('campaigns', false, 'history'));
   ui.importContacts.addEventListener('click', () => importContacts(ui.importContacts));
   ui.exportContacts.addEventListener('click', () => void exportContacts());
+  ui.createUnsubscribe.addEventListener('click', () => {
+    if (canCreate && data && view === 'landings') onOpenPage?.(null, { kind: 'unsubscribe' });
+  });
   ui.create.addEventListener('click', () => {
     if (!canCreate || !data) return;
     if (view === 'landings') onOpenPage?.(null);
@@ -947,7 +956,7 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
   ui.dialog.addEventListener('cancel', (event) => { if (busy) event.preventDefault(); });
   ui.dialog.addEventListener('close', () => {
     operation = undefined;
-    const target = opener?.isConnected ? opener : ui.create.hidden ? tabs[view] : ui.create;
+    const target = opener?.isConnected ? opener : ui.create.hidden ? ui.sectionTitle : ui.create;
     if (active) target.focus();
     opener = undefined;
   });
@@ -995,11 +1004,16 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
     setBusy(false);
   }
 
+  function selectSection({ section, campaignView: selectedCampaignView } = {}) {
+    if (active && Object.hasOwn(SECTIONS, section)) selectView(section, false, selectedCampaignView === 'history' ? 'history' : 'working', false);
+  }
+
   return {
-    open({ canCreate: mayCreate = true, canUpdate: mayUpdate = true, initialSection } = {}) {
-      const initialView = Object.hasOwn(SECTIONS, initialSection) ? initialSection : null;
+    open({ canCreate: mayCreate = true, canUpdate: mayUpdate = true, section, initialSection, campaignView: selectedCampaignView } = {}) {
+      const requestedView = section ?? initialSection;
+      const initialView = Object.hasOwn(SECTIONS, requestedView) ? requestedView : 'subscribers';
       if (active && canCreate === mayCreate && canUpdate === mayUpdate) {
-        if (initialView && view !== initialView) selectView(initialView);
+        selectSection({ section: initialView, campaignView: selectedCampaignView });
         return;
       }
       if (active) close();
@@ -1007,13 +1021,14 @@ export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {
       active = true;
       canCreate = mayCreate;
       canUpdate = mayUpdate;
-      view = initialView ?? 'subscribers';
-      campaignView = 'working';
+      view = initialView;
+      campaignView = selectedCampaignView === 'history' ? 'history' : 'working';
       ui.search.value = '';
       resetOptions();
       displayMessage();
       void reload();
     },
+    selectSection,
     close,
   };
 }

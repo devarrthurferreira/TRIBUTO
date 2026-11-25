@@ -4,15 +4,16 @@ import { isIP } from 'node:net';
 
 const LANDING = /^\/inscricao\/([a-z0-9][a-z0-9-]{0,99})$/;
 const EMAIL_ACTION = /^\/crm\/(confirmar|descadastrar)\/([a-zA-Z0-9_-]{24,128})$/;
+const UNSUBSCRIBE_PREVIEW = /^\/crm\/descadastro\/([a-z0-9][a-z0-9-]{0,99})$/;
 const WEBHOOK = '/v1/marketing/resend/webhook';
 const PAGE_EVENTS = '/crm/pagina/eventos';
 const WINDOW_MS = 15 * 60_000;
 
-function page(res, { title, description, body = '', status = 200, landing = false, tracking = false }) {
+function page(res, { title, description, body = '', status = 200, landing = false, tracking = false, remoteImages = landing }) {
   res.writeHead(status, {
     'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',
     'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'x-robots-tag': 'noindex, nofollow',
-    'content-security-policy': `default-src 'none'; img-src 'self'${landing ? ' https:' : ''}; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'${tracking ? "; script-src 'self'; connect-src 'self'" : ''}`,
+    'content-security-policy': `default-src 'none'; img-src 'self'${remoteImages ? ' https:' : ''}; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'${tracking ? "; script-src 'self'; connect-src 'self'" : ''}`,
   });
   res.end(`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)} | Maximum Contábil</title><style>
@@ -24,10 +25,14 @@ function page(res, { title, description, body = '', status = 200, landing = fals
   main.landing{width:min(100%,800px);padding:clamp(18px,5vw,44px)}.landing header{margin-bottom:17px}.landing>h1{margin-top:7px}
   .landing-block{display:block;border-radius:12px;padding:clamp(9px,3vw,20px);margin:6px 0}.landing-block h2{margin:0;font-size:clamp(22px,5vw,34px);line-height:1.16}
   .landing-block p{color:inherit;margin:0}.landing-block img{max-width:100%;height:auto;border-radius:11px;vertical-align:middle}.landing-block hr{border:0;border-top:1px solid #d9cbd1}
+  .landing-block h2+p,.landing-block p+.landing-button{margin-top:12px}.landing-block h2+form,.landing-block p+form{margin-top:14px}
+  .landing-block ul{padding-inline-start:24px;text-align:left;margin:0}.landing-block li+li{margin-top:4px}.landing-hero{background:#f9f1f4}.landing-quote blockquote{margin:0;padding-inline-start:16px;border-inline-start:3px solid #a9647a}.landing-quote cite{display:block;font-size:.85em;margin-top:6px}
+  .landing-links{display:flex;flex-wrap:wrap;gap:9px}.landing-links a{display:inline-block;font-weight:650}.landing-site-preview{padding:10px 14px;border:1px solid #ead9df;border-radius:10px;color:#61182d;font-size:14px;line-height:1.45}.landing-block .landing-site-preview{margin-block:0 12px}
   .landing-button{display:inline-block;text-decoration:none;padding:10px 16px;background:#831e32;color:white;font-weight:650;border-radius:9px}.landing-button:focus-visible,button:focus-visible{outline:2px solid #38303a;outline-offset:3px}
+  button:disabled{opacity:.55;cursor:not-allowed}
   .landing-privacy{padding:13px;border:1px solid #ead9df;border-radius:11px;margin:6px 0 22px;font-size:14px}.landing-privacy p{margin:0 0 8px}
   .landing-privacy div{display:flex;flex-wrap:wrap;gap:8px}.landing-privacy button{font-size:13px}.landing-privacy button+button{background:#f1e5e9;color:#61182d}
-</style><main${landing ? ' class="landing"' : ''}><header><img src="/maximum-logo.png" alt="Maximum Assessoria Contábil" width="512" height="107"></header>${landing ? '' : `<h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p>`}${body}</main>
+</style><main${landing ? ' class="landing"' : ''}><header><img src="/maximum-logo.png" alt="Maximum Assessoria Contábil" width="512" height="107" referrerpolicy="no-referrer"></header>${landing ? '' : `<h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p>`}${body}</main>
 ${tracking ? '<script src="/crm-page-tracking.js" defer></script>' : ''}</html>`);
 }
 
@@ -89,30 +94,98 @@ function landingForm(pathname, landing, ref, blockId = 'legacy-form') {
   </form>`;
 }
 
-function blockLink(value, type) {
+function blockLink(value, { anchor = false, local = true } = {}) {
   const source = String(value || '').trim();
-  if (type === 'button' && /^#[a-zA-Z][a-zA-Z0-9_-]{0,79}$/.test(source)) return source;
-  if (/^\/(?!\/)[^\\\u0000-\u0020]*$/.test(source)) return source;
+  if (anchor && /^#[a-zA-Z][a-zA-Z0-9_-]{0,79}$/.test(source)) return source;
+  if (local && /^\/(?!\/)[^\\\u0000-\u0020]*$/.test(source)) return source;
   if (!/^https:\/\//i.test(source) || !URL.canParse(source)) return '';
   const url = new URL(source);
   return !url.username && !url.password && url.protocol === 'https:' ? url.href : '';
 }
 
-function landingBlock(pathname, landing, block, ref) {
+function blockStyle(block) {
   const align = ['left', 'center', 'right'].includes(block.align) ? block.align : 'left';
-  const color = /^#[a-f\d]{6}$/i.test(block.color) ? `color:${block.color};` : '';
-  const background = /^#[a-f\d]{6}$/i.test(block.background) ? `background:${block.background};` : '';
-  const url = blockLink(block.url, block.type);
-  let content = '';
-  if (block.type === 'heading') content = `<h2>${escapeHtml(block.title || block.text)}</h2>`;
-  else if (block.type === 'text') content = `<p>${escapeHtml(block.text || block.title)}</p>`;
-  else if (block.type === 'image' && url) content = `<img src="${escapeHtml(url)}" alt="${escapeHtml(block.alt)}" referrerpolicy="no-referrer" loading="lazy">`;
-  else if (block.type === 'button' && url) content = `<a class="landing-button" href="${escapeHtml(url)}" rel="noreferrer">${escapeHtml(block.title || block.text || 'Saiba mais')}</a>`;
-  else if (block.type === 'divider') content = '<hr>';
-  else if (block.type === 'form') content = `${block.title ? `<h2>${escapeHtml(block.title)}</h2>` : ''}
-    ${landingForm(pathname, { ...landing, buttonText: block.text || landing.buttonText }, ref, block.id)}`;
-  const anchor = block.type === 'form' ? 'inscricao' : block.id === 'inscricao' ? 'bloco-inscricao' : block.id;
-  return content ? `<section id="${escapeHtml(anchor)}" class="landing-block" data-crm-block="${escapeHtml(block.id)}" style="text-align:${align};${color}${background}">${content}</section>` : '';
+  const styles = [`text-align:${align}`];
+  for (const [value, property] of [[block.color, 'color'], [block.background, 'background-color'], [block.borderColor, 'border-color']]) {
+    if (!/^#[a-f\d]{6}$/i.test(value)) continue;
+    if (property === 'border-color') styles.push('border-width:1px', 'border-style:solid');
+    styles.push(`${property}:${value}`);
+  }
+  for (const [value, property, min, max] of [
+    [block.fontSize, 'font-size', 12, 64], [block.padding, 'padding', 0, 64], [block.margin, 'margin-block', 0, 64],
+    [block.borderRadius, 'border-radius', 0, 48], [block.maxWidth, 'max-width', 200, 1_200],
+  ]) {
+    if (Number.isInteger(value) && value >= min && value <= max) {
+      styles.push(`${property}:${value}px`);
+      if (property === 'max-width') styles.push('margin-inline:auto');
+      if (property === 'font-size') styles.push(`--crm-block-size:${value}px`);
+    }
+  }
+  if (typeof block.lineHeight === 'number' && block.lineHeight >= 1.1 && block.lineHeight <= 2) {
+    const size = Math.round(block.lineHeight * 10) / 10;
+    styles.push(`line-height:${size}`, `--crm-block-line-height:${size}`);
+  }
+  const weights = { normal: 400, medium: 500, bold: 700 };
+  if (Object.hasOwn(weights, block.fontWeight)) styles.push(`font-weight:${weights[block.fontWeight]}`, `--crm-block-weight:${weights[block.fontWeight]}`);
+  if (block.type === 'spacer') styles.push(`min-height:${Number.isInteger(block.padding) && block.padding >= 0 && block.padding <= 64 ? block.padding : 24}px`, 'padding:0');
+  return styles.join(';');
+}
+
+function heading(value) {
+  return value ? `<h2 style="font-size:var(--crm-block-size,clamp(22px,5vw,34px));font-weight:var(--crm-block-weight,700);line-height:var(--crm-block-line-height,1.16)">${escapeHtml(value)}</h2>` : '';
+}
+
+function anchor(url, label, className = '') {
+  return url ? `<a href="${escapeHtml(url)}"${className ? ` class="${className}"` : ''} rel="noreferrer">${escapeHtml(label)}</a>` : '';
+}
+
+function listItems(value) {
+  return String(value || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(0, 48);
+}
+
+function unsubscribeForm(pathname, label, preview = false) {
+  if (preview) return '<p class="landing-site-preview">O descadastro é confirmado pelo link individual enviado por e-mail.</p>' +
+    `<button type="button" disabled>${escapeHtml(label)}</button>`;
+  return `<form action="${escapeHtml(pathname)}" method="post"><button type="submit">${escapeHtml(label)}</button></form>`;
+}
+
+function blockContent(pathname, landing, block, { ref, unsubscribe, preview }) {
+  const title = block.title || block.text;
+  const paragraph = value => value ? `<p>${escapeHtml(value)}</p>` : '';
+  const url = blockLink(block.url, { anchor: ['hero', 'button'].includes(block.type), local: block.type !== 'video' });
+  switch (block.type) {
+    case 'heading': return heading(title);
+    case 'text': return paragraph(block.text || block.title);
+    case 'hero': return heading(block.title) + paragraph(block.text) + anchor(url, block.linkLabel || 'Saiba mais', 'landing-button');
+    case 'image': {
+      if (!url || (unsubscribe && !url.startsWith('/'))) return '';
+      const image = `<img src="${escapeHtml(url)}" alt="${escapeHtml(block.alt)}" referrerpolicy="no-referrer" loading="lazy">`;
+      const linkUrl = blockLink(block.linkUrl, { anchor: true });
+      return linkUrl ? `<a href="${escapeHtml(linkUrl)}" rel="noreferrer" aria-label="${escapeHtml(block.alt || 'Abrir link da imagem')}">${image}</a>` : image;
+    }
+    case 'button': return anchor(url, title || 'Saiba mais', 'landing-button');
+    case 'video': return heading(block.title) + paragraph(block.text) + anchor(url, 'Assistir ao vídeo', 'landing-button');
+    case 'quote': return `<blockquote>${paragraph(block.text || block.title)}${block.title && block.text ? `<cite>${escapeHtml(block.title)}</cite>` : ''}</blockquote>`;
+    case 'list': return heading(block.title) + `<ul>${listItems(block.text).map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`;
+    case 'links': return heading(block.title) + `<div class="landing-links">${listItems(block.text).map(line => {
+      const separator = line.indexOf('|');
+      return separator > 0 ? anchor(blockLink(line.slice(separator + 1), { local: false }), line.slice(0, separator).trim()) : '';
+    }).join('')}</div>`;
+    case 'divider': return '<hr>';
+    case 'spacer': return '<span aria-hidden="true"></span>';
+    case 'form': return unsubscribe ? '' : heading(block.title) + landingForm(pathname, { ...landing, buttonText: block.text || landing.buttonText }, ref, block.id);
+    case 'unsubscribe': return unsubscribe ? heading(block.title) + unsubscribeForm(pathname, block.text || landing.buttonText || 'Cancelar inscrição', preview) : '';
+    default: return '';
+  }
+}
+
+function landingBlock(pathname, landing, block, options = {}) {
+  const content = blockContent(pathname, landing, block, options);
+  if (!content) return '';
+  const reserved = { form: 'inscricao', unsubscribe: 'descadastro' };
+  const identifier = reserved[block.type] || (Object.values(reserved).includes(block.id) ? `bloco-${block.id}` : block.id);
+  const marker = options.unsubscribe ? '' : ` data-crm-block="${escapeHtml(block.id)}"`;
+  return `<section id="${escapeHtml(identifier)}" class="landing-block landing-${escapeHtml(block.type)}"${marker} style="${blockStyle(block)}">${content}</section>`;
 }
 
 function landingBody(pathname, landing, ref, tracked) {
@@ -124,8 +197,16 @@ function landingBody(pathname, landing, ref, tracked) {
   return `<div data-crm-landing data-slug="${escapeHtml(landing.slug || pathname.slice('/inscricao/'.length))}">
     <div${custom ? '' : ' data-crm-block="page-intro"'}><h1>${escapeHtml(landing.title)}</h1>${landing.description
       ? `<p>${escapeHtml(landing.description)}</p>` : ''}</div>${identity}
-    ${custom ? landing.blocks.map(block => landingBlock(pathname, landing, block, ref)).join('') :
+    ${custom ? landing.blocks.map(block => landingBlock(pathname, landing, block, { ref })).join('') :
       `<section id="inscricao" class="landing-block" data-crm-block="legacy-form">${landingForm(pathname, landing, ref)}</section>`}</div>`;
+}
+
+function unsubscribeBody(pathname, design, { preview = false } = {}) {
+  const blocks = Array.isArray(design.blocks) ? design.blocks : [];
+  const rendered = blocks.map(block => landingBlock(pathname, design, block, { unsubscribe: true, preview })).join('');
+  const fallback = blocks.some(block => block.type === 'unsubscribe') ? '' :
+    `<section class="landing-block" id="descadastro">${unsubscribeForm(pathname, design.buttonText || 'Cancelar inscrição', preview)}</section>`;
+  return `<div><h1>${escapeHtml(design.title)}</h1>${design.description ? `<p>${escapeHtml(design.description)}</p>` : ''}${rendered}${fallback}</div>`;
 }
 
 export function createPublicCrmRouter(store, mail, logger = console) {
@@ -179,9 +260,17 @@ export function createPublicCrmRouter(store, mail, logger = console) {
   async function handleEmailAction(req, res, pathname, action, token) {
     const confirm = action === 'confirmar';
     const title = confirm ? 'Confirmar inscrição' : 'Cancelar inscrição';
-    if (req.method === 'GET') return page(res, { title,
-      description: confirm ? 'Confirme para receber nossos conteúdos e novidades.' : 'Confirme para deixar de receber nossas campanhas por e-mail.',
-      body: `<form action="${escapeHtml(pathname)}" method="post"><button type="submit">${title}</button></form>` });
+    if (req.method === 'GET') {
+      if (!confirm) {
+        let design;
+        try { design = await store.publicUnsubscribePage?.(token); }
+        catch { logger.error('Falha ao carregar o design de descadastro do CRM.'); }
+        if (design) return page(res, { title: design.title, body: unsubscribeBody(pathname, design), landing: true, remoteImages: false });
+      }
+      return page(res, { title,
+        description: confirm ? 'Confirme para receber nossos conteúdos e novidades.' : 'Confirme para deixar de receber nossas campanhas por e-mail.',
+        body: unsubscribeForm(pathname, title) });
+    }
     if (req.method !== 'POST') return page(res, { title: 'Operação indisponível', description: 'Abra o link recebido por e-mail.', status: 405 });
     const params = new URLSearchParams((await readBytes(req, 4_096, 'application/x-www-form-urlencoded')).toString('utf8'));
     const oneClick = !confirm && params.get('List-Unsubscribe') === 'One-Click';
@@ -191,6 +280,13 @@ export function createPublicCrmRouter(store, mail, logger = console) {
     if (oneClick) { res.writeHead(204); return res.end(); }
     return page(res, { title: confirm ? 'Inscrição confirmada' : 'Inscrição cancelada', description: confirm
       ? 'Você já pode receber as comunicações da Maximum Contábil.' : 'Este endereço foi retirado da lista de comunicações.' });
+  }
+
+  async function handleUnsubscribePreview(req, res, pathname, slug) {
+    if (req.method !== 'GET') return page(res, { title: 'Operação indisponível', description: 'Confirme pelo link individual de descadastro recebido por e-mail.', status: 405 });
+    const design = await store.publicUnsubscribePreview?.(slug);
+    if (!design) return page(res, { title: 'Página indisponível', description: 'Esta página de descadastro não está publicada.', status: 404 });
+    return page(res, { title: design.title, body: unsubscribeBody(pathname, design, { preview: true }), landing: true, remoteImages: false });
   }
 
   async function handleWebhook(req, res) {
@@ -206,12 +302,14 @@ export function createPublicCrmRouter(store, mail, logger = console) {
   return async (req, res, pathname) => {
     const landing = LANDING.exec(pathname);
     const emailAction = EMAIL_ACTION.exec(pathname);
+    const unsubscribePreview = UNSUBSCRIBE_PREVIEW.exec(pathname);
     const webhook = pathname === WEBHOOK;
     const event = pathname === PAGE_EVENTS;
-    if (!landing && !emailAction && !webhook && !event) return false;
+    if (!landing && !emailAction && !unsubscribePreview && !webhook && !event) return false;
     try {
       if (landing) await handleLanding(req, res, pathname, landing[1]);
       else if (emailAction) await handleEmailAction(req, res, pathname, emailAction[1], emailAction[2]);
+      else if (unsubscribePreview) await handleUnsubscribePreview(req, res, pathname, unsubscribePreview[1]);
       else if (event) await handlePageEvent(req, res);
       else await handleWebhook(req, res);
     } catch (error) {

@@ -29,12 +29,14 @@ function messageFor(config, job) {
     ? `${config.origin}${job.destinationPath}?ref=${encodeURIComponent(job.trackingToken)}` : '';
   const action = confirmation || landing;
   const actionLabel = confirmation ? 'Confirmar inscrição' : 'Acessar página da campanha';
+  const legacy = job.emailPublication && !job.emailPublication.templateVersion;
+  const copyTypes = legacy ? ['heading', 'text'] : ['heading', 'text', 'hero', 'quote', 'list'];
   const blockCopy = Array.isArray(job.emailPublication?.blocks) ? job.emailPublication.blocks
-    .filter(block => block.type === 'heading' || block.type === 'text')
-    .map(block => block.type === 'heading' ? block.title || block.text : block.text || block.title) : [];
+    .filter(block => copyTypes.includes(block.type))
+    .flatMap(block => legacy ? [block.type === 'heading' ? block.title || block.text : block.text || block.title] : [block.title, block.text]) : [];
   const text = [job.content, ...blockCopy, action && `${actionLabel}: ${action}`, unsubscribe && `Cancelar inscrição: ${unsubscribe}`].filter(Boolean).join('\n\n');
   const html = job.emailPublication ? buildCrmEmailMarkup({ subject: job.subject, content: job.content, blocks: job.emailPublication.blocks,
-    action, unsubscribe, origin: config.origin }) : [`<p>${emailBody(job.content)}</p>`, action && `<p><a href="${escapeHtml(action)}">${actionLabel}</a></p>`,
+    action, unsubscribe, origin: config.origin, legacy }) : [`<p>${emailBody(job.content)}</p>`, action && `<p><a href="${escapeHtml(action)}">${actionLabel}</a></p>`,
     unsubscribe && `<p><a href="${escapeHtml(unsubscribe)}">Cancelar inscrição</a></p>`].filter(Boolean).join('');
   return { from: config.from, to: [job.email], subject: job.subject, text, html,
     ...(unsubscribe && { headers: { 'List-Unsubscribe': `<${unsubscribe}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } }) };

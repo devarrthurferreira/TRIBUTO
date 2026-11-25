@@ -1,14 +1,61 @@
 const PATH = '/marketing/crm';
 const BLOCK_LIMIT = 48;
 const BLOCKS = {
+  hero: { name: 'Destaque', icon: 'megaphone', defaults: { title: 'Destaque da edição', text: 'Apresente a novidade principal.', color: '#ffffff', background: '#822039', padding: 28, borderRadius: 12 } },
   heading: { name: 'Título', icon: 'type', defaults: { title: 'Título da seção' } },
   text: { name: 'Texto', icon: 'journal-text', defaults: { text: 'Escreva aqui o conteúdo da seção.' } },
-  image: { name: 'Imagem', icon: 'image', defaults: {} },
+  image: { name: 'Imagem por link', icon: 'image', defaults: { align: 'center' } },
   button: { name: 'Botão', icon: 'link-45deg', defaults: { title: 'Saiba mais' } },
+  quote: { name: 'Citação', icon: 'chat-square-text', defaults: { title: 'Fonte ou autor', text: 'Escreva uma citação ou destaque uma informação.', background: '#f8f0f3' } },
+  list: { name: 'Lista', icon: 'list-task', defaults: { title: 'Nesta edição', text: 'Primeiro item\nSegundo item\nTerceiro item' } },
+  video: { name: 'Link de vídeo', icon: 'play-fill', defaults: { title: 'Assistir ao vídeo' } },
+  links: { name: 'Grupo de links', icon: 'arrow-up-right', defaults: { title: 'Mais conteúdos' } },
   divider: { name: 'Divisor', icon: 'dash-lg', defaults: {} },
+  spacer: { name: 'Espaçador', icon: 'sliders', defaults: { padding: 14 } },
   form: { name: 'Formulário', icon: 'card-text', defaults: { title: 'Receba nossas novidades', text: 'Quero me inscrever' } },
+  unsubscribe: { name: 'Descadastro', icon: 'envelope', defaults: { title: 'Prefere deixar de receber nossos e-mails?', text: 'Confirmar descadastro' } },
 };
 const NUMBER = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
+const KINDS = { landing: 'Página de campanha', unsubscribe: 'Página de descadastro' };
+const BUILTIN_TEMPLATES = [
+  {
+    name: 'Informativo', kind: 'landing', description: 'Capa, destaques e chamada para leitura.', title: 'Maximum Informa',
+    blocks: [
+      { type: 'hero', title: 'Maximum Informa', text: 'Novidades, orientações e lembretes da Maximum Contábil.', color: '#ffffff', background: '#822039', padding: 32, borderRadius: 12, fontSize: 34 },
+      { type: 'heading', title: 'Nesta edição', color: '#822039' },
+      { type: 'list', title: '', text: 'Orientações para sua empresa\nPrazos para acompanhar\nConteúdos para consultar' },
+      { type: 'divider' },
+      { type: 'heading', title: 'O que merece sua atenção', color: '#822039' },
+      { type: 'text', text: 'Use esta seção para explicar a principal novidade da edição, quem é afetado e o que precisa ser feito.' },
+      { type: 'quote', title: 'Fique de olho', text: 'Reserve este espaço para um aviso importante ou um prazo que mereça destaque.' },
+      { type: 'heading', title: 'Acompanhe os próximos informativos', color: '#822039' },
+      { type: 'form', title: 'Receba o Maximum Informa', text: 'Quero receber o informativo' },
+    ],
+  },
+  {
+    name: 'Página de inscrição', kind: 'landing', description: 'Apresentação, detalhes e formulário de inscrição.', title: 'Inscrições Maximum',
+    blocks: [
+      { type: 'hero', title: 'Inscrições abertas', text: 'Conte o que a pessoa vai receber ao se inscrever.', align: 'center' },
+      { type: 'heading', title: 'O que você vai receber' },
+      { type: 'list', title: '', text: 'Conteúdos práticos\nOrientações da equipe\nNovidades por e-mail' },
+      { type: 'form', title: 'Faça sua inscrição', text: 'Quero me inscrever' },
+    ],
+  },
+  {
+    name: 'Descadastro de e-mails', kind: 'unsubscribe', description: 'Confirmação de saída da lista de envios.', title: 'Descadastro de e-mails',
+    blocks: [
+      { type: 'hero', title: 'Preferências de e-mail', text: 'Você pode escolher se quer continuar recebendo nossas comunicações.', align: 'center' },
+      { type: 'unsubscribe', title: 'Cancelar inscrição', text: 'Confirmar descadastro', align: 'center' },
+    ],
+  },
+];
+
+const FONT_WEIGHTS = { '': 'Padrão', normal: 'Normal', medium: 'Médio', bold: 'Negrito' };
+const STYLE_NUMBERS = [
+  ['fontSize', 'Tamanho da fonte (px)', 12, 64], ['lineHeight', 'Altura da linha', 1.1, 2, 0.1],
+  ['padding', 'Margem interna (px)', 0, 64], ['margin', 'Espaço vertical (px)', 0, 64],
+  ['maxWidth', 'Largura máxima (px)', 200, 1200], ['borderRadius', 'Arredondamento (px)', 0, 48],
+];
 
 function el(tag, className, value) {
   const element = document.createElement(tag);
@@ -43,6 +90,7 @@ function field(label, name, value, settings = {}) {
   else input.type = settings.type || 'text';
   if (settings.maxLength) input.maxLength = settings.maxLength;
   if (settings.placeholder) input.placeholder = settings.placeholder;
+  for (const name of ['min', 'max', 'step']) if (settings[name] !== undefined) input[name] = settings[name];
   input.value = value ?? '';
   group.append(el('span', '', label), input);
   if (settings.hint) group.append(el('small', '', settings.hint));
@@ -57,12 +105,12 @@ function tagsFrom(value) {
   return value.split(',').map(tag => tag.trim()).filter(Boolean);
 }
 
-function newBlock(type) {
-  return { id: crypto.randomUUID(), type, title: '', text: '', url: '', alt: '', align: 'left', color: '', background: '', ...BLOCKS[type].defaults };
+function newBlock(type, fields) {
+  return { type, title: '', text: '', url: '', alt: '', align: 'left', color: '', background: '', ...BLOCKS[type].defaults, ...fields, id: crypto.randomUUID() };
 }
 
-function blankPage() {
-  return { title: '', slug: '', description: '', buttonText: 'Quero me inscrever', tags: [], blocks: [], status: 'draft' };
+function blankPage(kind = 'landing') {
+  return { title: '', slug: '', description: '', buttonText: 'Quero me inscrever', tags: [], blocks: [], status: 'draft', kind };
 }
 
 function normalizePage(page) {
@@ -78,38 +126,95 @@ function normalizeExistingPage(result) {
   return { ...page, blocks: [heading, ...body, form] };
 }
 
+function templateBlocks(template) {
+  return (template.blocks || []).map(block => newBlock(block.type, block));
+}
+
+function templateKind(template) {
+  return template.kind || (template.blocks?.some(block => block.type === 'unsubscribe') ? 'unsubscribe' : 'landing');
+}
+
 function duration(value) {
   if (!Number.isFinite(value) || value < 0) return '—';
   const whole = Math.round(value);
   return whole < 60 ? `${whole} s` : `${Math.floor(whole / 60)} min ${whole % 60} s`;
 }
 
-function safeImage(value) {
-  if (typeof value !== 'string' || /^\/[/\\]/.test(value)) return '';
-  if (/^\/(?![/\\])/.test(value)) return value;
+function safeHttps(value) {
+  if (typeof value !== 'string' || /[\s\\\u0000-\u001f\u007f]/u.test(value)) return '';
   try {
     const url = new URL(value);
     return url.protocol === 'https:' && !url.username && !url.password ? url.href : '';
   } catch { return ''; }
 }
 
+function safeImage(value) {
+  if (typeof value === 'string' && /^\/(?![/\\])/.test(value) && !/[\s\\\u0000-\u001f\u007f]/u.test(value)) return value;
+  return safeHttps(value);
+}
+
 function hex(value) {
   return /^#[a-f0-9]{6}$/i.test(value || '') ? value : '';
 }
 
-function blockBody(block, submitLabel) {
+function linkRows(value) {
+  return (value || '').split(/\r?\n/u).map(line => {
+    const [label = '', url = ''] = line.split('|');
+    return { label: label.trim(), url: safeHttps(url.trim()) };
+  }).filter(row => row.label && row.url);
+}
+
+function previewCta(label, symbol) {
+  const preview = el('span', 'cpe-preview-cta');
+  if (symbol) preview.append(icon(symbol));
+  preview.append(document.createTextNode(label));
+  return preview;
+}
+
+function blockBody(block, submitLabel, kind) {
   const body = el('div', 'cpe-block-content');
   body.dataset.align = block.align || 'left';
   if (hex(block.color)) body.style.setProperty('--cpe-user-color', block.color);
   if (hex(block.background)) body.style.setProperty('--cpe-user-bg', block.background);
+  if (hex(block.borderColor)) body.style.setProperty('--cpe-user-border', block.borderColor);
+  const weights = { normal: '400', medium: '550', bold: '700' };
+  if (weights[block.fontWeight]) body.style.setProperty('--cpe-user-weight', weights[block.fontWeight]);
+  for (const [key, , min, max] of STYLE_NUMBERS) {
+    const value = block[key];
+    if (!Number.isFinite(value) || value < min || value > max) continue;
+    const variable = key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`);
+    body.style.setProperty(`--cpe-user-${variable}`, key === 'lineHeight' ? value : `${value}px`);
+  }
   if (block.type === 'heading') body.append(el('h2', 'cpe-preview-heading', block.title || 'Título'));
   if (block.type === 'text') body.append(el('p', 'cpe-preview-text', block.text || 'Texto da seção'));
   if (block.type === 'divider') body.append(el('hr', 'cpe-preview-divider'));
-  if (block.type === 'button') body.append(el('span', 'cpe-preview-cta', block.title || 'Botão'));
+  if (block.type === 'spacer') body.append(el('div', 'cpe-preview-space'));
+  if (block.type === 'button' || block.type === 'video') body.append(previewCta(block.title || (block.type === 'video' ? 'Assistir ao vídeo' : 'Botão'), block.type === 'video' ? 'play-fill' : undefined));
+  if (block.type === 'hero') {
+    const hero = el('div', 'cpe-preview-hero');
+    hero.append(el('h2', 'cpe-preview-heading', block.title || 'Destaque'), el('p', 'cpe-preview-text', block.text || 'Texto de abertura'));
+    if (block.url) hero.append(previewCta(block.linkLabel || 'Saiba mais'));
+    body.append(hero);
+  }
+  if (block.type === 'quote') {
+    const quote = el('blockquote', 'cpe-preview-quote');
+    quote.append(el('p', 'cpe-preview-text', block.text || 'Texto da citação'));
+    if (block.title) quote.append(el('cite', '', block.title));
+    body.append(quote);
+  }
+  if (block.type === 'list' || block.type === 'links') {
+    if (block.title) body.append(el('h3', 'cpe-preview-list-title', block.title));
+    const list = el('ul', 'cpe-preview-list');
+    const values = block.type === 'list' ? (block.text || 'Item da lista').split(/\r?\n/u).filter(item => item.trim()) : linkRows(block.text).map(row => row.label);
+    for (const value of values) list.append(el('li', '', value));
+    if (!values.length) list.append(el('li', '', 'Adicione os links nas configurações do bloco.'));
+    body.append(list);
+  }
   if (block.type === 'image') {
     const placeholder = el('div', 'cpe-image-placeholder');
     placeholder.append(icon('image'), el('span', '', block.alt || 'Imagem'));
-    const src = safeImage(block.url);
+    const candidate = safeImage(block.url);
+    const src = kind === 'unsubscribe' && !candidate.startsWith('/') ? '' : candidate;
     if (src) {
       const image = el('img', 'cpe-preview-image');
       image.alt = block.alt || '';
@@ -122,6 +227,11 @@ function blockBody(block, submitLabel) {
       body.append(image);
     }
     body.append(placeholder);
+    if (safeImage(block.linkUrl)) {
+      const linked = el('span', 'cpe-preview-image-link');
+      linked.append(icon('link-45deg'), document.createTextNode('Imagem com link'));
+      body.append(linked);
+    }
   }
   if (block.type === 'form') {
     const form = el('div', 'cpe-preview-form');
@@ -130,6 +240,13 @@ function blockBody(block, submitLabel) {
     const consent = el('p', 'cpe-preview-consent');
     consent.append(icon('square'), document.createTextNode('Aceito receber e-mails da Maximum Contábil.'));
     form.append(consent, el('span', 'cpe-preview-cta', block.text || submitLabel));
+    body.append(form);
+  }
+  if (block.type === 'unsubscribe') {
+    const form = el('div', 'cpe-preview-form');
+    form.append(el('strong', '', block.title || 'Cancelar inscrição'),
+      el('p', 'cpe-preview-text', 'Confirme para deixar de receber os e-mails de marketing da Maximum Contábil.'),
+      previewCta(block.text || 'Confirmar descadastro'));
     body.append(form);
   }
   return body;
@@ -202,8 +319,13 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
     renderCanvas();
   }
 
+  function canInsert(type) {
+    if (type === 'unsubscribe' && page.kind !== 'unsubscribe' || type === 'form' && page.kind !== 'landing') return false;
+    return !['form', 'unsubscribe'].includes(type) || !page.blocks.some(block => block.type === type);
+  }
+
   function insertBlock(type, index = page.blocks.length, { refocus = false } = {}) {
-    if (!canEdit || !ready || !Object.hasOwn(BLOCKS, type) || (type === 'form' && page.blocks.some(block => block.type === 'form'))) return;
+    if (!canEdit || !ready || !Object.hasOwn(BLOCKS, type) || !canInsert(type)) return;
     if (page.blocks.length >= BLOCK_LIMIT) { announce(`A página pode ter até ${BLOCK_LIMIT} blocos.`, true); return; }
     const block = newBlock(type);
     page.blocks.splice(index, 0, block);
@@ -289,8 +411,9 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
     targets.canvas.dataset.viewport = viewport;
     targets.canvas.replaceChildren();
     for (const paletteButton of targets.library.querySelectorAll('[data-type]')) {
-      paletteButton.disabled = !canEdit || !ready || page.blocks.length >= BLOCK_LIMIT ||
-        (paletteButton.dataset.type === 'form' && page.blocks.some(block => block.type === 'form'));
+      const type = paletteButton.dataset.type;
+      paletteButton.hidden = type === 'form' && page.kind === 'unsubscribe' || type === 'unsubscribe' && page.kind === 'landing';
+      paletteButton.disabled = !canEdit || !ready || page.blocks.length >= BLOCK_LIMIT || !canInsert(type);
     }
     if (!ready) return;
     if (!page.blocks.length) {
@@ -314,7 +437,7 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
         event.preventDefault();
         reorderBlock(block.id, index + (event.key === 'ArrowUp' ? -1 : 1), { refocus: true });
       });
-      const body = blockBody(block, page.buttonText);
+      const body = blockBody(block, page.buttonText, page.kind);
       body.addEventListener('click', edit);
       row.append(selector, body);
       attachDrag(row, { id: block.id }, 'move');
@@ -370,9 +493,28 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
   function pageSettings() {
     const content = el('div', 'cpe-inspector-content');
     const title = field('Título da página', 'title', page.title, { maxLength: 160, placeholder: 'Ex.: Newsletter Maximum' });
-    const slug = field('Endereço da página', 'slug', page.slug, { maxLength: 80, placeholder: 'newsletter-maximum', hint: 'Endereço público em /inscricao/' });
+    const unsubscribe = page.kind === 'unsubscribe';
+    const slug = field('Endereço da página', 'slug', page.slug, { maxLength: 80, placeholder: unsubscribe ? 'cancelar-inscricao' : 'newsletter-maximum',
+      hint: unsubscribe ? 'Prévia pública em /crm/descadastro/. O link de descadastro é individual, enviado por e-mail.' : 'Endereço público em /inscricao/.' });
+    const purpose = field('Tipo de página', 'kind', page.kind, { options: KINDS });
     title.input.disabled = !canEdit;
     slug.input.disabled = !canEdit;
+    purpose.input.disabled = !canEdit || Boolean(currentId);
+    purpose.input.addEventListener('change', () => {
+      const kind = purpose.input.value;
+      const discardedType = kind === 'unsubscribe' ? 'form' : 'unsubscribe';
+      const apply = () => {
+        page.kind = kind;
+        page.blocks = page.blocks.filter(block => block.type !== discardedType);
+        mutation();
+        renderTemplates();
+        renderInspector();
+      };
+      if (page.blocks.some(block => block.type === discardedType)) {
+        purpose.input.value = page.kind;
+        openModal('Alterar o tipo de página', [el('p', '', 'O formulário atual será removido do rascunho.')], 'Alterar tipo', apply);
+      } else apply();
+    });
     if (page.published || page.status === 'published') {
       slug.input.readOnly = true;
       slug.label.querySelector('small').textContent = 'O endereço é fixo após a publicação.';
@@ -384,9 +526,10 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
     });
     slug.input.addEventListener('input', () => { page.slug = slug.input.value; slugCustom = true; setDirty(); });
     slug.input.addEventListener('blur', () => { page.slug = slug.input.value = cleanSlug(slug.input.value); });
-    content.append(title.label, slug.label);
+    content.append(purpose.label, title.label, slug.label);
     inputFor(content, 'Descrição', 'description', page.description, { multiline: 3, maxLength: 4000 }, (value) => { page.description = value; setDirty(); });
-    inputFor(content, 'Interesses do lead', 'tags', page.tags.join(', '), { maxLength: 939, hint: 'Separe por vírgula. Os interesses são atribuídos após a confirmação.' }, (value) => { page.tags = tagsFrom(value); setDirty(); });
+    if (!unsubscribe) inputFor(content, 'Interesses do lead', 'tags', page.tags.join(', '), { maxLength: 939, hint: 'Separe por vírgula. Os interesses são atribuídos após a confirmação.' }, (value) => { page.tags = tagsFrom(value); setDirty(); });
+    else content.append(el('p', 'cpe-note cpe-purpose-note', 'O descadastro só é confirmado com o link individual enviado no e-mail. Use a prévia para conferir o layout.'));
     return content;
   }
 
@@ -395,7 +538,7 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
     setDirty();
     const row = targets.canvas.querySelector(`[data-block-id="${block.id}"]`);
     if (!row) return;
-    const body = blockBody(block, page.buttonText);
+    const body = blockBody(block, page.buttonText, page.kind);
     body.addEventListener('click', () => { selectBlock(block.id); exposeInspector(); });
     row.querySelector('.cpe-block-content')?.replaceWith(body);
   }
@@ -403,13 +546,43 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
   function blockSettings(block) {
     const content = el('div', 'cpe-inspector-content');
     const edit = (label, name, settings) => inputFor(content, label, name, block[name], settings, value => updateBlock(block, name, value));
-    if (['heading', 'form', 'button'].includes(block.type)) edit(block.type === 'button' ? 'Texto do botão' : 'Título', 'title', { maxLength: 200 });
-    if (block.type === 'text' || block.type === 'form') edit(block.type === 'form' ? 'Texto do botão' : 'Texto', 'text', block.type === 'form' ? { maxLength: 80 } : { multiline: 5, maxLength: 4000 });
-    if (['button', 'image'].includes(block.type)) edit(block.type === 'button' ? 'Endereço do link' : 'Endereço da imagem', 'url', { maxLength: 2048, placeholder: 'https://…' });
-    if (block.type === 'image') edit('Descrição alternativa', 'alt', { maxLength: 180 });
-    if (block.type !== 'divider') edit('Alinhamento', 'align', { options: { left: 'Esquerda', center: 'Centro', right: 'Direita' } });
+    const type = block.type;
+    if (['hero', 'heading', 'form', 'unsubscribe', 'button', 'quote', 'list', 'video', 'links'].includes(type)) {
+      edit(type === 'button' || type === 'video' ? 'Texto do botão' : type === 'quote' ? 'Fonte ou autor' : 'Título', 'title', { maxLength: 200 });
+    }
+    if (['hero', 'text', 'quote', 'list', 'links'].includes(type)) {
+      const settings = { multiline: 5, maxLength: 4000 };
+      if (type === 'list') settings.hint = 'Escreva um item em cada linha.';
+      if (type === 'links') settings.hint = 'Em cada linha, escreva o nome e a URL separados por |. Ex.: Instagram | https://instagram.com/…';
+      edit(type === 'list' ? 'Itens' : type === 'links' ? 'Links' : 'Texto', 'text', settings);
+    }
+    if (['form', 'unsubscribe'].includes(type)) edit('Texto do botão', 'text', { maxLength: 80 });
+    if (type === 'hero') edit('Texto do botão de destaque', 'linkLabel', { maxLength: 80, placeholder: 'Saiba mais' });
+    if (['button', 'image', 'hero', 'video'].includes(type)) {
+      const labels = { image: 'URL da imagem', video: 'URL do vídeo', button: 'Endereço do link', hero: 'Endereço do botão de destaque' };
+      const privateImage = type === 'image' && page.kind === 'unsubscribe';
+      edit(labels[type], 'url', { maxLength: 2048, placeholder: privateImage ? '/maximum-logo.png' : 'https://…', hint: privateImage
+        ? 'Use um caminho da Central, por exemplo /maximum-logo.png.' : type === 'image' ? 'Cole o link direto para o arquivo da imagem.' : undefined });
+    }
+    if (type === 'image') {
+      edit('Descrição alternativa', 'alt', { maxLength: 180 });
+      edit('Link ao clicar na imagem', 'linkUrl', { maxLength: 2048, placeholder: 'https://…', hint: 'Opcional. Abre este endereço quando a imagem é clicada.' });
+    }
+    if (type === 'divider' || type === 'spacer') content.append(el('p', 'cpe-note', 'Ajuste o espaço e a aparência na aba Estilo.'));
+    return content;
+  }
+
+  function styleSettings(block) {
+    const content = el('div', 'cpe-inspector-content');
+    inputFor(content, 'Alinhamento', 'align', block.align, { options: { left: 'Esquerda', center: 'Centro', right: 'Direita' } }, value => updateBlock(block, 'align', value));
+    inputFor(content, 'Peso da fonte', 'fontWeight', block.fontWeight, { options: FONT_WEIGHTS }, value => updateBlock(block, 'fontWeight', value));
+    const dimensions = el('div', 'cpe-dimensions');
+    for (const [key, label, min, max, step = 1] of STYLE_NUMBERS) {
+      inputFor(dimensions, label, key, block[key], { type: 'number', min, max, step, placeholder: 'Padrão' }, value => updateBlock(block, key, value === '' ? undefined : Number(value)));
+    }
+    content.append(dimensions);
     const colors = el('div', 'cpe-color-grid');
-    for (const [key, label, defaultColor] of [['color', 'Cor do texto', '#2c2430'], ['background', 'Fundo do bloco', '#ffffff']]) {
+    for (const [key, label, defaultColor] of [['color', 'Cor do texto', '#2c2430'], ['background', 'Fundo do bloco', '#ffffff'], ['borderColor', 'Cor da borda', '#e5d5dc']]) {
       const group = el('div', 'cpe-color');
       const color = field(label, key, hex(block[key]) || defaultColor, { type: 'color' });
       color.input.disabled = !canEdit;
@@ -419,36 +592,39 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
       group.append(color.label, reset);
       colors.append(group);
     }
-    if (block.type !== 'image') content.append(colors);
-    const index = page.blocks.findIndex(item => item.id === block.id);
-    if (canEdit) {
-      const controls = el('div', 'cpe-order-controls');
-      const up = action('Subir bloco', () => reorderBlock(block.id, index - 1, { refocus: true }), { symbol: 'chevron-up', compact: true });
-      const down = action('Descer bloco', () => reorderBlock(block.id, index + 1, { refocus: true }), { symbol: 'chevron-down', compact: true });
-      up.disabled = index === 0;
-      down.disabled = index === page.blocks.length - 1;
-      const remove = action('Remover bloco', () => {
-        const item = page.blocks.findIndex(entry => entry.id === block.id);
-        if (item < 0) return;
-        page.blocks.splice(item, 1);
-        selectedId = '';
-        section = 'settings';
-        mutation();
-        renderInspector();
-        targets.settings.focus();
-        announce('Bloco removido.');
-      }, { symbol: 'trash', kind: 'danger' });
-      controls.append(up, down, remove);
-      content.append(controls);
-    }
+    content.append(colors);
     return content;
+  }
+
+  function blockActions(block) {
+    const controls = el('div', 'cpe-order-controls');
+    const index = page.blocks.findIndex(item => item.id === block.id);
+    const up = action('Subir bloco', () => reorderBlock(block.id, index - 1, { refocus: true }), { symbol: 'chevron-up', compact: true });
+    const down = action('Descer bloco', () => reorderBlock(block.id, index + 1, { refocus: true }), { symbol: 'chevron-down', compact: true });
+    up.disabled = index === 0;
+    down.disabled = index === page.blocks.length - 1;
+    const remove = action('Remover bloco', () => {
+      const item = page.blocks.findIndex(entry => entry.id === block.id);
+      if (item < 0) return;
+      page.blocks.splice(item, 1);
+      selectedId = '';
+      section = 'settings';
+      propertiesMode = 'content';
+      mutation();
+      renderInspector();
+      targets.settings.focus();
+      announce('Bloco removido.');
+    }, { symbol: 'trash', kind: 'danger' });
+    controls.append(up, down, remove);
+    return controls;
   }
 
   function renderInspector() {
     if (!ready) { targets.inspector.replaceChildren(inspectorTitle('Configurações')); return; }
     const block = section === 'block' && page.blocks.find(item => item.id === selectedId);
     const options = el('div', 'cpe-toggle');
-    for (const [mode, name] of [['content', 'Conteúdo'], ['metrics', 'Métricas']]) {
+    const modes = [['content', 'Conteúdo'], ...(block ? [['style', 'Estilo']] : []), ['metrics', 'Métricas']];
+    for (const [mode, name] of modes) {
       const toggle = action(name, () => {
         propertiesMode = mode;
         renderInspector();
@@ -464,17 +640,26 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
       const summary = block && analytics ? analytics.blocks?.find(item => item.blockId === block.id) || { views: 0, clicks: 0, averageSeconds: null, conversions: 0 } : null;
       renderMetrics(content, summary);
       targets.inspector.append(content);
-    } else targets.inspector.append(block ? blockSettings(block) : pageSettings());
+    } else targets.inspector.append(block ? propertiesMode === 'style' ? styleSettings(block) : blockSettings(block) : pageSettings());
+    if (block && canEdit) targets.inspector.append(blockActions(block));
     renderSelection();
   }
 
   function renderTemplates() {
     targets.templateList.replaceChildren();
-    if (!templates.length) { targets.templateList.append(el('p', 'cpe-note', 'Os templates salvos aparecem aqui.')); return; }
-    for (const template of templates) {
-      const use = action(`Usar ${template.name}`, () => useTemplate(template), { symbol: 'file-earmark' });
-      use.disabled = !canEdit || !ready;
-      targets.templateList.append(use);
+    for (const [group, choices] of [['Prontos para usar', BUILTIN_TEMPLATES], ['Templates salvos', templates]]) {
+      if (!choices.length) continue;
+      targets.templateList.append(el('p', 'cpe-template-group', group));
+      for (const template of choices) {
+        const tile = el('div', 'cpe-template-tile');
+        const use = action(template.name, () => useTemplate(template), { symbol: 'file-earmark' });
+        use.setAttribute('aria-label', `Usar ${template.name}`);
+        use.disabled = !canEdit || !ready || Boolean(currentId && templateKind(template) !== page.kind);
+        if (use.disabled && templateKind(template) !== page.kind) use.title = `Disponível para ${KINDS[templateKind(template)].toLocaleLowerCase('pt-BR')}.`;
+        tile.append(use);
+        if (template.description) tile.append(el('p', '', template.description));
+        targets.templateList.append(tile);
+      }
     }
   }
 
@@ -492,10 +677,17 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
 
   function useTemplate(template) {
     const apply = () => {
-      page.blocks = (template.blocks || []).map(block => ({ ...block, id: crypto.randomUUID() }));
+      page.kind = templateKind(template);
+      page.blocks = templateBlocks(template);
+      if (!page.title && template.title) {
+        page.title = template.title;
+        if (!slugCustom && !page.slug) page.slug = cleanSlug(template.title);
+      }
       selectedId = '';
       section = 'settings';
+      propertiesMode = 'content';
       mutation();
+      renderTemplates();
       renderInspector();
       announce(`Template ${template.name} aplicado.`);
     };
@@ -518,7 +710,7 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
       const when = generation;
       const nameValue = String(form.get('name') || '').trim();
       if (!nameValue) throw new Error('Informe o nome do template.');
-      const template = await request(`${PATH}/templates`, { method: 'POST', body: { name: nameValue, blocks: page.blocks } });
+      const template = await request(`${PATH}/templates`, { method: 'POST', body: { name: nameValue, kind: page.kind, blocks: page.blocks } });
       if (when !== generation) return;
       templates = [template, ...templates];
       renderTemplates();
@@ -541,8 +733,17 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
       throw new Error(!title ? 'Informe o título da página.' : 'Informe um endereço de pelo menos três caracteres.');
     }
     if (publishing && !page.blocks.length) throw new Error('Adicione um bloco antes de publicar a página.');
+    if (publishing && page.kind === 'unsubscribe' && !page.blocks.some(block => block.type === 'unsubscribe')) {
+      throw new Error('Adicione o bloco Descadastro antes de publicar a página.');
+    }
+    const invalidImage = page.kind === 'unsubscribe' && page.blocks.find(block => block.type === 'image' && block.url && !safeImage(block.url).startsWith('/'));
+    if (invalidImage) {
+      selectBlock(invalidImage.id);
+      targets.inspector.querySelector('[name="url"]')?.focus();
+      throw new Error('Use o caminho de uma imagem da Central na página de descadastro.');
+    }
     return { title, slug, description: page.description, buttonText: page.blocks.find(block => block.type === 'form')?.text || page.buttonText,
-      tags: page.tags, blocks: page.blocks };
+      tags: page.kind === 'landing' ? page.tags : [], blocks: page.blocks, kind: page.kind };
   }
 
   async function savePage(status) {
@@ -563,6 +764,7 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
       slugCustom = true;
       setDirty(false);
       renderCanvas();
+      renderTemplates();
       renderInspector();
       announce(status === 'published' ? 'Página publicada.' : 'Rascunho salvo.');
       onSaved?.(page);
@@ -586,7 +788,7 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
     } catch (error) {
       if (when !== generation) return;
       if (error.status === 401) onAuthError?.(error);
-      else targets.templateList.replaceChildren(el('p', 'cpe-note', 'Não foi possível consultar os templates.'));
+      else targets.templateList.append(el('p', 'cpe-note', 'Os templates salvos estão indisponíveis.'));
     }
   }
 
@@ -677,6 +879,7 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
     targets.dialog.addEventListener('cancel', (event) => { if (targets.dialogSubmit.disabled) event.preventDefault(); });
     renderHeader();
     renderCanvas();
+    renderTemplates();
     renderInspector();
   }
 
@@ -692,14 +895,20 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
   }
 
   return {
-    async open({ id = null, canEdit: writable = true } = {}) {
+    async open({ id = null, canEdit: writable = true, kind = 'landing' } = {}) {
       if (active && currentId === id && writable === canEdit) return;
       close();
       active = true;
       canEdit = writable;
       const when = generation;
       currentId = id;
-      page = blankPage();
+      page = blankPage(!id && kind === 'unsubscribe' ? kind : 'landing');
+      if (page.kind === 'unsubscribe') {
+        const template = BUILTIN_TEMPLATES.find(item => item.kind === 'unsubscribe');
+        page.title = template.title;
+        page.slug = cleanSlug(template.title);
+        page.blocks = templateBlocks(template);
+      }
       selectedId = '';
       section = 'settings';
       viewport = 'desktop';
@@ -719,6 +928,7 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
           announce('');
           renderHeader();
           renderCanvas();
+          renderTemplates();
           renderInspector();
         } catch (error) { if (when === generation) await reportError(error); }
       }

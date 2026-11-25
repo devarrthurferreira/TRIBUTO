@@ -6,6 +6,24 @@ const get = (id) => document.getElementById(id);
 const areas = ['setor', 'talk', 'whatsapp'];
 const titles = { setor: 'Setor', talk: 'Talk', whatsapp: 'WhatsApp' };
 const icons = { overview: 'grid', activities: 'list-task', tasks: 'list-task', metrics: 'graph-up', crm: 'envelope', fiscal: 'receipt', users: 'people', agents: 'broadcast' };
+const crmSections = [
+  { key: 'subscribers', slug: 'contatos', label: 'Contatos', icon: 'people' },
+  { key: 'campaigns', slug: 'campanhas', label: 'Campanhas', icon: 'envelope' },
+  { key: 'landings', slug: 'paginas', label: 'Páginas', icon: 'file-earmark' },
+];
+
+export function crmSectionFromQuery(query) {
+  const slug = query.get('crm');
+  return {
+    section: slug === 'historico' ? 'campaigns' : crmSections.find(item => item.slug === slug)?.key || 'subscribers',
+    campaignView: slug === 'historico' ? 'history' : 'working',
+  };
+}
+
+function crmSlug(section, campaignView) {
+  if (section === 'campaigns' && campaignView === 'history') return 'historico';
+  return crmSections.find(item => item.key === section)?.slug || 'contatos';
+}
 
 function activityPanel(sector) {
   return sector.id === 'marketing' ? 'tasks' : 'activities';
@@ -41,14 +59,17 @@ export function mountSectorNavigation() {
   const app = get('appView');
   const nav = get('sectorNavigation');
   const subnav = get('sectorSubnav');
+  const crmRail = get('sectorCrmRail');
   const talk = get('sectorTalkScreen');
   const talkMount = get('sectorTalkMount');
   const whatsapp = get('sectorWhatsAppScreen');
   const whatsappMount = get('sectorWhatsAppMount');
+  const narrowViewport = matchMedia('(max-width: 700px)');
   const buttons = Object.fromEntries([...nav.querySelectorAll('[data-sector-area]')].map(button => [button.dataset.sectorArea, button]));
   let context;
   let activeArea;
   let selectedPanel;
+  let selectedCrmSection;
   let expanded = false;
   let stopWhatsApp;
   let badgeTimer;
@@ -79,10 +100,32 @@ export function mountSectorNavigation() {
     if (badgeRequest === controller) badgeTimer = setTimeout(pollWhatsAppBadge, 25_000);
   }
 
+  function renderCrmLinks(group, { compact = false } = {}) {
+    for (const { key, label, icon: name } of crmSections) {
+      const control = document.createElement('button');
+      control.type = 'button';
+      control.className = compact ? 'sector-rail-button' : 'sector-subnav-link sector-subnav-child';
+      control.setAttribute('aria-controls', 'marketingCrm');
+      control.dataset.crmSection = key;
+      if (selectedPanel === 'crm' && key === selectedCrmSection) control.setAttribute('aria-current', 'page');
+      const icon = document.createElement('i');
+      icon.className = `bi bi-${name}`;
+      icon.setAttribute('aria-hidden', 'true');
+      control.append(icon);
+      if (compact) {
+        control.title = label;
+        control.setAttribute('aria-label', label);
+      } else control.append(document.createTextNode(label));
+      control.addEventListener('click', () => selectCrmSection(key, { fromSubnav: !compact, retainFocus: compact }));
+      group.append(control);
+    }
+  }
+
   function renderSubnav() {
     const list = get('sectorSubnavList');
     get('sectorSubnavTitle').textContent = context.label;
-    list.replaceChildren(...sectionOptions(context).map(({ id, label, href }) => {
+    list.replaceChildren();
+    for (const { id, label, href } of sectionOptions(context)) {
       const control = document.createElement(href ? 'a' : 'button');
       control.className = 'sector-subnav-link';
       const icon = document.createElement('i');
@@ -92,25 +135,50 @@ export function mountSectorNavigation() {
       if (href) control.href = href;
       else {
         control.type = 'button';
-        if (id === selectedPanel) control.setAttribute('aria-current', 'page');
+        if (id === selectedPanel && id !== 'crm') control.setAttribute('aria-current', 'page');
         control.addEventListener('click', () => selectPanel(id, { fromSubnav: true }));
       }
-      return control;
-    }));
+      list.append(control);
+      if (id === 'crm' && selectedPanel === 'crm') {
+        const group = document.createElement('div');
+        group.className = 'sector-subnav-children';
+        group.setAttribute('role', 'group');
+        group.setAttribute('aria-label', 'Áreas do CRM');
+        control.classList.add('sector-subnav-parent');
+        renderCrmLinks(group);
+        list.append(group);
+      }
+    }
+    crmRail.replaceChildren();
+    if (selectedPanel === 'crm') renderCrmLinks(crmRail, { compact: true });
   }
 
-  function selectPanel(id, { fromSubnav = false } = {}) {
+  function selectPanel(id, { fromSubnav = false, retainFocus = false, replace = false, crmSection, campaignView } = {}) {
     if (!context || activeArea !== 'setor' || !sectionOptions(context).some(item => item.id === id && !item.href)) return;
     const url = new URL(location.href);
     if (id === 'overview') url.searchParams.delete('painel'); else url.searchParams.set('painel', id);
     if (id !== activityPanel(context)) url.searchParams.delete('atividade');
-    if (url.href !== location.href) history.pushState(null, '', url);
-    const mobile = matchMedia('(max-width: 700px)').matches;
-    if (mobile) expanded = false;
-    if (mobile || !fromSubnav) get('conteudo').focus({ preventScroll: true });
+    if (id === 'crm') url.searchParams.set('crm', crmSlug(crmSection, campaignView));
+    else url.searchParams.delete('crm');
+    url.searchParams.delete('pagina');
+    url.searchParams.delete('tipo');
+    if (url.href !== location.href) {
+      if (replace) history.replaceState(null, '', url);
+      else history.pushState(null, '', url);
+    }
+    const mobile = narrowViewport.matches;
+    const compactFocused = crmRail.contains(document.activeElement);
+    if (mobile && !retainFocus) expanded = false;
     syncLocation();
+    if (compactFocused) crmRail.querySelector('[aria-current]')?.focus({ preventScroll: true });
+    if (retainFocus) return;
+    if (mobile || !fromSubnav) get('conteudo').focus({ preventScroll: true });
     if (!mobile && fromSubnav) subnav.querySelector('[aria-current]')?.focus({ preventScroll: true });
     document.querySelector('.portal-header')?.scrollIntoView({ block: 'start' });
+  }
+
+  function selectCrmSection(section, options = {}) {
+    selectPanel('crm', { ...options, crmSection: section });
   }
 
   function showArea(area) {
@@ -122,6 +190,7 @@ export function mountSectorNavigation() {
     talk.hidden = area !== 'talk';
     whatsapp.hidden = area !== 'whatsapp';
     subnav.hidden = area !== 'setor' || !expanded;
+    crmRail.hidden = area !== 'setor' || selectedPanel !== 'crm' || !subnav.hidden;
     for (const key of areas) buttons[key].setAttribute('aria-pressed', String(key === area));
     buttons.setor.setAttribute('aria-expanded', String(!subnav.hidden));
     setChatSurface({ mount: talkMount, show: area === 'talk' });
@@ -154,10 +223,14 @@ export function mountSectorNavigation() {
     const query = new URLSearchParams(location.search);
     const requested = query.get('painel');
     const candidate = requested === 'activities' || (!requested && query.has('atividade')) ? activityPanel(context) : requested || 'overview';
+    const priorPanel = selectedPanel;
     selectedPanel = sectionOptions(context).some(({ id, href }) => id === candidate && !href) ? candidate : 'overview';
+    selectedCrmSection = crmSectionFromQuery(query).section;
+    const area = urlArea();
+    if (selectedPanel === 'crm' && area === 'setor' && (priorPanel !== 'crm' || activeArea !== 'setor')
+      && !narrowViewport.matches) expanded = true;
     app.dataset.sectorPanel = selectedPanel;
     renderSubnav();
-    const area = urlArea();
     if (area !== 'setor' && !context[area]) {
       const url = new URL(location.href);
       url.searchParams.delete('aba');
@@ -171,10 +244,10 @@ export function mountSectorNavigation() {
     if (context) stopWhatsApp?.();
     stopWhatsApp = undefined;
     stopBadgePoll();
-    context = activeArea = undefined;
+    context = activeArea = selectedPanel = undefined;
     expanded = false;
     setWhatsAppUnread(0);
-    nav.hidden = talk.hidden = whatsapp.hidden = subnav.hidden = true;
+    nav.hidden = talk.hidden = whatsapp.hidden = subnav.hidden = crmRail.hidden = true;
     for (const button of Object.values(buttons)) {
       button.hidden = true;
       button.setAttribute('aria-pressed', 'false');
@@ -205,9 +278,20 @@ export function mountSectorNavigation() {
   }
 
   for (const area of areas) buttons[area].addEventListener('click', () => open(area));
+  subnav.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    open('setor', { updateHistory: false });
+    buttons.setor.focus();
+  });
+  narrowViewport.addEventListener('change', ({ matches }) => {
+    if (activeArea !== 'setor' || selectedPanel !== 'crm') return;
+    expanded = !matches;
+    showArea(activeArea);
+  });
   window.addEventListener('popstate', syncLocation);
   return {
-    activate, leave, open, selectPanel,
+    activate, leave, open, selectPanel, selectCrmSection,
     setTalkUnread(count) { notification(buttons.talk, get('sectorTalkDot'), 'Talk', count); },
   };
 }

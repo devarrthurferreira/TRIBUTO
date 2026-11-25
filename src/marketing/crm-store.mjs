@@ -111,12 +111,14 @@ function conflict(message) {
 }
 
 async function lockCampaign(connection, id) {
-  const [[row]] = await connection.execute(`SELECT campaign.*, attrs.type, attrs.segment_id, attrs.landing_id, attrs.conversions, attrs.unsubscribes
+  const [[row]] = await connection.execute(`SELECT campaign.*, attrs.type, attrs.segment_id, attrs.landing_id, attrs.conversions, attrs.unsubscribes,
+    unsubscribe.page_id AS unsubscribe_page_id
     FROM platform_marketing_campaigns campaign LEFT JOIN platform_crm_campaign_attributes attrs ON attrs.id = campaign.id
+    LEFT JOIN platform_crm_campaign_unsubscribe_pages unsubscribe ON unsubscribe.campaign_id = campaign.id
     WHERE campaign.id = ? FOR UPDATE`, [id]);
   if (!row) throw new ApiError(404, 'CRM_NOT_FOUND', 'Campanha não encontrada.');
   return { ...asCampaign(row), type: row.type ?? 'promotion', segmentId: row.segment_id ?? null, landingId: row.landing_id ?? null,
-    conversionCount: row.conversions ?? null, unsubscribeCount: row.unsubscribes ?? null };
+    unsubscribePageId: row.unsubscribe_page_id ?? null, conversionCount: row.conversions ?? null, unsubscribeCount: row.unsubscribes ?? null };
 }
 
 export class MarketingCrmStore extends CrmGrowthStore {
@@ -132,7 +134,7 @@ export class MarketingCrmStore extends CrmGrowthStore {
       this.listGrowth(),
     ]);
     const subscribers = contacts.map(row => ({ ...asSubscriber(row), tags: growth.tagsFor.get(row.id) ?? [] }));
-    const campaigns = mailings.map(row => ({ ...asCampaign(row), type: 'promotion', segmentId: null, landingId: null,
+    const campaigns = mailings.map(row => ({ ...asCampaign(row), type: 'promotion', segmentId: null, landingId: null, unsubscribePageId: null,
       queuedCount: 0, failedCount: 0, deliveryMode: 'external', conversionCount: null, unsubscribeCount: null, ...growth.campaignDetails.get(row.id) }));
     const { segments, landings, automations } = growth;
     const totals = { ...aggregate(subscribers, campaigns),
@@ -182,6 +184,7 @@ export class MarketingCrmStore extends CrmGrowthStore {
       await connection.execute(`UPDATE platform_marketing_subscribers SET
         name = ?, status = ?, source = ?, consent_at = ?, updated_at = ? WHERE id = ?`,
       [change.name, change.status, change.source, consent, now, id]);
+      if (change.status === 'unsubscribed' && current.status !== 'unsubscribed') await this.invalidateLeadConfirmations(connection, id);
       if (input.tags !== undefined) await this.setSubscriberTags(connection, id, tags);
       await this.platformStore.insertAudit(connection, 'marketing.crm.subscriber.update', actorId, id, {
         previousStatus: current.status, status: change.status

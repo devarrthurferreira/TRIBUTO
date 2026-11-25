@@ -36,6 +36,32 @@ test('CRM diferencia alterações em rascunho da versão pública anterior', () 
   assert.equal(crmPageRecord(row, { includeBlocks: false }).blocks, undefined);
 });
 
+test('CRM persiste URLs separadas, medidas limitadas e formulários por tipo de página', () => {
+  const image = { id: 'foto', type: 'image', url: 'https://example.test/foto.png', linkUrl: 'https://example.test/sobre',
+    padding: 0, margin: 16, fontSize: 28, maxWidth: 480, borderRadius: 12, borderColor: '#AABBCC', fontWeight: 'bold', lineHeight: 1.4 };
+  const links = { id: 'links', type: 'links', text: 'Um | https://example.test/a\n Doís | /b' };
+  const unsubscribe = { id: 'descadastro', type: 'unsubscribe', text: 'Confirmar descadastro' };
+  const [savedImage, savedLinks] = pageBlocks([image, links], { kind: 'landing' });
+  for (const field of ['url', 'linkUrl', 'padding', 'margin', 'fontSize', 'maxWidth', 'borderRadius', 'fontWeight', 'lineHeight']) {
+    assert.equal(savedImage[field], image[field]);
+  }
+  assert.equal(savedImage.borderColor, '#aabbcc');
+  assert.equal(savedLinks.text, 'Um|https://example.test/a\nDoís|/b');
+  assert.doesNotThrow(() => pageBlocks([{ ...image, url: '/maximum-logo.png' }, unsubscribe], { kind: 'unsubscribe' }));
+  assert.throws(() => pageBlocks([image, unsubscribe], { kind: 'unsubscribe' }), { status: 400 });
+  assert.throws(() => pageBlocks([unsubscribe], { kind: 'landing' }), { status: 400 });
+  assert.throws(() => pageBlocks([unsubscribe, { ...unsubscribe, id: 'segundo' }]), { status: 400 });
+  assert.throws(() => pageBlocks([{ id: 'captura', type: 'form' }], { kind: 'unsubscribe' }), { status: 400 });
+  assert.throws(() => pageBlocks([{ ...image, linkUrl: 'javascript:alert(1)' }]), { status: 400 });
+  assert.throws(() => pageBlocks([{ ...image, padding: '5;position:absolute' }]), { status: 400 });
+  assert.throws(() => pageBlocks([{ ...image, lineHeight: 1.45 }]), { status: 400 });
+  assert.throws(() => pageBlocks([{ ...links, text: 'Inseguro | //example.test/a' }]), { status: 400 });
+  const row = { id: pageId, title: 'Descadastro', slug: 'preferencias', description: '', button_text: 'Cancelar inscrição', tags_json: '[]',
+    page_kind: 'unsubscribe', status: 'draft', draft_json: JSON.stringify([unsubscribe]), created_at: '2026-11-25 12:00:00', updated_at: '2026-11-25 12:00:00' };
+  assert.equal(crmPageRecord(row).kind, 'unsubscribe');
+  assert.equal(crmPageRecord(row).path, '/crm/descadastro/preferencias');
+});
+
 test('CRM protege leitura de páginas e gestão de rascunhos e renderiza prévia com HTML estático', async () => {
   const manager = { _id: 'manager', active: true, role: 'member', moduleGrants: { marketing: 'edit' } };
   const reader = { ...manager, moduleGrants: { marketing: { level: 'edit', blockedActions: ['marketingCrmManage'] } } };
@@ -68,5 +94,5 @@ test('CRM protege leitura de páginas e gestão de rascunhos e renderiza prévia
   });
   assert.equal(document, result.html);
   assert.match(headers['Content-Security-Policy'], /frame-ancestors 'self'/);
-  assert.match(headers['Content-Security-Policy'], /img-src 'self'/);
+  assert.match(headers['Content-Security-Policy'], /img-src 'self' https:/);
 });

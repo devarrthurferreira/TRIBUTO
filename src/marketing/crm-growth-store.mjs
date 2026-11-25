@@ -34,6 +34,10 @@ const TABLES = [
     landing_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
     conversions INT UNSIGNED NULL, unsubscribes INT UNSIGNED NULL
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_crm_campaign_unsubscribe_pages (
+    campaign_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+    page_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS platform_crm_leads (
     id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
     landing_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -79,7 +83,7 @@ const CONFIRMATION_TTL = 2 * DAY_MS;
 const RETRY_WINDOW = 23 * 60 * 60_000;
 const MAX_ATTEMPTS = 8;
 const EVENT_FIELDS = new Map([['sent','sent_at'], ['delivered','delivered_at'], ['opened','opened_at'], ['clicked','clicked_at'], ['failed','failed_at']]);
-const JOB_ELIGIBLE = `(job.kind = 'confirmation' AND lead.confirmed_at IS NULL AND lead.confirmation_expires > ?
+const JOB_ELIGIBLE = `(job.kind = 'confirmation' AND lead.confirmation_expires > ?
       AND lead.confirmation_hash = CONVERT(SHA2(job.confirmation_token,256) USING ascii) COLLATE ascii_bin) OR (job.kind <> 'confirmation'
       AND contact.status = 'subscribed' AND contact.consent_at = job.consent_at)`;
 
@@ -160,15 +164,26 @@ export class CrmGrowthStore {
       const [[segment]] = await connection.execute('SELECT id FROM platform_crm_segments WHERE id = ?', [item.segmentId]);
       if (!segment) missing('Segmento');
     }
-    if (item.landingId) {
+    if (item.landingId && item.landingId !== current?.landingId) {
       const [[landing]] = await connection.execute(`SELECT page.id FROM platform_crm_landings page
         LEFT JOIN platform_crm_page_designs design ON page.id = design.landing_id
-        WHERE page.id = ? AND design.archived_at IS NULL`, [item.landingId]);
+        LEFT JOIN platform_crm_page_kinds page_type ON page_type.landing_id = page.id
+        WHERE page.id = ? AND design.archived_at IS NULL AND COALESCE(page_type.page_kind,'landing') = 'landing'`, [item.landingId]);
       if (!landing) missing('Página');
+    }
+    if (item.unsubscribePageId && item.unsubscribePageId !== current?.unsubscribePageId
+      && !await this.pages.publishedUnsubscribe({ id: item.unsubscribePageId }, connection)) {
+      conflict('Selecione uma página de descadastro publicada.');
     }
     await connection.execute(`INSERT INTO platform_crm_campaign_attributes (id,type,segment_id,landing_id) VALUES (?,?,?,?)
       ON DUPLICATE KEY UPDATE type = ?, segment_id = ?, landing_id = ?`, [id, item.type, item.segmentId, item.landingId,
       item.type, item.segmentId, item.landingId]);
+    if (item.unsubscribePageId !== (current?.unsubscribePageId ?? null)) {
+      if (item.unsubscribePageId) {
+        await connection.execute(`INSERT INTO platform_crm_campaign_unsubscribe_pages (campaign_id,page_id) VALUES (?,?)
+          ON DUPLICATE KEY UPDATE page_id=?`, [id, item.unsubscribePageId, item.unsubscribePageId]);
+      } else await connection.execute('DELETE FROM platform_crm_campaign_unsubscribe_pages WHERE campaign_id = ?', [id]);
+    }
     return item;
   }
 
@@ -178,7 +193,8 @@ export class CrmGrowthStore {
       this.platformStore.rows('SELECT * FROM platform_crm_segments ORDER BY name,id'),
       this.pages.list(),
       this.platformStore.rows('SELECT * FROM platform_crm_automations ORDER BY updated_at DESC,id'),
-      this.platformStore.rows('SELECT * FROM platform_crm_campaign_attributes'),
+      this.platformStore.rows(`SELECT attrs.*, unsubscribe.page_id AS unsubscribe_page_id FROM platform_crm_campaign_attributes attrs
+        LEFT JOIN platform_crm_campaign_unsubscribe_pages unsubscribe ON unsubscribe.campaign_id = attrs.id`),
       this.platformStore.rows(`SELECT campaign_id, COUNT(*) AS total, SUM(status IN ('pending','sending')) AS queued,
         SUM(status = 'sent') AS sent, SUM(failed_at IS NOT NULL OR status = 'failed') AS failed,
         SUM(delivered_at IS NOT NULL) AS delivered, SUM(opened_at IS NOT NULL) AS opened, SUM(clicked_at IS NOT NULL) AS clicked,
@@ -197,7 +213,7 @@ export class CrmGrowthStore {
     const campaignDetails = new Map(campaigns.map(row => {
       const job = jobStats.get(row.id);
       const measured = value => Number(value) || (this.analyticsConfigured ? 0 : null);
-      return [row.id, { type: row.type, segmentId: row.segment_id, landingId: row.landing_id,
+      return [row.id, { type: row.type, segmentId: row.segment_id, landingId: row.landing_id, unsubscribePageId: row.unsubscribe_page_id ?? null,
         deliveryMode: job ? 'native' : 'external',
         queuedCount: Number(job?.queued || 0), failedCount: Number(job?.failed || 0),
         conversionCount: job ? (conversionStats.get(row.id) ?? 0) : row.conversions ?? null,
@@ -247,6 +263,21 @@ export class CrmGrowthStore {
     return this.pages.publicPage(slug);
   }
 
+  async publicUnsubscribePreview(slug) {
+    if (typeof slug !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || slug.length > 80) return null;
+    return this.pages.publishedUnsubscribe({ slug });
+  }
+
+  async publicUnsubscribePage(value) {
+    if (typeof value !== 'string' || !CRM_TOKEN.test(value)) return null;
+    const job = await this.platformStore.one(`SELECT unsubscribe.page_id FROM platform_crm_delivery_jobs delivery
+      LEFT JOIN platform_crm_campaign_unsubscribe_pages unsubscribe ON unsubscribe.campaign_id = delivery.campaign_id
+      WHERE delivery.unsubscribe_token = ? AND delivery.kind <> 'confirmation' AND (delivery.sent_at IS NOT NULL OR delivery.status = 'sending')`, [value]);
+    if (!job) return null;
+    const specific = job.page_id && await this.pages.publishedUnsubscribe({ id: job.page_id });
+    return specific || this.pages.publishedUnsubscribe();
+  }
+
   async captureLanding(slug, input, { includeLead = false } = {}) {
     if (input.consent !== true) throw new ApiError(400, 'CRM_CONSENT_REQUIRED', 'Confirme que deseja receber mensagens.');
     const { email, name } = subscriberFields(input);
@@ -257,9 +288,10 @@ export class CrmGrowthStore {
       const newId = randomUUID();
       await connection.execute(`INSERT INTO platform_marketing_subscribers (id,email,name,status,source,created_at,updated_at)
         VALUES (?,?,?,'pending',?,?,?) ON DUPLICATE KEY UPDATE id = id`, [newId, email, name, `Página ${landing.slug}`, now, now]);
-      const [[contact]] = await connection.execute('SELECT id FROM platform_marketing_subscribers WHERE email = ? FOR UPDATE', [email]);
+      const [[contact]] = await connection.execute('SELECT id,status FROM platform_marketing_subscribers WHERE email = ? FOR UPDATE', [email]);
       const [[previous]] = await connection.execute('SELECT * FROM platform_crm_leads WHERE landing_id = ? AND subscriber_id = ? FOR UPDATE', [landing.id, contact.id]);
-      if (previous?.confirmed_at || (previous && new Date(iso(previous.confirmation_expires)) > now)) {
+      if ((previous?.confirmed_at && contact.status !== 'unsubscribed')
+        || (previous?.confirmation_hash && new Date(iso(previous.confirmation_expires)) > now)) {
         return { accepted: true, ...(includeLead && { leadId: previous.id }) };
       }
       const [[recent]] = await connection.execute('SELECT id FROM platform_crm_leads WHERE subscriber_id = ? AND created_at > ? LIMIT 1',
@@ -274,7 +306,8 @@ export class CrmGrowthStore {
       const expires = new Date(Date.now() + CONFIRMATION_TTL);
       const leadId = previous?.id || randomUUID();
       const campaignId = source?.campaign_id ?? null;
-      if (previous) await connection.execute(`UPDATE platform_crm_leads SET campaign_id = ?, confirmation_hash = ?, confirmation_expires = ?, created_at = ? WHERE id = ?`,
+      if (previous) await connection.execute(`UPDATE platform_crm_leads SET campaign_id = CASE WHEN confirmed_at IS NULL THEN ? ELSE campaign_id END,
+        confirmation_hash = ?, confirmation_expires = ?, created_at = ? WHERE id = ?`,
         [campaignId, hash, expires, now, leadId]);
       else await connection.execute(`INSERT INTO platform_crm_leads (id,landing_id,subscriber_id,campaign_id,confirmation_hash,confirmation_expires,created_at)
         VALUES (?,?,?,?,?,?,?)`, [leadId, landing.id, contact.id, campaignId, hash, expires, now]);
@@ -298,7 +331,7 @@ export class CrmGrowthStore {
       const consentAt = contact.status === 'subscribed' && contact.consent_at ? new Date(iso(contact.consent_at)) : now;
       await connection.execute(`UPDATE platform_marketing_subscribers SET status = 'subscribed', consent_at = ?, source = ?, updated_at = ? WHERE id = ?`,
         [consentAt, contact.status === 'subscribed' ? contact.source : `Confirmação por e-mail · ${landing.slug}`, now, contact.id]);
-      await connection.execute('UPDATE platform_crm_leads SET confirmed_at = ?, confirmation_hash = NULL WHERE id = ?', [now, lead.id]);
+      await connection.execute('UPDATE platform_crm_leads SET confirmed_at = COALESCE(confirmed_at, ?), confirmation_hash = NULL WHERE id = ?', [now, lead.id]);
       await insertTags(connection, contact.id, landing.tags);
       return true;
     });
@@ -314,9 +347,16 @@ export class CrmGrowthStore {
       const [change] = await connection.execute(`UPDATE platform_marketing_subscribers
         SET status = 'unsubscribed', consent_at = NULL, updated_at = GREATEST(updated_at + INTERVAL 1000 MICROSECOND, ?)
         WHERE id = ? AND status = 'subscribed' AND consent_at = ?`, [now, job.subscriber_id, job.consent_at]);
-      if (change.affectedRows) await connection.execute(`UPDATE platform_crm_delivery_jobs SET unsubscribed_at = COALESCE(unsubscribed_at,?) WHERE id = ?`, [now, job.id]);
+      if (change.affectedRows) {
+        await this.invalidateLeadConfirmations(connection, job.subscriber_id);
+        await connection.execute(`UPDATE platform_crm_delivery_jobs SET unsubscribed_at = COALESCE(unsubscribed_at,?) WHERE id = ?`, [now, job.id]);
+      }
       return true;
     });
+  }
+
+  async invalidateLeadConfirmations(connection, subscriberId) {
+    await connection.execute('UPDATE platform_crm_leads SET confirmation_hash = NULL WHERE subscriber_id = ? AND confirmation_hash IS NOT NULL', [subscriberId]);
   }
 
   async queueCampaign(id, actorId) {
@@ -342,7 +382,7 @@ export class CrmGrowthStore {
         ON DUPLICATE KEY UPDATE id = id`, [id]);
       if (landing) {
         await connection.execute('INSERT INTO platform_crm_campaign_email_designs (campaign_id,publication_json) VALUES (?,?)',
-          [id, JSON.stringify(landing)]);
+          [id, JSON.stringify({ ...landing, templateVersion: 2 })]);
       }
       const messageBytes = Buffer.byteLength(campaign.subject) + Buffer.byteLength(campaign.content) + 614;
       const batchSize = Math.max(1, Math.min(100, Math.floor(350_000 / messageBytes)));
@@ -365,6 +405,7 @@ export class CrmGrowthStore {
     if (!campaign) missing('Campanha');
     const publication = parse(campaign.publication_json) ?? (campaign.landing_id ? await this.pages.publishedById(campaign.landing_id) : null);
     return { subject: campaign.subject, content: campaign.content, blocks: publication?.blocks ?? null,
+      legacy: Boolean(campaign.publication_json && !publication?.templateVersion),
       action: publication ? `/inscricao/${publication.slug}` : null };
   }
 

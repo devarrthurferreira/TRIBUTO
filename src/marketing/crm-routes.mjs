@@ -35,7 +35,7 @@ export function createMarketingCrmRouter(store) {
               res.writeHead(200, {
                 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
                 'Referrer-Policy': 'no-referrer',
-                'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
+                'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' https:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
               });
               res.end(html);
               return;
