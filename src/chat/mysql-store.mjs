@@ -150,9 +150,9 @@ export class ChatMySqlStore {
     const [rows] = await this.pool.execute(`SELECT m.*, activity.unread
       FROM (
         SELECT history.room_key, MAX(history.sequence_no) latest,
-          SUM(history.sender_id <> ? AND history.sequence_no > COALESCE(reads.last_sequence, 0)) unread
+          SUM(history.sender_id <> ? AND history.sequence_no > COALESCE(read_cursor.last_sequence, 0)) unread
         FROM platform_chat_messages history
-        LEFT JOIN platform_chat_reads reads ON reads.user_id = ? AND reads.room_key = history.room_key
+        LEFT JOIN platform_chat_reads read_cursor ON read_cursor.user_id = ? AND read_cursor.room_key = history.room_key
         WHERE history.room_key IN (${placeholders(roomKeys)})
         GROUP BY history.room_key
       ) activity JOIN platform_chat_messages m ON m.sequence_no = activity.latest`, [userId, userId, ...roomKeys]);
