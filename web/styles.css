@@ -477,3 +477,6 @@ select.task-status { border: 1px solid currentColor; max-width: 135px; }
 }
 
 #conteudo:focus, #authContent:focus { outline: none; }
+
+a.nav-link, a.module-open-button, a.text-button { text-decoration: none; }
+a.text-button:hover { text-decoration: underline; }

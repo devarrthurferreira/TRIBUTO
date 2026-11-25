@@ -63,22 +63,22 @@
         <button id="closeMenu" class="icon-button sidebar-close" type="button" aria-label="Fechar menu">×</button>
       </div>
       <nav id="navigation" class="navigation" aria-label="Seções">
-        <button class="nav-link" data-view="overview" type="button"><span class="nav-icon" aria-hidden="true">⌂</span> Início</button>
+        <a class="nav-link" data-view="overview" href="/home"><span class="nav-icon" aria-hidden="true">⌂</span> Início</a>
         <p id="moduleNavigationLabel" class="nav-caption">MÓDULOS</p>
-        <button class="nav-link" data-view="dp" type="button"><span class="nav-icon" aria-hidden="true">◫</span> Departamento Pessoal</button>
-        <button class="nav-link" data-view="rh" type="button"><span class="nav-icon" aria-hidden="true">♙</span> Recursos Humanos</button>
-        <button class="nav-link" data-view="tecnologia" type="button"><span class="nav-icon" aria-hidden="true">⌘</span> Tecnologia</button>
-        <button class="nav-link" data-view="marketing" type="button"><span class="nav-icon" aria-hidden="true">◉</span> Marketing</button>
-        <button class="nav-link" data-view="societario" type="button"><span class="nav-icon" aria-hidden="true">⬡</span> Societário</button>
-        <button class="nav-link" data-view="contabil" type="button"><span class="nav-icon" aria-hidden="true">◈</span> Contábil</button>
-        <button class="nav-link" data-view="fiscal" type="button"><span class="nav-icon" aria-hidden="true">▤</span> Fiscal</button>
-        <button class="nav-link" data-view="diretoria" type="button"><span class="nav-icon" aria-hidden="true">▧</span> Diretoria</button>
+        <a class="nav-link" data-view="dp" href="/setor/dp"><span class="nav-icon" aria-hidden="true">◫</span> Departamento Pessoal</a>
+        <a class="nav-link" data-view="rh" href="/setor/rh"><span class="nav-icon" aria-hidden="true">♙</span> Recursos Humanos</a>
+        <a class="nav-link" data-view="tecnologia" href="/setor/tecnologia"><span class="nav-icon" aria-hidden="true">⌘</span> Tecnologia</a>
+        <a class="nav-link" data-view="marketing" href="/setor/marketing"><span class="nav-icon" aria-hidden="true">◉</span> Marketing</a>
+        <a class="nav-link" data-view="societario" href="/setor/societario"><span class="nav-icon" aria-hidden="true">⬡</span> Societário</a>
+        <a class="nav-link" data-view="contabil" href="/setor/contabil"><span class="nav-icon" aria-hidden="true">◈</span> Contábil</a>
+        <a class="nav-link" data-view="fiscal" href="/setor/fiscal"><span class="nav-icon" aria-hidden="true">▤</span> Fiscal</a>
+        <a class="nav-link" data-view="diretoria" href="/setor/diretoria"><span class="nav-icon" aria-hidden="true">▧</span> Diretoria</a>
         <p class="nav-caption">ORGANIZAÇÃO</p>
         <button class="nav-link" data-view="companies" type="button"><span class="nav-icon" aria-hidden="true">▥</span> Empresas</button>
         <button class="nav-link" data-view="users" type="button"><span class="nav-icon" aria-hidden="true">⊙</span> Equipe e acessos</button>
         <button class="nav-link" data-view="agents" type="button"><span class="nav-icon" aria-hidden="true">⌁</span> Agentes de coleta</button>
-        <button class="nav-link" data-view="financeiro" type="button" hidden><span class="nav-icon" aria-hidden="true">◉</span> Financeiro</button>
-        <button class="nav-link" data-view="gestao" type="button" hidden><span class="nav-icon" aria-hidden="true">▧</span> Gestão</button>
+        <a class="nav-link" data-view="financeiro" href="/setor/financeiro" hidden><span class="nav-icon" aria-hidden="true">◉</span> Financeiro</a>
+        <a class="nav-link" data-view="gestao" href="/setor/gestao" hidden><span class="nav-icon" aria-hidden="true">▧</span> Gestão</a>
       </nav>
       <div class="sidebar-bottom">
         <button id="changePasswordButton" class="logout-button" type="button">Alterar minha senha <span aria-hidden="true">›</span></button>
@@ -144,7 +144,7 @@
               <article class="surface home-update-card">
                 <div class="surface-header"><h2>Novidades</h2></div>
                 <div class="home-update-list">
-                  <div class="home-update-item"><strong>Tecnologia na Central</strong><p>O setor já pode organizar atividades internas, acompanhar prazos e atualizar o andamento.</p><button type="button" class="text-button" data-go="tecnologia" hidden>Abrir Tecnologia <span aria-hidden="true">›</span></button></div>
+                  <div class="home-update-item"><strong>Tecnologia na Central</strong><p>O setor já pode organizar atividades internas, acompanhar prazos e atualizar o andamento.</p><a class="text-button" href="/setor/tecnologia" data-go="tecnologia" hidden>Abrir Tecnologia <span aria-hidden="true">›</span></a></div>
                 </div>
               </article>
               <article id="homeAgentHealthCard" class="surface home-update-card" hidden>

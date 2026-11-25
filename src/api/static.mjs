@@ -1,10 +1,12 @@
 import { readFile } from 'node:fs/promises';
+import { MODULES } from '../platform/policy.mjs';
 
 const ALLOWED = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/home', ['index.html', 'text/html; charset=utf-8']],
   ['/painel', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
+  ...MODULES.map(({ id }) => [`/setor/${id}`, ['index.html', 'text/html; charset=utf-8']]),
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/maximum-logo.png', ['maximum-logo.png', 'image/png']],

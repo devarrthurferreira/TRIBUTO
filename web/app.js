@@ -1,6 +1,6 @@
 const API = '/v1/platform';
 const DASHBOARD_PATH = '/home';
-const LEGACY_DASHBOARD_PATH = '/painel';
+const SECTOR_PREFIX = '/setor/';
 const $ = (id) => document.getElementById(id);
 
 const modules = [
@@ -144,14 +144,27 @@ function relativeTime(value) {
 function isRecent(value) { return !!value && Number.isFinite(new Date(value).getTime()) && Date.now() - new Date(value).getTime() < 5 * 60_000; }
 function companyName(cnpj) { return state.companies.find((company) => company.cnpj === cnpj)?.name || cnpjLabel(cnpj); }
 
+function viewFromLocation() {
+  if (location.pathname.startsWith(SECTOR_PREFIX)) return location.pathname.slice(SECTOR_PREFIX.length);
+  const fragment = location.hash.slice(1);
+  return fragment && fragment !== 'conteudo' ? fragment : 'overview';
+}
+
+function viewUrl(view) {
+  if (allModules.some(({ id }) => id === view)) return `${SECTOR_PREFIX}${view}`;
+  return view === 'overview' ? DASHBOARD_PATH : `${DASHBOARD_PATH}#${view}`;
+}
+
 function showAuth(setupRequired, message = '', preserveRoute = false) {
   state.session = null;
   state.selectedCompanyCnpj = null;
-  if ([DASHBOARD_PATH, LEGACY_DASHBOARD_PATH].includes(location.pathname) || (!preserveRoute && location.hash)) {
-    history.replaceState(null, '', `/${preserveRoute ? location.hash : ''}`);
+  if (location.pathname !== '/' || (!preserveRoute && location.hash)) {
+    const fragment = preserveRoute && !location.pathname.startsWith(SECTOR_PREFIX) ? location.hash : '';
+    history.replaceState(null, '', `/${fragment}`);
   }
   $('appView').hidden = true;
   $('authView').hidden = false;
+  document.title = 'Central Maximum | Maximum Contábil';
   $('setupTokenRow').hidden = !setupRequired;
   $('setupNameRow').hidden = !setupRequired;
   $('confirmPasswordRow').hidden = !setupRequired;
@@ -170,8 +183,10 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
 }
 function applySession(session) {
   if (!session?.user) { showAuth(!!session?.setupRequired, '', true); return; }
-  if (location.pathname !== DASHBOARD_PATH) {
-    location.replace(`${DASHBOARD_PATH}${location.hash}`);
+  const view = viewFromLocation();
+  const wantedPath = viewUrl(view).split('#')[0];
+  if (location.pathname !== wantedPath) {
+    location.replace(`${wantedPath}${wantedPath === DASHBOARD_PATH ? location.hash : ''}`);
     return;
   }
   state.session = session;
@@ -209,7 +224,7 @@ function applySession(session) {
   document.querySelector('[data-go="tecnologia"]').hidden = !canView('tecnologia');
   renderModuleCards();
   void initialLoad();
-  navigate(location.hash.slice(1) || 'overview');
+  navigate(view, { replace: true });
 }
 async function initialLoad() {
   const results = await Promise.allSettled([loadDashboard(), loadCompanies(), ...(isAdmin() ? [loadAgents(), loadStorage()] : [])]);
@@ -247,11 +262,21 @@ async function logout() {
   showAuth(false);
 }
 
-function navigate(view) {
+function navigate(view, { replace = false } = {}) {
   const companyRoute = /^company-(\d{14})$/.exec(view);
   const detail = !!companyRoute && canUse('fiscal', 'fiscalDocumentsRead');
   const valid = detail || (Object.hasOwn(viewLabels, view) && (view === 'overview' || view === 'companies' || (['users', 'agents'].includes(view) ? isAdmin() : canView(view))));
-  state.view = detail ? 'company-detail' : valid ? view : 'overview';
+  const route = valid ? view : 'overview';
+  const targetUrl = viewUrl(route);
+  if (location.pathname !== targetUrl.split('#')[0]) {
+    if (replace) location.replace(targetUrl);
+    else location.assign(targetUrl);
+    return;
+  }
+  state.view = detail ? 'company-detail' : route;
+  document.title = state.view === 'overview'
+    ? 'Central Maximum | Maximum Contábil'
+    : `${viewLabels[state.view]} | Central Maximum`;
   if (detail) {
     if (state.selectedCompanyCnpj !== companyRoute[1]) {
       state.nfsePage = 1;
@@ -271,9 +296,7 @@ function navigate(view) {
     if (current) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
   $('breadcrumbCurrent').textContent = state.view === 'company-detail' ? companyName(state.selectedCompanyCnpj) : viewLabels[state.view];
-  const route = state.view === 'company-detail' ? `company-${state.selectedCompanyCnpj}` : state.view;
-  const hash = route === 'overview' ? '' : `#${route}`;
-  if (location.hash !== hash) history.replaceState(null, '', `${DASHBOARD_PATH}${hash}`);
+  if (`${location.pathname}${location.hash}` !== targetUrl) history.replaceState(null, '', targetUrl);
   closeMenu();
   $('conteudo').focus({ preventScroll: true });
   if (state.view === 'users') void loadUsers().catch(displayError);
@@ -299,13 +322,12 @@ function renderModuleCards() {
     top.append(mark);
     const heading = node('h3', '', module.label);
     const description = node('p', '', module.description);
-    const button = node('button', 'module-open-button', `Abrir ${module.label}`);
-    button.type = 'button';
+    const link = node('a', 'module-open-button', `Abrir ${module.label}`);
+    link.href = viewUrl(module.id);
     const arrow = node('span', 'arrow', '›');
     arrow.setAttribute('aria-hidden', 'true');
-    button.append(arrow);
-    button.addEventListener('click', () => navigate(module.id));
-    card.append(top, heading, description, button);
+    link.append(arrow);
+    card.append(top, heading, description, link);
     target.append(card);
   }
 }
@@ -990,8 +1012,8 @@ function setupEvents() {
   $('openMenu').addEventListener('click', openMenu);
   $('closeMenu').addEventListener('click', closeMenu);
   $('menuBackdrop').addEventListener('click', closeMenu);
-  for (const button of document.querySelectorAll('.nav-link')) button.addEventListener('click', () => navigate(button.dataset.view));
-  for (const button of document.querySelectorAll('[data-go]')) button.addEventListener('click', () => navigate(button.dataset.go));
+  for (const button of document.querySelectorAll('button.nav-link')) button.addEventListener('click', () => navigate(button.dataset.view));
+  for (const button of document.querySelectorAll('button[data-go]')) button.addEventListener('click', () => navigate(button.dataset.go));
   $('companySearch').addEventListener('input', renderCompanies);
   $('fiscalCompanyFilter').addEventListener('change', () => void loadFiscalDocuments().catch(displayError));
   $('backToCompanies').addEventListener('click', () => navigate('companies'));
@@ -1039,7 +1061,7 @@ function setupEvents() {
   $('tokenDialog').addEventListener('close', () => { $('agentTokenOnce').textContent = ''; });
   for (const button of document.querySelectorAll('.close-dialog')) button.addEventListener('click', () => button.closest('dialog').close());
   window.addEventListener('hashchange', () => {
-    if (state.session?.user && location.hash !== '#conteudo') navigate(location.hash.slice(1));
+    if (state.session?.user && location.hash !== '#conteudo') navigate(viewFromLocation(), { replace: true });
   });
 }
 
