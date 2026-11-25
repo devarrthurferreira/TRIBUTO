@@ -1,9 +1,14 @@
 import { ApiError } from '../api/validation.mjs';
 import { canPerform } from '../platform/policy.mjs';
+import { importCrmContacts, exportCrmContacts } from './crm-contacts-csv.mjs';
+import { buildCrmEmailMarkup } from './crm-email-template.mjs';
 
 const BASE = '/marketing/crm';
-const ITEM = /^\/(subscribers|campaigns)\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})(?:\/(prepare|reopen|audience|record|queue))?$/;
+const ID = '[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}';
+const ITEM = new RegExp(`^/(subscribers|campaigns)/(${ID})(?:/(prepare|reopen|audience|record|queue|preview))?$`);
 const GROWTH = /^\/(segments|landings|automations)(?:\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}))?$/;
+const PAGE_ACTION = new RegExp(`^/landings/(${ID})(?:/(unpublish|analytics))?$`);
+const TEMPLATE = new RegExp(`^/templates/(${ID})$`);
 
 export function createMarketingCrmRouter(store) {
   return {
@@ -14,11 +19,49 @@ export function createMarketingCrmRouter(store) {
         }
         const path = route.slice(BASE.length);
         if (!path && req.method === 'GET') return send(res, 200, await store.list());
+        const page = PAGE_ACTION.exec(path);
+        const match = ITEM.exec(path);
+        if (req.method === 'GET') {
+          if (path === '/templates') return send(res, 200, await store.pages.listTemplates());
+          if (page && !page[2]) return send(res, 200, await store.pages.get(page[1]));
+          if (page?.[2] === 'analytics') {
+            const campaignId = new URL(req.url ?? route, 'http://localhost').searchParams.get('campaignId');
+            return send(res, 200, await store.pageAnalytics.report(page[1], campaignId));
+          }
+          if (match?.[1] === 'campaigns' && match[3] === 'preview') {
+            const html = buildCrmEmailMarkup(await store.previewCampaign(match[2]));
+            const isDocument = new URL(req.url ?? route, 'http://localhost').searchParams.get('document') === '1';
+            if (isDocument) {
+              res.writeHead(200, {
+                'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+                'Referrer-Policy': 'no-referrer',
+                'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
+              });
+              res.end(html);
+              return;
+            }
+            return send(res, 200, { html });
+          }
+        }
         if (!canPerform(user, 'marketing', 'marketingCrmManage')) {
           throw new ApiError(403, 'CRM_FORBIDDEN', 'Seu acesso permite consultar o CRM de Marketing.');
         }
 
         const actor = user._id;
+        if (req.method === 'POST' && path === '/contacts/import') {
+          const { csv } = await readBody(req);
+          return send(res, 200, await importCrmContacts(store, csv, actor));
+        }
+        if (req.method === 'POST' && path === '/contacts/export') {
+          return send(res, 200, await exportCrmContacts(store));
+        }
+        if (req.method === 'POST' && path === '/templates') {
+          return send(res, 201, await store.pages.saveTemplate(await readBody(req), actor));
+        }
+        const template = TEMPLATE.exec(path);
+        if (template && req.method === 'DELETE') return send(res, 200, await store.pages.archiveTemplate(template[1], actor));
+        if (page && req.method === 'POST' && page[2] === 'unpublish') return send(res, 200, await store.pages.retire(page[1], actor));
+        if (page && req.method === 'DELETE' && !page[2]) return send(res, 200, await store.pages.retire(page[1], actor, { archive: true }));
         if (req.method === 'POST' && path === '/subscribers') {
           return send(res, 201, await store.createSubscriber(await readBody(req), actor));
         }
@@ -32,7 +75,6 @@ export function createMarketingCrmRouter(store) {
             return send(res, id ? 200 : 201, await store.putGrowthRecord(collection, id, await readBody(req), actor));
           }
         }
-        const match = ITEM.exec(path);
         if (match) {
           const [, resource, id, operation] = match;
           if (!operation && req.method === 'PATCH') {

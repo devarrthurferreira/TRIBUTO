@@ -17,14 +17,10 @@ const CAMPAIGN_STATUS = {
 };
 const CAMPAIGN_TYPES = { promotion: 'Promocional', newsletter: 'Newsletter', welcome: 'Boas-vindas', announcement: 'Lançamento ou comunicado' };
 const LANDING_STATUS = { draft: 'Rascunho', published: 'Publicada' };
-const AUTOMATION_STATUS = { draft: 'Rascunho', active: 'Ativa', paused: 'Pausada' };
 const SECTIONS = {
   subscribers: { label: 'Contatos', singular: 'contato', icon: 'people', create: 'Novo contato', statuses: CONTACT_STATUS },
-  campaigns: { label: 'Campanhas', singular: 'campanha', icon: 'envelope', create: 'Nova campanha', statuses: CAMPAIGN_STATUS },
-  segments: { label: 'Segmentos', singular: 'segmento', icon: 'tag', create: 'Novo segmento' },
-  landings: { label: 'Páginas de captura', singular: 'página de captura', icon: 'file-earmark', create: 'Nova página', statuses: LANDING_STATUS },
-  automations: { label: 'Automações', singular: 'automação', icon: 'diagram-3', create: 'Nova automação', statuses: AUTOMATION_STATUS },
-  reports: { label: 'Resultados', icon: 'graph-up' },
+  campaigns: { label: 'Campanhas', singular: 'campanha', icon: 'envelope', create: 'Criar campanha', statuses: CAMPAIGN_STATUS },
+  landings: { label: 'Páginas', singular: 'página', icon: 'file-earmark', create: 'Criar página', statuses: LANDING_STATUS },
 };
 const REPORT_PERCENT = new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 });
 const SECTION_KEYS = Object.keys(SECTIONS);
@@ -114,6 +110,11 @@ function percentage(numerator, denominator) {
   return Number.isFinite(numerator) && Number.isFinite(denominator) && denominator > 0 ? REPORT_PERCENT.format(numerator / denominator) : '—';
 }
 
+function duration(seconds) {
+  if (!Number.isFinite(seconds)) return '—';
+  return seconds >= 60 ? `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s` : `${Math.round(seconds)} s`;
+}
+
 function splitMetricInfo(campaign) {
   return [
     ['Preparados', campaign.audienceCount],
@@ -143,17 +144,20 @@ function csvCell(value) {
   return `"${safe.replace(/"/g, '""')}"`;
 }
 
-function downloadRecipients(recipients) {
-  const rows = [['Nome', 'E-mail'], ...recipients.map(({ name, email }) => [name, email])];
-  const csv = rows.map((row) => row.map(csvCell).join(';')).join('\r\n');
-  const downloadUrl = URL.createObjectURL(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }));
+function downloadCsv(csv, filename) {
+  const downloadUrl = URL.createObjectURL(new Blob([csv.startsWith('\uFEFF') ? csv : `\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
   const link = node('a');
   link.href = downloadUrl;
-  link.download = 'central-maximum-destinatarios.csv';
+  link.download = filename;
   document.body.append(link);
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(downloadUrl), 5000);
+}
+
+function downloadRecipients(recipients) {
+  const rows = [['Nome', 'E-mail'], ...recipients.map(({ name, email }) => [name, email])];
+  downloadCsv(rows.map((row) => row.map(csvCell).join(';')).join('\r\n'), 'central-maximum-destinatarios.csv');
 }
 
 const contactFields = [
@@ -167,7 +171,8 @@ const campaignFields = [
   { name: 'name', label: 'Nome da campanha', maxLength: 160, required: true, wide: true },
   { name: 'type', label: 'Tipo de campanha', type: 'select', options: CAMPAIGN_TYPES, required: true },
   { name: 'subject', label: 'Assunto do e-mail', maxLength: 160, wide: true },
-  { name: 'content', label: 'Mensagem', type: 'textarea', maxLength: 24000, wide: true },
+  { name: 'content', label: 'Texto de abertura do e-mail', type: 'textarea', maxLength: 24000, wide: true,
+    hint: 'O conteúdo da página publicada será incluído no e-mail.' },
 ];
 const resultFields = [
   { name: 'sentCount', label: 'E-mails enviados', type: 'number', required: true },
@@ -179,7 +184,7 @@ const resultFields = [
 ];
 const numericValues = new Set(resultFields.map(({ name }) => name));
 
-export function mountMarketingCrm(root, { request, onAuthError } = {}) {
+export function mountMarketingCrm(root, { request, onAuthError, onOpenPage } = {}) {
   root.classList.add('mcrm');
   root.innerHTML = `
     <header class="mcrm-header">
@@ -187,22 +192,45 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
         <h1>CRM de Marketing</h1>
         <p>Organize públicos, publique páginas de inscrição e acompanhe campanhas de e-mail.</p>
       </div>
-      <button class="mcrm-action mcrm-primary" type="button" data-crm="create" hidden></button>
     </header>
     <div class="mcrm-kpis" data-crm="metrics" aria-label="Indicadores do CRM"></div>
     <aside class="mcrm-provider"><i class="bi bi-broadcast" aria-hidden="true"></i><p><strong data-crm="providerTitle"></strong><span data-crm="providerNote"></span></p><button class="mcrm-action" type="button" data-crm="refresh" hidden>Atualizar dados</button></aside>
-    <section class="mcrm-board" aria-label="Gestão do CRM">
-      <div class="mcrm-board-tools">
-        <div class="mcrm-tabs" role="tablist" aria-label="Áreas do CRM" data-crm="tabs"></div>
-        <div class="mcrm-filters" data-crm="filters">
-          <label class="mcrm-search"><i class="bi bi-search" aria-hidden="true"></i><span class="sr-only">Buscar no CRM</span><input type="search" data-crm="search"></label>
-          <label class="mcrm-filter" data-crm="statusFilter"><span class="sr-only">Filtrar por situação</span><select data-crm="status"></select></label>
-          <label class="mcrm-filter" data-crm="interestFilter" hidden><span class="sr-only">Filtrar por interesse</span><select data-crm="interest"></select></label>
+    <div class="mcrm-workspace">
+      <nav class="mcrm-sidebar" aria-label="Navegação do CRM">
+        <div class="mcrm-tabs" role="tablist" aria-label="Áreas do CRM" aria-orientation="vertical" data-crm="tabs"></div>
+      </nav>
+      <section class="mcrm-board" aria-label="Gestão do CRM">
+        <div class="mcrm-board-heading">
+          <h2 data-crm="sectionTitle"></h2>
+          <div class="mcrm-board-actions">
+            <button class="mcrm-action" type="button" data-crm="importContacts" hidden>Importar CSV</button>
+            <button class="mcrm-action" type="button" data-crm="exportContacts" hidden><i class="bi bi-download" aria-hidden="true"></i>Exportar CSV</button>
+            <button class="mcrm-action mcrm-primary" type="button" data-crm="create" hidden></button>
+          </div>
         </div>
+        <div class="mcrm-board-tools" data-crm="tools">
+          <div class="mcrm-campaign-views" data-crm="campaignViews" hidden>
+            <button class="mcrm-action" type="button" data-crm="working">Em trabalho</button>
+            <button class="mcrm-action" type="button" data-crm="history">Histórico de envios</button>
+          </div>
+          <div class="mcrm-filters" data-crm="filters">
+            <label class="mcrm-search"><i class="bi bi-search" aria-hidden="true"></i><span class="sr-only">Buscar no CRM</span><input type="search" data-crm="search"></label>
+            <label class="mcrm-filter" data-crm="statusFilter"><span class="sr-only">Filtrar por situação</span><select data-crm="status"></select></label>
+            <label class="mcrm-filter" data-crm="interestFilter" hidden><span class="sr-only">Filtrar por interesse</span><select data-crm="interest"></select></label>
+          </div>
+        </div>
+        <p class="mcrm-message" data-crm="message" role="status" hidden></p>
+        <div class="mcrm-panel" id="mcrm-panel" role="tabpanel" data-crm="panel"></div>
+      </section>
+    </div>
+    <div class="mcrm-speed-actions">
+      <div class="mcrm-speed-list" id="mcrm-speed-list" aria-label="Atalhos do CRM" data-crm="speedList" hidden>
+        <button class="mcrm-action" type="button" data-crm="speedCampaign"><span class="mcrm-speed-icon" aria-hidden="true">+</span>Criar campanha</button>
+        <button class="mcrm-action" type="button" data-crm="speedMetrics"><i class="bi bi-graph-up" aria-hidden="true"></i>Métricas</button>
+        <button class="mcrm-action" type="button" data-crm="speedPages"><i class="bi bi-file-earmark" aria-hidden="true"></i>Páginas</button>
       </div>
-      <p class="mcrm-message" data-crm="message" role="status" hidden></p>
-      <div class="mcrm-panel" id="mcrm-panel" role="tabpanel" data-crm="panel"></div>
-    </section>
+      <button class="mcrm-speed-toggle" type="button" data-crm="speedToggle" aria-expanded="false" aria-controls="mcrm-speed-list" aria-label="Ações rápidas do CRM"><span aria-hidden="true">⋮</span></button>
+    </div>
     <dialog class="mcrm-dialog" aria-labelledby="mcrm-dialog-title" data-crm="dialog">
       <form data-crm="form">
         <header class="mcrm-dialog-head">
@@ -231,6 +259,7 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
   let canCreate = false;
   let canUpdate = false;
   let view = 'subscribers';
+  let campaignView = 'working';
   let data;
   let loading = false;
   let loadFailed = false;
@@ -265,7 +294,6 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
         campaigns: result.campaigns || [],
         segments: result.segments || [],
         landings: result.landings || [],
-        automations: result.automations || [],
         deliveryConfigured: Boolean(result.deliveryConfigured),
         analyticsConfigured: Boolean(result.analyticsConfigured),
         totals: result.totals || {},
@@ -282,9 +310,10 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
     }
   }
 
-  function selectView(next, moveFocus = false) {
-    if (view !== next) {
+  function selectView(next, moveFocus = false, nextCampaignView = 'working') {
+    if (view !== next || (next === 'campaigns' && campaignView !== nextCampaignView)) {
       view = next;
+      campaignView = nextCampaignView;
       ui.search.value = '';
       displayMessage();
       resetOptions();
@@ -315,7 +344,7 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
   function render() {
     renderSummary();
     ui.providerTitle.textContent = data ? data.deliveryConfigured ? 'Envio de e-mail disponível' : 'Provedor de e-mail pendente' : 'Serviço de e-mail';
-    ui.providerNote.textContent = data?.deliveryConfigured ? 'Use a fila da Central para enviar campanhas e e-mails automáticos.'
+    ui.providerNote.textContent = data?.deliveryConfigured ? 'Use a fila da Central para enviar campanhas às pessoas inscritas.'
       : 'Prepare campanhas e exporte a lista de inscritos. Envio direto e confirmação de leads exigem um provedor configurado.';
     if (data?.deliveryConfigured && !data.analyticsConfigured) ui.providerNote.textContent += ' Configure o webhook para receber eventos do provedor.';
     ui.refresh.hidden = !data;
@@ -327,10 +356,17 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
     ui.panel.setAttribute('aria-labelledby', tabs[view].id);
     ui.panel.setAttribute('aria-busy', String(loading));
     const section = SECTIONS[view];
+    ui.sectionTitle.textContent = section.label;
     ui.create.hidden = !canCreate || !data || !section.create;
     const createLabel = section.create || '';
     if (ui.create.textContent !== createLabel) ui.create.textContent = createLabel;
-    ui.filters.hidden = !data || view === 'reports';
+    ui.tools.hidden = !data;
+    ui.campaignViews.hidden = view !== 'campaigns';
+    ui.working.setAttribute('aria-pressed', String(campaignView === 'working'));
+    ui.history.setAttribute('aria-pressed', String(campaignView === 'history'));
+    ui.importContacts.hidden = !data || !canCreate || view !== 'subscribers';
+    ui.exportContacts.hidden = !data || !canUpdate || view !== 'subscribers';
+    ui.speedCampaign.hidden = !canCreate || !data;
     ui.statusFilter.hidden = !section.statuses;
     if (view === 'subscribers' && data) {
       const interests = [...new Set(data.subscribers.flatMap((contact) => contact.tags || []))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
@@ -344,7 +380,9 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
   }
 
   function resetOptions() {
-    setOptions(ui.status, { '': 'Todas as situações', ...SECTIONS[view].statuses });
+    const statuses = view !== 'campaigns' ? SECTIONS[view].statuses : Object.fromEntries(Object.entries(CAMPAIGN_STATUS)
+      .filter(([status]) => (status === 'sent') === (campaignView === 'history')));
+    setOptions(ui.status, { '': 'Todas as situações', ...statuses });
     ui.interest.value = '';
   }
 
@@ -362,33 +400,33 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
       ui.panel.replaceChildren(renderEmpty(error ? 'Não foi possível carregar o CRM' : 'Carregando…', '', error ? 'arrow-clockwise' : 'clock-history', error));
       return;
     }
-    if (view === 'reports') {
-      ui.panel.replaceChildren(renderReports());
-      return;
-    }
     const status = ui.status.value;
     const query = searchText(ui.search.value.trim());
     const interest = view === 'subscribers' ? ui.interest.value : '';
     const records = data[view].filter((record) => {
       const fields = [record.name, record.title, record.email, record.slug, record.source, record.subject, ...(record.tags || [])];
-      if (view === 'automations') fields.push(...(record.steps || []).map((step) => step.subject));
-      return (!status || status === record.status) && (!interest || (record.tags || []).includes(interest))
+      return (view !== 'campaigns' || (record.status === 'sent') === (campaignView === 'history'))
+        && (!status || status === record.status) && (!interest || (record.tags || []).includes(interest))
         && (!query || fields.some((value) => searchText(value).includes(query)));
     });
     if (records.length) {
+      if (view === 'campaigns' && campaignView === 'history') records.sort((first, second) =>
+        (Date.parse(second.sentAt ?? second.updatedAt) || 0) - (Date.parse(first.sentAt ?? first.updatedAt) || 0));
       const total = node('p', 'mcrm-result-count', `${count(records.length)} ${records.length === 1 ? 'registro' : 'registros'}`);
-      const content = view === 'subscribers' ? renderContacts(records) : view === 'campaigns' ? renderCampaigns(records) : renderGrowth(records);
-      ui.panel.replaceChildren(total, content);
+      const content = view === 'subscribers' ? renderContacts(records) : view === 'campaigns' ? renderCampaigns(records) : renderPages(records);
+      if (view === 'campaigns' && campaignView === 'history') ui.panel.replaceChildren(renderHistorySummary(), total, content);
+      else ui.panel.replaceChildren(total, content);
       return;
     }
     const filtered = Boolean(status || query || interest);
-    const emptyLabels = { subscribers: 'Nenhum contato cadastrado', campaigns: 'Nenhuma campanha cadastrada', segments: 'Nenhum segmento cadastrado',
-      landings: 'Nenhuma página de captura cadastrada', automations: 'Nenhuma automação cadastrada' };
-    const emptyNotes = { subscribers: 'Cadastre contatos e acompanhe as inscrições.', campaigns: 'Crie um rascunho e prepare os destinatários.',
-      segments: 'Agrupe os contatos por interesses para direcionar campanhas.', landings: 'Crie uma página e compartilhe o link para receber inscrições.',
-      automations: 'Vincule uma sequência de e-mails a uma página de captura.' };
-    ui.panel.replaceChildren(renderEmpty(filtered ? 'Nenhum resultado' : emptyLabels[view],
-      filtered ? 'Experimente outra busca ou filtro.' : emptyNotes[view], SECTIONS[view].icon));
+    const history = view === 'campaigns' && campaignView === 'history';
+    const emptyLabels = { subscribers: 'Nenhum contato cadastrado', campaigns: history ? 'Nenhuma campanha enviada' : 'Nenhuma campanha em trabalho', landings: 'Nenhuma página cadastrada' };
+    const emptyNotes = { subscribers: 'Cadastre contatos ou importe uma lista CSV.', campaigns: history ? 'Os indicadores aparecem após o primeiro envio.' : 'Vincule uma página publicada para criar uma campanha.',
+      landings: 'Crie uma página no editor e publique para compartilhar o link.' };
+    const empty = renderEmpty(filtered ? 'Nenhum resultado' : emptyLabels[view],
+      filtered ? 'Experimente outra busca ou filtro.' : emptyNotes[view], SECTIONS[view].icon);
+    if (history) ui.panel.replaceChildren(renderHistorySummary(), empty);
+    else ui.panel.replaceChildren(empty);
   }
 
   function renderContacts(records) {
@@ -443,9 +481,9 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
       const head = node('header', 'mcrm-campaign-head');
       const identity = node('div');
       identity.append(node('h2', '', campaign.name), node('p', '', campaign.subject || 'Sem assunto'));
-      const segment = data.segments.find((entry) => entry.id === campaign.segmentId);
       const landing = data.landings.find((entry) => entry.id === campaign.landingId);
-      identity.append(node('p', 'mcrm-resource-meta', [CAMPAIGN_TYPES[campaign.type] || 'Promocional', segment?.name || 'Todos os inscritos', landing?.title].filter(Boolean).join(' · ')));
+      const segment = data.segments.find((entry) => entry.id === campaign.segmentId);
+      identity.append(node('p', 'mcrm-resource-meta', [CAMPAIGN_TYPES[campaign.type] || 'Promocional', landing?.title, segment && `Público: ${segment.name}`].filter(Boolean).join(' · ')));
       head.append(identity, statusPill(campaign.status, CAMPAIGN_STATUS));
       card.append(head);
       if (campaign.status !== 'draft') card.append(metricList(splitMetricInfo(campaign)));
@@ -453,11 +491,12 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
       if (campaign.failedCount > 0) card.append(node('p', 'mcrm-sent-at', `Falhas registradas: ${count(campaign.failedCount)}`));
       const controls = node('footer', 'mcrm-campaign-actions');
       controls.append(action('Prévia', (event) => preview(campaign, event.currentTarget), { symbol: 'journal-text' }));
+      if (campaign.status === 'sent') controls.append(action('Ver análise', (event) => showCampaignAnalysis(campaign, event.currentTarget), { symbol: 'graph-up', primary: true }));
       if (canUpdate && campaign.status === 'draft') {
         controls.append(action('Editar', (event) => openCampaign(campaign, event.currentTarget)));
-        if (campaign.subject && campaign.content) {
+        if (campaign.subject && (campaign.landingId ? landing?.status === 'published' : campaign.content)) {
           controls.append(action('Preparar público', (event) => prepare(campaign, event.currentTarget), { primary: true }));
-        } else card.append(node('p', 'mcrm-sent-at', 'Preencha o assunto e a mensagem para preparar o público.'));
+        } else card.append(node('p', 'mcrm-sent-at', 'Informe o assunto e vincule uma página publicada ou adicione uma mensagem.'));
       }
       if (canUpdate && campaign.status === 'prepared') {
         controls.append(
@@ -475,80 +514,47 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
     return list;
   }
 
-  function renderGrowth(records) {
+  function renderPages(records) {
     const list = node('div', 'mcrm-campaign-list');
-    const editors = { segments: openSegment, landings: openLanding, automations: openAutomation };
     for (const item of records) {
       const card = node('article', 'mcrm-campaign');
       const header = node('header', 'mcrm-campaign-head');
-      header.append(node('h2', '', item.title || item.name));
-      if (SECTIONS[view].statuses) header.append(statusPill(item.status, SECTIONS[view].statuses));
+      header.append(node('h2', '', item.title), statusPill(item.status, LANDING_STATUS));
       card.append(header);
       const options = node('footer', 'mcrm-campaign-actions');
-      if (view === 'segments') {
-        card.append(tagChips(item.tags));
-        const eligible = data.subscribers.filter((contact) => contact.status === 'subscribed' && contact.consentAt
-          && (contact.tags || []).some((tag) => item.tags.includes(tag))).length;
-        card.append(node('p', 'mcrm-resource-meta', `${count(eligible)} contatos inscritos com pelo menos um desses interesses`));
+      if (item.description) card.append(node('p', 'mcrm-resource-meta', item.description));
+      if (item.hasUnpublishedChanges) card.append(node('p', 'mcrm-resource-meta', 'Alterações em rascunho'));
+      if (item.publishedAt) card.append(node('p', 'mcrm-resource-meta', `Publicada em ${date(item.publishedAt)}`));
+      card.append(metricList([['Leads confirmados', item.leadCount], ['Aguardando confirmação', item.pendingCount]]));
+      if (item.status === 'published' && /^\/inscricao\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(item.path)) {
+        const link = node('a', 'mcrm-action');
+        link.href = item.path;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.append(icon('arrow-up-right'), document.createTextNode('Abrir página'));
+        options.append(link, action('Copiar link', () => void copyLandingLink(item.path), { symbol: 'link-45deg' }));
       }
-      if (view === 'landings') {
-        if (item.description) card.append(node('p', 'mcrm-resource-meta', item.description));
-        if (item.tags?.length) card.append(tagChips(item.tags));
-        card.append(metricList([['Leads confirmados', item.leadCount], ['Aguardando confirmação', item.pendingCount]]));
-        if (item.status === 'published' && /^\/inscricao\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(item.path)) {
-          const link = node('a', 'mcrm-action');
-          link.href = item.path;
-          link.target = '_blank';
-          link.rel = 'noopener noreferrer';
-          link.append(icon('arrow-up-right'), document.createTextNode('Abrir página'));
-          options.append(link, action('Copiar link', () => void copyLandingLink(item.path), { symbol: 'link-45deg' }));
-        }
-        if (canUpdate) options.append(action(item.status === 'published' ? 'Retirar do ar' : 'Publicar',
-          (event) => confirmLanding(item, event.currentTarget), { primary: item.status !== 'published' }));
+      options.append(action('Ver dados', (event) => showPageAnalysis(item, event.currentTarget), { symbol: 'graph-up' }));
+      if (canUpdate) {
+        options.append(action('Editar página', () => onOpenPage?.(item.id), { primary: true }));
+        if (item.status === 'published') options.append(action('Retirar do ar', (event) => confirmPageAction(item, event.currentTarget, false)));
+        options.append(action('Excluir página', (event) => confirmPageAction(item, event.currentTarget, true)));
       }
-      if (view === 'automations') {
-        const landing = data.landings.find((entry) => entry.id === item.landingId);
-        card.append(node('p', 'mcrm-resource-meta', landing ? `Ao confirmar inscrição em ${landing.title}` : 'Página vinculada indisponível'));
-        const sequence = node('ol', 'mcrm-sequence-preview');
-        for (const step of item.steps || []) {
-          const label = step.delayDays === 0 ? 'Sem espera' : `Após ${step.delayDays} ${step.delayDays === 1 ? 'dia' : 'dias'}`;
-          const row = node('li');
-          row.append(node('strong', '', step.subject), node('small', '', label));
-          sequence.append(row);
-        }
-        card.append(sequence);
-      }
-      if (canUpdate) options.append(action('Editar', (event) => editors[view](item, event.currentTarget)));
-      if (options.childElementCount) card.append(options);
+      card.append(options);
       list.append(card);
     }
     return list;
   }
 
-  function renderReports() {
+  function renderHistorySummary() {
     const result = node('section', 'mcrm-report');
-    const { totals, campaigns } = data;
+    const { totals } = data;
     const percent = (value) => percentage(value, 100);
-    result.append(node('h2', '', 'Resultados das campanhas'), metricList([
+    result.append(node('h3', '', 'Métricas de e-mail'), metricList([
       ['Taxa de abertura', percent(totals.openRate)], ['Taxa de cliques', percent(totals.clickRate)], ['Taxa de conversão', percent(totals.conversionRate)],
       ['Enviados', totals.sent], ['Entregues', totals.delivered], ['Aberturas', totals.opened], ['Cliques', totals.clicked],
       ['Leads confirmados', totals.leads], ['Leads pendentes', totals.pendingLeads], ['Conversões', totals.conversions], ['Descadastros', totals.unsubscribes],
     ]));
-    const measured = campaigns.filter((campaign) => ['queued', 'sent', 'failed'].includes(campaign.status));
-    if (measured.length) {
-      const list = node('div', 'mcrm-campaign-list');
-      for (const campaign of measured) {
-        const card = node('article', 'mcrm-campaign');
-        const head = node('header', 'mcrm-campaign-head');
-        head.append(node('h3', '', campaign.name), statusPill(campaign.status, CAMPAIGN_STATUS));
-        card.append(head, metricList([
-          ['Abertura', percentage(campaign.openCount, campaign.deliveredCount)], ['Cliques', percentage(campaign.clickCount, campaign.deliveredCount)],
-          ['Conversão', percentage(campaign.conversionCount, campaign.sentCount)], ['Conversões', campaign.conversionCount], ['Descadastros', campaign.unsubscribeCount],
-        ]));
-        list.append(card);
-      }
-      result.append(list);
-    } else result.append(renderEmpty('Sem campanhas com resultados', 'Os resultados aparecem após o envio ou o registro dos dados de um provedor externo.', 'graph-up'));
     return result;
   }
 
@@ -576,6 +582,44 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
     setBusy(false);
     ui.dialog.showModal();
     (ui.content.querySelector('input, textarea, select') || ui.cancel).focus();
+  }
+
+  function importContacts(trigger) {
+    if (!canCreate) return;
+    const panel = node('div', 'mcrm-import');
+    const input = node('input');
+    input.type = 'file';
+    input.accept = '.csv,text/csv';
+    input.required = true;
+    const label = node('label', 'mcrm-field');
+    label.append(node('span', '', 'Arquivo CSV'), input);
+    panel.append(node('p', 'mcrm-form-note', 'Inclua a coluna email. Nome, interesses, status e origem são opcionais. O limite é de 500 linhas ou 96 KB.'),
+      action('Baixar modelo', () => downloadCsv('email;nome;interesses;status;origem\r\ncliente@exemplo.com;Nome do contato;newsletter;pendente;', 'modelo-contatos-maximum.csv'), { symbol: 'download' }), label,
+      node('p', 'mcrm-form-note', 'Inscritos precisam ter origem de consentimento. Contatos existentes e descadastrados são preservados.'));
+    openDialog({ title: 'Importar contatos', content: panel, trigger, save: 'Importar CSV', submit: async () => {
+      const file = input.files?.[0];
+      if (!file || file.size > 96 * 1024) throw new Error('Escolha um CSV de até 96 KB.');
+      const csv = await file.text();
+      const result = await request(`${API_PATH}/contacts/import`, { method: 'POST', body: { csv } });
+      const summary = `${count(result.imported)} importados · ${count(result.duplicates)} existentes ou duplicados · ${count(result.invalid)} inválidos`;
+      return { message: summary, rows: result.errors || [] };
+    } });
+  }
+
+  async function exportContacts() {
+    const current = generation;
+    ui.exportContacts.disabled = true;
+    displayMessage();
+    try {
+      const result = await request(`${API_PATH}/contacts/export`, { method: 'POST', body: {} });
+      if (!active || generation !== current) return;
+      downloadCsv(result.csv, 'central-maximum-contatos.csv');
+      displayMessage(`${count(result.count)} contatos exportados.`);
+    } catch (error) {
+      if (active && generation === current && !reportAuth(error)) displayMessage(error.message || 'Não foi possível exportar os contatos.', true);
+    } finally {
+      ui.exportContacts.disabled = false;
+    }
   }
 
   function openContact(contact, trigger) {
@@ -621,16 +665,24 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
 
   function openCampaign(campaign, trigger) {
     if (campaign ? !canUpdate : !canCreate) return;
-    const segments = { '': 'Todos os inscritos', ...Object.fromEntries(data.segments.map(({ id, name }) => [id, name])) };
-    const landings = { '': 'Sem página de captura', ...Object.fromEntries(data.landings.filter((item) => item.status === 'published' || item.id === campaign?.landingId)
-      .map(({ id, title, status }) => [id, status === 'published' ? title : `${title} (fora do ar)`])) };
+    const published = data.landings.filter((item) => item.status === 'published' || item.id === campaign?.landingId);
+    if (!campaign && !published.length) {
+      const panel = node('div', 'mcrm-form-explanation');
+      panel.append(node('p', '', 'Publique uma página para usar seus blocos na campanha.'),
+        action('Abrir Páginas', () => { ui.dialog.close(); selectView('landings', true); }, { symbol: 'file-earmark' }));
+      openDialog({ title: 'Criar campanha', content: panel, trigger });
+      return;
+    }
+    const landings = Object.fromEntries([['', campaign ? 'Sem página vinculada' : 'Selecione uma página publicada'], ...published.map(({ id, title, status }) =>
+      [id, status === 'published' ? title : `${title} (fora do ar)`])]);
     const fields = fieldGrid([...campaignFields.slice(0, 2),
-      { name: 'segmentId', label: 'Destinatários', type: 'select', options: segments },
-      { name: 'landingId', label: 'Página de captura da campanha', type: 'select', options: landings, wide: true, hint: 'O envio pela Central inclui no e-mail um link da página para contar as inscrições atribuídas.' },
+      { name: 'landingId', label: 'Página da campanha', type: 'select', options: landings, wide: true, required: !campaign,
+        hint: 'A Central gera o HTML do e-mail com os blocos publicados e inclui o link da página.' },
       ...campaignFields.slice(2)], { type: 'promotion', ...campaign });
+    fields.querySelector('[name="subject"]').required = !campaign;
     const path = `${API_PATH}/campaigns${campaign ? `/${encodeURIComponent(campaign.id)}` : ''}`;
     openDialog({
-      title: campaign ? 'Editar campanha' : 'Nova campanha', content: fields, trigger,
+      title: campaign ? 'Editar campanha' : 'Criar campanha', content: fields, trigger,
       submit: (body) => request(path, { method: campaign ? 'PATCH' : 'POST', body }),
     });
   }
@@ -638,18 +690,33 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
   function preview(campaign, trigger) {
     const content = node('div', 'mcrm-preview');
     content.append(node('span', 'mcrm-preview-caption', 'Assunto'), node('h3', '', campaign.subject || 'Sem assunto'));
-    content.append(node('div', 'mcrm-preview-body', campaign.content || 'A mensagem ainda está em branco.'));
     const landing = data.landings.find((item) => item.id === campaign.landingId);
-    if (landing) content.append(node('p', 'mcrm-resource-meta', `Página vinculada: ${landing.title}`));
+    const frame = node('iframe', 'mcrm-email-preview');
+    frame.setAttribute('title', 'Prévia HTML do e-mail');
+    frame.setAttribute('sandbox', '');
+    frame.src = `/v1/platform${API_PATH}/campaigns/${encodeURIComponent(campaign.id)}/preview?document=1`;
+    content.append(frame);
+    if (landing) {
+      content.append(node('p', 'mcrm-resource-meta', `Página vinculada: ${landing.title}`));
+      if (landing.status === 'published' && /^\/inscricao\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(landing.path)) {
+        const link = node('a', 'mcrm-action', 'Abrir página publicada');
+        link.href = landing.path;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        content.append(link);
+      }
+    }
     openDialog({ title: 'Prévia do e-mail', content, trigger });
   }
 
   function prepare(campaign, trigger) {
     const content = node('div', 'mcrm-form-explanation');
+    const segment = data.segments.find((entry) => entry.id === campaign.segmentId);
     content.append(
       node('p', '', `Campanha: ${campaign.name}`),
-      node('p', '', 'A lista inclui apenas contatos inscritos com consentimento. O segmento definido na campanha será aplicado.'),
+      node('p', '', 'A lista inclui apenas contatos inscritos com consentimento.'),
     );
+    if (segment) content.append(node('p', '', `Público vinculado: ${segment.name}.`));
     openDialog({
       title: 'Preparar público', content, trigger, save: 'Preparar campanha',
       submit: () => request(`${API_PATH}/campaigns/${encodeURIComponent(campaign.id)}/prepare`, { method: 'POST', body: {} }),
@@ -667,46 +734,15 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
     });
   }
 
-  function saveGrowth(kind, item, body) {
-    return request(`${API_PATH}/${kind}${item ? `/${encodeURIComponent(item.id)}` : ''}`, {
-      method: item ? 'PATCH' : 'POST', body,
-    });
-  }
-
-  function openSegment(item, trigger) {
-    const fields = fieldGrid([
-      { name: 'name', label: 'Nome do segmento', maxLength: 120, required: true, wide: true },
-      { name: 'tags', label: 'Interesses do segmento', maxLength: 940, required: true, wide: true, hint: 'Separe por vírgula. O segmento inclui quem tiver pelo menos um desses interesses.' },
-    ], { ...item, tags: item?.tags.join(', ') });
-    openDialog({ title: item ? 'Editar segmento' : 'Novo segmento', content: fields, trigger,
-      submit: (body) => saveGrowth('segments', item, { ...body, tags: tagsFrom(body.tags) }) });
-  }
-
-  function openLanding(item, trigger) {
-    const fields = fieldGrid([
-      { name: 'title', label: 'Título da página', maxLength: 160, required: true, wide: true },
-      { name: 'slug', label: 'Endereço da página', maxLength: 80, required: true, hint: 'A página ficará em /inscricao/seu-endereco.' },
-      { name: 'buttonText', label: 'Texto do botão', maxLength: 80, required: true },
-      { name: 'description', label: 'Descrição', type: 'textarea', maxLength: 4000, wide: true },
-      { name: 'tags', label: 'Interesses associados', maxLength: 940, wide: true, hint: 'Separe por vírgula. Os interesses são atribuídos após a confirmação da inscrição.' },
-    ], { buttonText: 'Quero receber novidades', ...item, tags: item?.tags.join(', ') });
-    const slugInput = fields.querySelector('[name="slug"]');
-    slugInput.pattern = '[a-zA-Z0-9]+(?:\\x2D[a-zA-Z0-9]+)*';
-    slugInput.minLength = 3;
-    slugInput.readOnly = item?.status === 'published';
-    openDialog({ title: item ? 'Editar página de captura' : 'Nova página de captura', content: fields, trigger,
-      submit: (body) => saveGrowth('landings', item, { ...body, tags: tagsFrom(body.tags) }) });
-  }
-
-  function confirmLanding(item, trigger) {
-    const publishing = item.status !== 'published';
+  function confirmPageAction(item, trigger, archive) {
+    const label = archive ? 'Excluir página' : 'Retirar do ar';
     const content = node('div', 'mcrm-form-explanation');
-    content.append(node('p', '', item.title), node('p', '', publishing ? 'O formulário ficará disponível para quem acessar o link.'
-      : 'O link deixará de receber novas inscrições. Os contatos capturados continuarão disponíveis no CRM.'));
-    if (publishing && !data.deliveryConfigured) content.append(node('p', '', 'As inscrições ficarão pendentes de confirmação até que um provedor de e-mail esteja disponível.'));
-    const label = publishing ? 'Publicar página' : 'Retirar página do ar';
+    content.append(node('p', '', item.title), node('p', '', archive
+      ? 'A página sairá do ar e deixará de aparecer na lista. O histórico das campanhas será preservado.'
+      : 'O link público ficará indisponível. Você poderá publicar a página novamente pelo editor.'));
+    const path = `${API_PATH}/landings/${encodeURIComponent(item.id)}`;
     openDialog({ title: label, content, trigger, save: label,
-      submit: () => saveGrowth('landings', item, { status: publishing ? 'published' : 'draft' }) });
+      submit: () => archive ? request(path, { method: 'DELETE' }) : request(`${path}/unpublish`, { method: 'POST', body: {} }) });
   }
 
   async function copyLandingLink(path) {
@@ -717,77 +753,88 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
     } catch { displayMessage(url); }
   }
 
-  function openAutomation(item, trigger) {
-    const landings = { '': 'Selecione uma página', ...Object.fromEntries(data.landings.map(({ id, title, status }) => [id, status === 'published' ? title : `${title} (rascunho)`])) };
-    if (!data.landings.length) {
-      openDialog({ title: 'Nova automação', content: node('p', 'mcrm-form-note', 'Crie uma página de captura antes de vincular a sequência de e-mails.'), trigger });
-      return;
-    }
-    const fields = fieldGrid([
-      { name: 'name', label: 'Nome da automação', maxLength: 120, required: true, wide: true },
-      { name: 'landingId', label: 'Página de captura', type: 'select', options: landings, required: true },
-      { name: 'status', label: 'Situação', type: 'select', options: AUTOMATION_STATUS, required: true },
-    ], { status: 'draft', ...item });
-    const sequence = node('div', 'mcrm-sequence-editor');
-    const steps = node('div', 'mcrm-steps');
-    sequence.append(node('h3', '', 'Sequência de e-mails'),
-      node('p', 'mcrm-form-note', 'O primeiro e-mail conta o prazo a partir da confirmação da inscrição. Os próximos contam a partir do envio anterior.'), steps);
-    let nextStepKey = 0;
-    const add = action('Adicionar e-mail', () => {
-      const entry = appendStep({ delayDays: 1 });
-      entry.querySelector('input[name$="-subject"]').focus();
-    });
-    sequence.append(add);
-    fields.append(sequence);
+  function showCampaignAnalysis(campaign, trigger) {
+    const content = node('div', 'mcrm-analysis');
+    const summary = node('section', 'mcrm-analysis-summary');
+    summary.append(node('h3', '', 'Desempenho do e-mail'), metricList([
+      ...splitMetricInfo(campaign),
+      ['Taxa de abertura', percentage(campaign.openCount, campaign.deliveredCount)],
+      ['Taxa de cliques', percentage(campaign.clickCount, campaign.deliveredCount)],
+      ['Taxa de conversão', percentage(campaign.conversionCount, campaign.sentCount)],
+    ]));
+    if (campaign.sentAt) summary.append(node('p', 'mcrm-sent-at', `Envio em ${date(campaign.sentAt)}`));
+    content.append(summary);
+    const pageMetrics = node('section', 'mcrm-page-report');
+    content.append(pageMetrics);
+    openDialog({ title: `Análise de ${campaign.name}`, content, trigger });
+    if (campaign.landingId) void populatePageAnalysis(pageMetrics, campaign.landingId, campaign.id);
+  }
 
-    function updateSequence() {
-      const entries = [...steps.children];
-      entries.forEach((entry, index) => {
-        entry.querySelector('legend').textContent = `E-mail ${index + 1}`;
-        entry.querySelector('[data-step-action="up"]').disabled = index === 0;
-        entry.querySelector('[data-step-action="down"]').disabled = index === entries.length - 1;
-        entry.querySelector('[data-step-action="remove"]').disabled = entries.length === 1;
-      });
-      add.disabled = entries.length >= 8;
-    }
+  function showPageAnalysis(item, trigger) {
+    const content = node('div', 'mcrm-analysis');
+    openDialog({ title: `Dados de ${item.title}`, content, trigger });
+    void populatePageAnalysis(content, item.id);
+  }
 
-    function appendStep(step) {
-      const key = ++nextStepKey;
-      const entry = node('fieldset', 'mcrm-step');
-      entry.append(node('legend'));
-      const stepFields = fieldGrid([
-        { name: `step-${key}-delayDays`, label: 'Dias de espera', type: 'number', min: 0, max: 90, required: true },
-        { name: `step-${key}-subject`, label: 'Assunto', maxLength: 160, required: true },
-        { name: `step-${key}-content`, label: 'Mensagem do e-mail', type: 'textarea', maxLength: 24000, required: true, wide: true },
-      ], Object.fromEntries(Object.entries(step).map(([name, value]) => [`step-${key}-${name}`, value])));
-      const controls = node('div', 'mcrm-step-actions');
-      const correction = {
-        up: ['Subir na ordem', () => steps.insertBefore(entry, entry.previousElementSibling)],
-        down: ['Descer na ordem', () => steps.insertBefore(entry.nextElementSibling, entry)],
-        remove: ['Remover e-mail', () => entry.remove()],
-      };
-      for (const [command, [label, operate]] of Object.entries(correction)) {
-        const control = action(label, () => { operate(); updateSequence(); });
-        control.dataset.stepAction = command;
-        controls.append(control);
+  function createReportTable(title, columns, rows) {
+    const section = node('section', 'mcrm-analysis-table');
+    section.append(node('h3', '', title));
+    const wrapper = node('div', 'mcrm-table-scroll');
+    const table = node('table', 'mcrm-report-table');
+    table.setAttribute('aria-label', title);
+    const headers = table.createTHead().insertRow();
+    for (const label of columns) {
+      const cell = node('th', '', label);
+      cell.scope = 'col';
+      headers.append(cell);
+    }
+    const body = table.createTBody();
+    for (const cells of rows) {
+      const row = body.insertRow();
+      for (const value of cells) row.insertCell().textContent = typeof value === 'string' ? value : count(value);
+    }
+    wrapper.append(table);
+    section.append(wrapper);
+    return section;
+  }
+
+  async function populatePageAnalysis(container, pageId, campaignId) {
+    const loadingLabel = node('p', 'mcrm-form-note', 'Carregando dados da página…');
+    loadingLabel.setAttribute('role', 'status');
+    container.replaceChildren(loadingLabel);
+    try {
+      const filter = campaignId ? `?campaignId=${encodeURIComponent(campaignId)}` : '';
+      const report = await request(`${API_PATH}/landings/${encodeURIComponent(pageId)}/analytics${filter}`);
+      if (!container.isConnected || !ui.dialog.open) return;
+      const blockName = (block) => block.title || block.label || block.blockId;
+      const names = new Map((report.blocks || []).map((block) => [block.blockId, blockName(block)]));
+      container.replaceChildren(node('h3', '', 'Engajamento na página'), metricList([
+        ['Visitas', report.visits], ['Visitas atribuídas', report.identifiedVisits], ['Cliques', report.clicks],
+        ['Tempo médio ativo', duration(report.averageSeconds)], ['Formulários enviados', report.submissions], ['Conversões', report.conversions],
+      ]), node('p', 'mcrm-form-note', 'O tempo ativo é calculado enquanto a página está visível. A atribuição usa o link individual enviado ao contato. Se ele for encaminhado, a visita continua vinculada ao envio original.'));
+      if (report.blocks?.length) container.append(createReportTable('Dados por bloco',
+        ['Bloco', 'Visualizações', 'Cliques', 'Tempo médio ativo', 'Formulários', 'Conversões'], report.blocks.map((block) => [
+          blockName(block), block.views, block.clicks, duration(block.averageSeconds), block.submissions, block.conversions,
+        ])));
+      const leads = node('section', 'mcrm-analysis-leads');
+      leads.append(node('h3', '', 'Atividade por lead'));
+      for (const lead of report.leads || []) {
+        const detail = node('details', 'mcrm-analysis-lead');
+        detail.append(node('summary', '', lead.name ? `${lead.name} · ${lead.email}` : lead.email || 'Lead atribuído'),
+          metricList([['Visitas', lead.visits], ['Cliques', lead.clicks], ['Tempo ativo', duration(lead.seconds)],
+            ['Formulários', lead.submissions], ['Conversões', lead.conversions], ['Última interação', date(lead.lastAt)]]));
+        if (lead.blocks?.length) detail.append(createReportTable('Interações por bloco', ['Bloco', 'Visualizações', 'Cliques', 'Tempo ativo', 'Conversões'],
+          lead.blocks.map((block) => [names.get(block.blockId) || block.blockId, block.views, block.clicks, duration(block.seconds), block.conversions])));
+        leads.append(detail);
       }
-      entry.append(stepFields, controls);
-      steps.append(entry);
-      updateSequence();
-      return entry;
+      if (!report.leads?.length) leads.append(node('p', 'mcrm-form-note', 'Ainda não há visitas atribuídas a destinatários de e-mail.'));
+      if (report.moreLeads) leads.append(node('p', 'mcrm-form-note', 'As interações mais recentes são exibidas aqui. Os indicadores incluem todo o período.'));
+      container.append(leads);
+    } catch (error) {
+      if (container.isConnected && ui.dialog.open && !reportAuth(error)) {
+        loadingLabel.textContent = error.message || 'Não foi possível carregar os dados da página.';
+      }
     }
-
-    for (const step of item?.steps || [{ delayDays: 0 }]) appendStep(step);
-    openDialog({ title: item ? 'Editar automação' : 'Nova automação', content: fields, trigger, submit: () => {
-      const form = new FormData(ui.form);
-      return saveGrowth('automations', item, {
-        name: form.get('name').trim(), landingId: form.get('landingId'), status: form.get('status'),
-        steps: [...steps.children].map((entry) => ({
-          delayDays: Number(entry.querySelector('input[type="number"]').value),
-          subject: entry.querySelector('input[name$="-subject"]').value.trim(), content: entry.querySelector('textarea').value.trim(),
-        })),
-      });
-    } });
   }
 
   function reopenCampaign(campaign, trigger) {
@@ -845,21 +892,56 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
   }
 
   ui.tabs.addEventListener('keydown', (event) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
     const index = SECTION_KEYS.indexOf(view);
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? SECTION_KEYS.length - 1
-      : (index + (event.key === 'ArrowLeft' ? -1 : 1) + SECTION_KEYS.length) % SECTION_KEYS.length;
+      : (index + (event.key === 'ArrowUp' ? -1 : 1) + SECTION_KEYS.length) % SECTION_KEYS.length;
     selectView(SECTION_KEYS[next], true);
   });
   ui.search.addEventListener('input', renderResults);
   ui.status.addEventListener('change', renderResults);
   ui.interest.addEventListener('change', renderResults);
   ui.refresh.addEventListener('click', () => void reload());
+  ui.working.addEventListener('click', () => selectView('campaigns', false, 'working'));
+  ui.history.addEventListener('click', () => selectView('campaigns', false, 'history'));
+  ui.importContacts.addEventListener('click', () => importContacts(ui.importContacts));
+  ui.exportContacts.addEventListener('click', () => void exportContacts());
   ui.create.addEventListener('click', () => {
     if (!canCreate || !data) return;
-    const editors = { subscribers: openContact, campaigns: openCampaign, segments: openSegment, landings: openLanding, automations: openAutomation };
-    editors[view]?.(null, ui.create);
+    if (view === 'landings') onOpenPage?.(null);
+    else if (view === 'campaigns') openCampaign(null, ui.create);
+    else openContact(null, ui.create);
+  });
+
+  function speedMenu(expanded) {
+    ui.speedList.hidden = !expanded;
+    ui.speedToggle.setAttribute('aria-expanded', String(expanded));
+  }
+
+  ui.speedToggle.addEventListener('click', () => {
+    speedMenu(ui.speedList.hidden);
+    if (!ui.speedList.hidden) (ui.speedCampaign.hidden ? ui.speedMetrics : ui.speedCampaign).focus();
+  });
+  ui.speedCampaign.addEventListener('click', () => {
+    speedMenu(false);
+    selectView('campaigns');
+    openCampaign(null, ui.speedToggle);
+  });
+  ui.speedMetrics.addEventListener('click', () => {
+    speedMenu(false);
+    selectView('campaigns', true, 'history');
+  });
+  ui.speedPages.addEventListener('click', () => {
+    speedMenu(false);
+    selectView('landings', true);
+  });
+  root.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !ui.speedList.hidden) {
+      event.preventDefault();
+      speedMenu(false);
+      ui.speedToggle.focus();
+    }
   });
   for (const button of [ui.cancel, ui.dismiss]) button.addEventListener('click', () => ui.dialog.close());
   ui.dialog.addEventListener('cancel', (event) => { if (busy) event.preventDefault(); });
@@ -880,10 +962,11 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
     setBusy(true);
     formError();
     try {
-      await operation(body);
+      const result = await operation(body);
       if (!active || generation !== current) return;
       ui.dialog.close();
-      displayMessage('Alteração salva.');
+      displayMessage(result?.message || 'Alteração salva.');
+      if (result?.rows?.length) ui.message.append(document.createTextNode(`\n${result.rows.map(({ row, message }) => `Linha ${row}: ${message}`).join('\n')}`));
       await reload();
     } catch (error) {
       if (active && generation === current && !reportAuth(error)) formError(error.message || 'Não foi possível salvar a alteração.');
@@ -906,20 +989,26 @@ export function mountMarketingCrm(root, { request, onAuthError } = {}) {
     ui.content.replaceChildren();
     ui.panel.replaceChildren();
     ui.metrics.replaceChildren();
+    speedMenu(false);
     formError();
     displayMessage();
     setBusy(false);
   }
 
   return {
-    open({ canCreate: mayCreate = true, canUpdate: mayUpdate = true } = {}) {
-      if (active && canCreate === mayCreate && canUpdate === mayUpdate) return;
+    open({ canCreate: mayCreate = true, canUpdate: mayUpdate = true, initialSection } = {}) {
+      const initialView = Object.hasOwn(SECTIONS, initialSection) ? initialSection : null;
+      if (active && canCreate === mayCreate && canUpdate === mayUpdate) {
+        if (initialView && view !== initialView) selectView(initialView);
+        return;
+      }
       if (active) close();
       generation += 1;
       active = true;
       canCreate = mayCreate;
       canUpdate = mayUpdate;
-      view = 'subscribers';
+      view = initialView ?? 'subscribers';
+      campaignView = 'working';
       ui.search.value = '';
       resetOptions();
       displayMessage();

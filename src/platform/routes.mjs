@@ -25,12 +25,12 @@ function send(res, status, value) {
   res.end(JSON.stringify(value));
   return true;
 }
-async function body(req) {
+async function body(req, limit = 128_000) {
   if (!/^application\/json(?:\s*;|\s*$)/i.test(req.headers['content-type'] || '')) fail(415, 'CONTENT_TYPE', 'Use application/json');
   const parts = []; let length = 0;
   for await (const part of req) {
     length += part.length;
-    if (length > 128_000) fail(413, 'BODY_TOO_LARGE', 'Corpo acima de 128 kB');
+    if (length > limit) fail(413, 'BODY_TOO_LARGE', `Corpo acima de ${limit / 1000} kB`);
     parts.push(part);
   }
   try {
@@ -318,7 +318,8 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
           parseMetadata: marketingMetricMetadata, pageNumber });
       }
       if (crm && (route === '/marketing/crm' || route.startsWith('/marketing/crm/'))) {
-        return await crm.handleHttp({ req, res, route, user, send, readBody: body });
+        const readBody = route === '/marketing/crm/contacts/import' ? request => body(request, 256_000) : body;
+        return await crm.handleHttp({ req, res, route, user, send, readBody });
       }
       if (req.method === 'POST' && route === '/logout') {
         await store.deleteSession(session._id);

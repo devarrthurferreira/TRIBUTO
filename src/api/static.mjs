@@ -17,6 +17,9 @@ const ALLOWED = new Map([
   ['/marketing-metrics.css', ['marketing-metrics.css', 'text/css; charset=utf-8']],
   ['/marketing-crm.js', ['marketing-crm.js', 'text/javascript; charset=utf-8']],
   ['/marketing-crm.css', ['marketing-crm.css', 'text/css; charset=utf-8']],
+  ['/crm-page-builder.js', ['crm-page-builder.js', 'text/javascript; charset=utf-8']],
+  ['/crm-page-builder.css', ['crm-page-builder.css', 'text/css; charset=utf-8']],
+  ['/crm-page-tracking.js', ['crm-page-tracking.js', 'text/javascript; charset=utf-8']],
   ['/marketing.css', ['marketing.css', 'text/css; charset=utf-8']],
   ['/club.js', ['club.js', 'text/javascript; charset=utf-8']],
   ['/club.css', ['club.css', 'text/css; charset=utf-8']],
@@ -46,13 +49,14 @@ export async function serveStatic(req, res, pathname) {
   const file = new URL(`../../web/${asset[0]}`, import.meta.url);
   try {
     const data = await readFile(file);
+    const images = pathname === '/setor/marketing' ? "'self' data: https:" : "'self' data:";
     res.writeHead(200, {
       'content-type': asset[1],
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
       'x-frame-options': 'DENY',
       'referrer-policy': 'same-origin',
-      'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+      'content-security-policy': `default-src 'self'; script-src 'self'; style-src 'self'; img-src ${images}; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`
     });
     res.end(req.method === 'HEAD' ? undefined : data);
   } catch (error) {

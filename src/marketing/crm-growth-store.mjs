@@ -1,7 +1,9 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { ApiError } from '../api/validation.mjs';
-import { automationFields, campaignGrowth, CRM_TOKEN, landingFields, segmentFields } from './crm-growth-fields.mjs';
+import { automationFields, campaignGrowth, CRM_TOKEN, segmentFields } from './crm-growth-fields.mjs';
 import { subscriberFields } from './crm-rules.mjs';
+import { CrmPages } from './crm-pages.mjs';
+import { CrmPageAnalytics } from './crm-page-analytics.mjs';
 
 const TABLES = [
   `CREATE TABLE IF NOT EXISTS platform_crm_subscriber_tags (
@@ -97,18 +99,12 @@ function conflict(message) { throw new ApiError(409, 'CRM_STATE_CONFLICT', messa
 function tagValues(row) { return parse(row.tags_json); }
 function timeFields(row) { return { createdAt: iso(row.created_at), updatedAt: iso(row.updated_at) }; }
 function segmentRecord(row) { return { id: row.id, name: row.name, tags: tagValues(row), ...timeFields(row) }; }
-function landingRecord(row) { return { id: row.id, title: row.title, slug: row.slug, description: row.description,
-  buttonText: row.button_text, tags: tagValues(row), status: row.status, path: `/inscricao/${row.slug}`, leadCount: Number(row.lead_count || 0),
-  pendingCount: Number(row.pending_count || 0), ...timeFields(row) }; }
 function automationRecord(row) { return { id: row.id, landingId: row.landing_id, name: row.name, status: row.status,
   steps: parse(row.steps_json), ...timeFields(row) }; }
 
 const COLLECTIONS = {
   segments: { table: 'platform_crm_segments', noun: 'Segmento', fields: segmentFields,
     record: segmentRecord, columns: ['name', 'tags_json'], values: item => [item.name, JSON.stringify(item.tags)] },
-  landings: { table: 'platform_crm_landings', noun: 'Página', fields: landingFields,
-    record: landingRecord, columns: ['slug', 'title', 'description', 'button_text', 'tags_json', 'status'],
-    values: item => [item.slug, item.title, item.description, item.buttonText, JSON.stringify(item.tags), item.status] },
   automations: { table: 'platform_crm_automations', noun: 'Automação', fields: automationFields,
     record: automationRecord, columns: ['landing_id', 'name', 'status', 'steps_json'],
     values: item => [item.landingId, item.name, item.status, JSON.stringify(item.steps)] },
@@ -137,22 +133,19 @@ function insertTags(connection, subscriberId, tags) {
     ${tags.map(() => '(?,?)').join(',')} ON DUPLICATE KEY UPDATE tag = tag`, tags.flatMap(tag => [subscriberId, tag]));
 }
 
-async function nextAutomationMessage(connection, subscriberId, consentAt, leadId, automationId, steps, step) {
-  const item = steps[step];
-  if (!item) return;
-  await insertMessage(connection, { kind: 'automation', leadId, automationId, subscriberId, consentAt, steps, step,
-    dueAt: new Date(Date.now() + item.delayDays * DAY_MS), subject: item.subject, content: item.content });
-}
-
 export class CrmGrowthStore {
   constructor(platformStore, { deliveryConfigured = false, analyticsConfigured = deliveryConfigured } = {}) {
     this.platformStore = platformStore;
     this.deliveryConfigured = deliveryConfigured;
     this.analyticsConfigured = analyticsConfigured;
+    this.pages = new CrmPages(platformStore);
+    this.pageAnalytics = new CrmPageAnalytics(platformStore);
   }
 
   async initialize() {
     for (const statement of TABLES) await this.platformStore.pool.query(statement);
+    await this.pages.initialize();
+    await this.pageAnalytics.initialize();
     await this.platformStore.pool.execute('DELETE FROM platform_crm_delivery_events WHERE recorded_at < ?', [new Date(Date.now() - 30 * DAY_MS)]);
   }
 
@@ -168,7 +161,9 @@ export class CrmGrowthStore {
       if (!segment) missing('Segmento');
     }
     if (item.landingId) {
-      const [[landing]] = await connection.execute('SELECT id FROM platform_crm_landings WHERE id = ?', [item.landingId]);
+      const [[landing]] = await connection.execute(`SELECT page.id FROM platform_crm_landings page
+        LEFT JOIN platform_crm_page_designs design ON page.id = design.landing_id
+        WHERE page.id = ? AND design.archived_at IS NULL`, [item.landingId]);
       if (!landing) missing('Página');
     }
     await connection.execute(`INSERT INTO platform_crm_campaign_attributes (id,type,segment_id,landing_id) VALUES (?,?,?,?)
@@ -181,11 +176,7 @@ export class CrmGrowthStore {
     const [tags, segments, landings, automations, campaigns, jobs, conversions] = await Promise.all([
       this.platformStore.rows('SELECT * FROM platform_crm_subscriber_tags ORDER BY subscriber_id,tag'),
       this.platformStore.rows('SELECT * FROM platform_crm_segments ORDER BY name,id'),
-      this.platformStore.rows(`SELECT page.*, COUNT(lead.confirmed_at) AS lead_count,
-        SUM(lead.id IS NOT NULL AND lead.confirmed_at IS NULL) AS pending_count
-        FROM platform_crm_landings page LEFT JOIN platform_crm_leads lead ON lead.landing_id = page.id
-        GROUP BY page.id,page.slug,page.title,page.description,page.button_text,page.tags_json,page.status,page.created_at,page.updated_at
-        ORDER BY page.updated_at DESC,page.id`),
+      this.pages.list(),
       this.platformStore.rows('SELECT * FROM platform_crm_automations ORDER BY updated_at DESC,id'),
       this.platformStore.rows('SELECT * FROM platform_crm_campaign_attributes'),
       this.platformStore.rows(`SELECT campaign_id, COUNT(*) AS total, SUM(status IN ('pending','sending')) AS queued,
@@ -214,10 +205,11 @@ export class CrmGrowthStore {
         ...(job ? { sentCount: Number(job.sent), deliveredCount: measured(job.delivered), openCount: measured(job.opened),
           clickCount: measured(job.clicked), sentAt: iso(job.first_sent) } : {}) }];
     }));
-    return { tagsFor, campaignDetails, segments: segments.map(segmentRecord), landings: landings.map(landingRecord), automations: automations.map(automationRecord) };
+    return { tagsFor, campaignDetails, segments: segments.map(segmentRecord), landings, automations: automations.map(automationRecord) };
   }
 
   async putGrowthRecord(collection, id, input, actorId) {
+    if (collection === 'landings') return this.pages.put(id, input, actorId);
     const { table, noun, fields, record, columns, values } = COLLECTIONS[collection];
     try {
       return await this.platformStore.transaction(async connection => {
@@ -225,9 +217,6 @@ export class CrmGrowthStore {
         if (id && !row) missing(noun);
         const current = row && record(row);
         const item = fields(input, current);
-        if (collection === 'landings' && current && current.slug !== item.slug && current.status === 'published') {
-          conflict('Retire a página do ar antes de alterar o endereço.');
-        }
         if (collection === 'automations') {
           const [[landing]] = await connection.execute('SELECT status FROM platform_crm_landings WHERE id = ?', [item.landingId]);
           if (!landing || (item.status === 'active' && landing.status !== 'published')) conflict('Publique a página antes de ativar a automação.');
@@ -255,24 +244,24 @@ export class CrmGrowthStore {
 
   async publicLanding(slug) {
     if (typeof slug !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || slug.length > 80) return null;
-    const row = await this.platformStore.one(`SELECT title,slug,description,button_text FROM platform_crm_landings
-      WHERE slug = ? AND status = 'published'`, [slug]);
-    return row && { title: row.title, slug: row.slug, description: row.description, buttonText: row.button_text, path: `/inscricao/${row.slug}` };
+    return this.pages.publicPage(slug);
   }
 
-  async captureLanding(slug, input) {
+  async captureLanding(slug, input, { includeLead = false } = {}) {
     if (input.consent !== true) throw new ApiError(400, 'CRM_CONSENT_REQUIRED', 'Confirme que deseja receber mensagens.');
     const { email, name } = subscriberFields(input);
     return this.platformStore.transaction(async connection => {
-      const [[landing]] = await connection.execute(`SELECT * FROM platform_crm_landings WHERE slug = ? AND status = 'published' FOR UPDATE`, [slug]);
-      if (!landing) missing('Página');
+      const landing = await this.pages.publicPage(slug, connection);
+      if (!landing || (landing.blocks && !landing.blocks.some(({ type }) => type === 'form'))) missing('Página');
       const now = new Date();
       const newId = randomUUID();
       await connection.execute(`INSERT INTO platform_marketing_subscribers (id,email,name,status,source,created_at,updated_at)
         VALUES (?,?,?,'pending',?,?,?) ON DUPLICATE KEY UPDATE id = id`, [newId, email, name, `Página ${landing.slug}`, now, now]);
       const [[contact]] = await connection.execute('SELECT id FROM platform_marketing_subscribers WHERE email = ? FOR UPDATE', [email]);
       const [[previous]] = await connection.execute('SELECT * FROM platform_crm_leads WHERE landing_id = ? AND subscriber_id = ? FOR UPDATE', [landing.id, contact.id]);
-      if (previous?.confirmed_at || (previous && new Date(iso(previous.confirmation_expires)) > now)) return { accepted: true };
+      if (previous?.confirmed_at || (previous && new Date(iso(previous.confirmation_expires)) > now)) {
+        return { accepted: true, ...(includeLead && { leadId: previous.id }) };
+      }
       const [[recent]] = await connection.execute('SELECT id FROM platform_crm_leads WHERE subscriber_id = ? AND created_at > ? LIMIT 1',
         [contact.id, new Date(Date.now() - 20 * 60_000)]);
       if (recent) return { accepted: true };
@@ -291,28 +280,26 @@ export class CrmGrowthStore {
         VALUES (?,?,?,?,?,?,?)`, [leadId, landing.id, contact.id, campaignId, hash, expires, now]);
       await insertMessage(connection, { kind: 'confirmation', leadId, subscriberId: contact.id, subject: 'Confirme sua inscrição na Maximum',
         content: 'Para confirmar que deseja receber as novidades da Maximum, use o link abaixo.', confirmationToken: confirmToken, dueAt: now });
-      return { accepted: true };
+      return { accepted: true, ...(includeLead && { leadId }) };
     });
   }
 
   async confirmLead(value) {
     if (typeof value !== 'string' || !CRM_TOKEN.test(value)) return false;
     return this.platformStore.transaction(async connection => {
-      const [[candidate]] = await connection.execute('SELECT subscriber_id FROM platform_crm_leads WHERE confirmation_hash = ?', [digest(value)]);
+      const [[candidate]] = await connection.execute('SELECT subscriber_id,landing_id FROM platform_crm_leads WHERE confirmation_hash = ?', [digest(value)]);
       if (!candidate) return false;
+      const landing = await this.pages.publishedById(candidate.landing_id, connection);
+      if (!landing) return false;
       const [[contact]] = await connection.execute('SELECT * FROM platform_marketing_subscribers WHERE id = ? FOR UPDATE', [candidate.subscriber_id]);
       const [[lead]] = await connection.execute(`SELECT * FROM platform_crm_leads WHERE confirmation_hash = ? AND confirmation_expires > ? FOR UPDATE`, [digest(value), new Date()]);
       if (!contact || !lead) return false;
-      const [[landing]] = await connection.execute('SELECT * FROM platform_crm_landings WHERE id = ?', [lead.landing_id]);
-      if (!landing || landing.status !== 'published') return false;
       const now = nowAfter(contact.updated_at);
       const consentAt = contact.status === 'subscribed' && contact.consent_at ? new Date(iso(contact.consent_at)) : now;
       await connection.execute(`UPDATE platform_marketing_subscribers SET status = 'subscribed', consent_at = ?, source = ?, updated_at = ? WHERE id = ?`,
         [consentAt, contact.status === 'subscribed' ? contact.source : `Confirmação por e-mail · ${landing.slug}`, now, contact.id]);
       await connection.execute('UPDATE platform_crm_leads SET confirmed_at = ?, confirmation_hash = NULL WHERE id = ?', [now, lead.id]);
-      await insertTags(connection, contact.id, tagValues(landing));
-      const [active] = await connection.execute(`SELECT * FROM platform_crm_automations WHERE landing_id = ? AND status = 'active' ORDER BY id`, [landing.id]);
-      for (const flow of active) await nextAutomationMessage(connection, contact.id, consentAt, lead.id, flow.id, parse(flow.steps_json), 0);
+      await insertTags(connection, contact.id, landing.tags);
       return true;
     });
   }
@@ -342,9 +329,9 @@ export class CrmGrowthStore {
         if (job) return { id, status: campaign.status, deliveryMode: 'native' };
       }
       if (campaign.status !== 'prepared') conflict('Prepare o público antes de colocar a campanha na fila.');
-      const [[landing]] = await connection.execute(`SELECT page.slug,page.status FROM platform_crm_campaign_attributes attrs
-        INNER JOIN platform_crm_landings page ON page.id = attrs.landing_id WHERE attrs.id = ?`, [id]);
-      if (landing && landing.status !== 'published') conflict('Publique a página vinculada antes de enviar a campanha.');
+      const [[attributes]] = await connection.execute('SELECT landing_id FROM platform_crm_campaign_attributes WHERE id = ?', [id]);
+      const landing = attributes?.landing_id ? await this.pages.publishedById(attributes.landing_id, connection) : null;
+      if (attributes?.landing_id && !landing) conflict('Publique a página vinculada antes de enviar a campanha.');
       const [recipients] = await connection.execute(`SELECT contact.id,contact.consent_at FROM platform_marketing_campaign_audience audience
         JOIN platform_marketing_subscribers contact ON contact.id = audience.subscriber_id AND contact.consent_at = audience.consent_at
         WHERE audience.campaign_id = ? AND contact.status = 'subscribed' ORDER BY contact.id`, [id]);
@@ -353,6 +340,10 @@ export class CrmGrowthStore {
       const destinationPath = landing && `/inscricao/${landing.slug}`;
       await connection.execute(`INSERT INTO platform_crm_campaign_attributes (id,type) VALUES (?,'promotion')
         ON DUPLICATE KEY UPDATE id = id`, [id]);
+      if (landing) {
+        await connection.execute('INSERT INTO platform_crm_campaign_email_designs (campaign_id,publication_json) VALUES (?,?)',
+          [id, JSON.stringify(landing)]);
+      }
       const messageBytes = Buffer.byteLength(campaign.subject) + Buffer.byteLength(campaign.content) + 614;
       const batchSize = Math.max(1, Math.min(100, Math.floor(350_000 / messageBytes)));
       for (let offset = 0; offset < recipients.length; offset += batchSize) {
@@ -365,6 +356,16 @@ export class CrmGrowthStore {
       await this.platformStore.insertAudit(connection, 'marketing.crm.campaign.queue', actorId, id, { count: recipients.length });
       return { id, status: 'queued', deliveryMode: 'native', queuedCount: recipients.length, audienceCount: recipients.length };
     });
+  }
+
+  async previewCampaign(id) {
+    const campaign = await this.platformStore.one(`SELECT campaign.subject,campaign.content,attrs.landing_id,email.publication_json
+      FROM platform_marketing_campaigns campaign LEFT JOIN platform_crm_campaign_attributes attrs ON attrs.id = campaign.id
+      LEFT JOIN platform_crm_campaign_email_designs email ON email.campaign_id = campaign.id WHERE campaign.id = ?`, [id]);
+    if (!campaign) missing('Campanha');
+    const publication = parse(campaign.publication_json) ?? (campaign.landing_id ? await this.pages.publishedById(campaign.landing_id) : null);
+    return { subject: campaign.subject, content: campaign.content, blocks: publication?.blocks ?? null,
+      action: publication ? `/inscricao/${publication.slug}` : null };
   }
 
   async settleCampaign(connection, id) {
@@ -380,14 +381,14 @@ export class CrmGrowthStore {
     return this.platformStore.transaction(async connection => {
       const now = new Date();
       const cutoff = new Date(Date.now() - RETRY_WINDOW);
-      const [[job]] = await connection.execute(`SELECT job.*,contact.email,contact.name,
+      const [[job]] = await connection.execute(`SELECT job.*,contact.email,contact.name,email_design.publication_json,
           (${JOB_ELIGIBLE}) AS eligible
         FROM platform_crm_delivery_jobs job
         JOIN platform_marketing_subscribers contact ON contact.id = job.subscriber_id
         LEFT JOIN platform_crm_leads lead ON lead.id = job.lead_id
-        LEFT JOIN platform_crm_automations flow ON flow.id = job.automation_id
+        LEFT JOIN platform_crm_campaign_email_designs email_design ON email_design.campaign_id = job.campaign_id
         WHERE ((job.status = 'pending' AND job.due_at <= ?) OR (job.status = 'sending' AND job.claimed_until <= ?))
-          AND (job.kind <> 'automation' OR flow.status = 'active')
+          AND job.kind IN ('confirmation','campaign')
         ORDER BY job.due_at,job.id LIMIT 1 FOR UPDATE`, [now, now, now]);
       if (!job) return null;
       const eligible = Boolean(Number(job.eligible));
@@ -403,7 +404,7 @@ export class CrmGrowthStore {
         attempts = attempts + 1, first_attempt_at = COALESCE(first_attempt_at,?) WHERE id = ?`, [claim, claimedUntil, now, job.id]);
       return { id: job.id, claim, kind: job.kind, email: job.email, name: job.name, subject: job.subject, content: job.content,
         destinationPath: job.destination_path, trackingToken: job.tracking_token, unsubscribeToken: job.unsubscribe_token,
-        confirmationToken: job.confirmation_token, attempts: Number(job.attempts) + 1 };
+        confirmationToken: job.confirmation_token, attempts: Number(job.attempts) + 1, emailPublication: parse(job.publication_json) ?? null };
     });
   }
 
@@ -412,9 +413,8 @@ export class CrmGrowthStore {
     const eligible = await this.platformStore.one(`SELECT job.id FROM platform_crm_delivery_jobs job
       JOIN platform_marketing_subscribers contact ON contact.id = job.subscriber_id
       LEFT JOIN platform_crm_leads lead ON lead.id = job.lead_id
-      LEFT JOIN platform_crm_automations flow ON flow.id = job.automation_id
       WHERE job.id = ? AND job.claim_token = ? AND job.status = 'sending' AND job.claimed_until > ?
-      AND (${JOB_ELIGIBLE}) AND (job.kind <> 'automation' OR flow.status = 'active')`, [id, claim, now, now]);
+      AND (${JOB_ELIGIBLE}) AND job.kind IN ('confirmation','campaign')`, [id, claim, now, now]);
     return Boolean(eligible);
   }
 
@@ -427,8 +427,6 @@ export class CrmGrowthStore {
         claim_token = NULL,claimed_until = NULL,confirmation_token = NULL WHERE id = ?`, [providerId, new Date(), id]);
       const [events] = await connection.execute('SELECT event_type,recorded_at FROM platform_crm_delivery_events WHERE provider_id = ?', [providerId]);
       for (const event of events) await this.applyDeliveryEvent(connection, providerId, event.event_type, event.recorded_at);
-      if (job.kind === 'automation') await nextAutomationMessage(connection, job.subscriber_id, new Date(iso(job.consent_at)),
-        job.lead_id, job.automation_id, parse(job.sequence_json), Number(job.step_no) + 1);
       await this.settleCampaign(connection, job.campaign_id);
       return true;
     });

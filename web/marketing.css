@@ -1,3 +1,6 @@
+.app-shell[data-crm-editor] :is(.portal-header, .sector-navigation, .sidebar, .skip-link) { display: none; }
+.app-shell[data-sector-active][data-crm-editor] .main-content { width: 100%; min-height: 100dvh; padding: 0; }
+
 .marketing-overview-heading {
   padding: clamp(20px, 4vw, 42px);
   border: 1px solid var(--portal-edge);

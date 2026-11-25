@@ -5,6 +5,7 @@ import { mountUserWizard } from './user-wizard.js';
 import { mountMarketingTasks } from './marketing-tasks.js';
 import { mountMarketingMetrics } from './marketing-metrics.js';
 import { mountMarketingCrm } from './marketing-crm.js';
+import { mountCrmPageBuilder } from './crm-page-builder.js';
 import { mountClub } from './club.js';
 import { mountPeople } from './people.js';
 
@@ -450,34 +451,76 @@ let marketingCleanup;
 let marketingLinkedItem;
 let recentMarketingRequest = 0;
 
+const CRM_PAGE = /^(?:nova|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/i;
+
+function openCrmPageEditor(id) {
+  if (!canUse('marketing', 'marketingCrmManage')) return;
+  const url = new URL(location.href);
+  url.searchParams.set('pagina', id || 'nova');
+  url.searchParams.delete('crm');
+  history.pushState(null, '', url);
+  showMarketingPanel('crm');
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+
+function returnToCrmPages() {
+  const url = new URL(location.href);
+  url.searchParams.delete('pagina');
+  url.searchParams.set('crm', 'paginas');
+  history.replaceState(null, '', url);
+  showMarketingPanel('crm');
+  document.getElementById('conteudo').focus();
+}
+
+function retainCrmEditorAddress(page) {
+  const url = new URL(location.href);
+  if (!CRM_PAGE.test(page?.id || '') || url.searchParams.get('pagina') === page.id) return;
+  url.searchParams.set('pagina', page.id);
+  history.replaceState(null, '', url);
+  marketingLinkedItem = `editor:${page.id}`;
+}
+
 function showMarketingPanel(panel) {
-  const containers = { overview: 'marketingOverview', tasks: 'marketingTasks', metrics: 'marketingMetrics', crm: 'marketingCrm' };
-  const linkedItemId = panel === 'tasks' ? new URLSearchParams(location.search).get('atividade') : null;
-  if (panel === activeMarketingPanel && linkedItemId === marketingLinkedItem) return;
+  const containers = { overview: 'marketingOverview', tasks: 'marketingTasks', metrics: 'marketingMetrics', crm: 'marketingCrm', editor: 'crmPageEditor' };
+  const query = new URLSearchParams(location.search);
+  const pageId = panel === 'crm' && canUse('marketing', 'marketingCrmManage') ? query.get('pagina') : null;
+  const screen = CRM_PAGE.test(pageId || '') ? 'editor' : panel;
+  const startInPages = screen === 'crm' && query.get('crm') === 'paginas';
+  const linkedItemId = screen === 'editor' ? `editor:${pageId}` : startInPages ? 'crm:pages' : screen === 'tasks' ? query.get('atividade') : null;
+  if (screen === activeMarketingPanel && linkedItemId === marketingLinkedItem) return;
   marketingCleanup?.();
   marketingCleanup = undefined;
-  activeMarketingPanel = panel;
+  activeMarketingPanel = screen;
   marketingLinkedItem = linkedItemId;
-  for (const [key, id] of Object.entries(containers)) $(id).hidden = key !== panel;
+  for (const [key, id] of Object.entries(containers)) $(id).hidden = key !== screen;
+  $('appView').toggleAttribute('data-crm-editor', screen === 'editor');
   recentMarketingRequest += 1;
   const canCreate = canUse('marketing', 'workItemCreate');
   const canUpdate = canUse('marketing', 'workItemUpdate');
-  if (panel === 'overview' && canUse('marketing', 'workItemRead')) void loadMarketingRecent(recentMarketingRequest);
-  if (panel === 'tasks') marketingCleanup = mountMarketingTasks($('marketingTasks'), {
+  if (screen === 'overview' && canUse('marketing', 'workItemRead')) void loadMarketingRecent(recentMarketingRequest);
+  if (screen === 'tasks') marketingCleanup = mountMarketingTasks($('marketingTasks'), {
     request, canCreate, canUpdate, companies: () => state.companies, canReassignCompany: isAdmin(), linkedItemId,
     onChange: () => void loadDashboard().catch(displayError),
   });
-  if (panel === 'metrics') {
+  if (screen === 'metrics') {
     const metrics = mountMarketingMetrics($('marketingMetrics'), { request, canCreate, canUpdate, onAuthError: displayError });
     metrics.open();
     marketingCleanup = () => metrics.close();
   }
-  if (panel === 'crm') {
-    const crm = mountMarketingCrm($('marketingCrm'), { request, onAuthError: displayError });
+  if (screen === 'crm') {
+    const crm = mountMarketingCrm($('marketingCrm'), { request, onAuthError: displayError, onOpenPage: openCrmPageEditor });
     const canManage = canUse('marketing', 'marketingCrmManage');
-    crm.open({ canCreate: canManage, canUpdate: canManage });
+    crm.open({ canCreate: canManage, canUpdate: canManage, initialSection: startInPages ? 'landings' : 'subscribers' });
     marketingCleanup = () => crm.close();
   }
+  if (screen === 'editor') {
+    document.title = 'Editor de páginas | Central Maximum';
+    const builder = mountCrmPageBuilder($('crmPageEditor'), {
+      request, onBack: returnToCrmPages, onAuthError: displayError, onSaved: retainCrmEditorAddress,
+    });
+    builder.open({ id: pageId === 'nova' ? null : pageId, canEdit: true });
+    marketingCleanup = () => builder.close();
+  } else if (screen === 'crm') document.title = 'CRM de Marketing | Central Maximum';
 }
 
 async function loadMarketingRecent(sequence) {

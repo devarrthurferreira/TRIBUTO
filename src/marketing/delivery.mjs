@@ -1,4 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { buildCrmEmailMarkup, emailBody, escapeHtml } from './crm-email-template.mjs';
+
+export { escapeHtml } from './crm-email-template.mjs';
 
 const RESEND_EMAILS = 'https://api.resend.com/emails';
 const DELIVERY_TYPES = new Map([
@@ -6,11 +9,6 @@ const DELIVERY_TYPES = new Map([
   ['email.bounced', 'failed'], ['email.failed', 'failed'], ['email.complained', 'failed'], ['email.suppressed', 'failed'],
 ]);
 const DELAYS = [60_000, 300_000, 1_800_000, 3_600_000];
-const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-
-export function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, character => HTML_ESCAPES[character]);
-}
 
 export function readCrmMailConfig(env = process.env) {
   if (env.CRM_EMAIL_PROVIDER !== 'resend') return null;
@@ -24,13 +22,6 @@ export function readCrmMailConfig(env = process.env) {
   return { apiKey, from, origin: url.origin, webhookKey: secret ? Buffer.from(secret[1], 'base64') : null };
 }
 
-function emailBody(content) {
-  return String(content || '').split(/(https:\/\/[^\s<>"']+)/g).map((part, index) => {
-    if (index % 2 && URL.canParse(part)) return `<a href="${escapeHtml(part)}">${escapeHtml(part)}</a>`;
-    return escapeHtml(part).replace(/\r?\n/g, '<br>');
-  }).join('');
-}
-
 function messageFor(config, job) {
   const unsubscribe = job.kind !== 'confirmation' && job.unsubscribeToken && `${config.origin}/crm/descadastrar/${encodeURIComponent(job.unsubscribeToken)}`;
   const confirmation = job.confirmationToken && `${config.origin}/crm/confirmar/${encodeURIComponent(job.confirmationToken)}`;
@@ -38,8 +29,12 @@ function messageFor(config, job) {
     ? `${config.origin}${job.destinationPath}?ref=${encodeURIComponent(job.trackingToken)}` : '';
   const action = confirmation || landing;
   const actionLabel = confirmation ? 'Confirmar inscrição' : 'Acessar página da campanha';
-  const text = [job.content, action && `${actionLabel}: ${action}`, unsubscribe && `Cancelar inscrição: ${unsubscribe}`].filter(Boolean).join('\n\n');
-  const html = [`<p>${emailBody(job.content)}</p>`, action && `<p><a href="${escapeHtml(action)}">${actionLabel}</a></p>`,
+  const blockCopy = Array.isArray(job.emailPublication?.blocks) ? job.emailPublication.blocks
+    .filter(block => block.type === 'heading' || block.type === 'text')
+    .map(block => block.type === 'heading' ? block.title || block.text : block.text || block.title) : [];
+  const text = [job.content, ...blockCopy, action && `${actionLabel}: ${action}`, unsubscribe && `Cancelar inscrição: ${unsubscribe}`].filter(Boolean).join('\n\n');
+  const html = job.emailPublication ? buildCrmEmailMarkup({ subject: job.subject, content: job.content, blocks: job.emailPublication.blocks,
+    action, unsubscribe, origin: config.origin }) : [`<p>${emailBody(job.content)}</p>`, action && `<p><a href="${escapeHtml(action)}">${actionLabel}</a></p>`,
     unsubscribe && `<p><a href="${escapeHtml(unsubscribe)}">Cancelar inscrição</a></p>`].filter(Boolean).join('');
   return { from: config.from, to: [job.email], subject: job.subject, text, html,
     ...(unsubscribe && { headers: { 'List-Unsubscribe': `<${unsubscribe}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } }) };

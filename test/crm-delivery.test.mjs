@@ -43,6 +43,30 @@ test('CRM verifica assinatura e horário do evento antes de contabilizar métric
   assert.equal(verifiedDeliveryEvent(key, headers, body, Number(stamp) * 1000 + 301_000), null);
 });
 
+test('campanha usa os blocos publicados como HTML de e-mail, com link individual para o formulário', async () => {
+  const config = readCrmMailConfig(mailEnv);
+  const ref = 'r'.repeat(32);
+  await sendCrmEmail(config, {
+    id: 'message-builder', email: 'cliente@example.test', subject: 'Novidades', content: 'Olá!',
+    destinationPath: '/inscricao/novidades', trackingToken: ref, unsubscribeToken: 'u'.repeat(32),
+    emailPublication: { blocks: [
+      { type: 'heading', title: 'Nossos conteúdos', color: '#821D2A' },
+      { type: 'text', text: 'Leia as novidades <hoje>' },
+      { type: 'form', title: 'Quero participar' },
+      { type: 'button', title: 'Link inválido', url: 'javascript:danger()' },
+    ] },
+  }, async (_url, request) => {
+    const payload = JSON.parse(request.body);
+    assert.match(payload.html, /<table role="presentation"/);
+    assert.match(payload.html, /color:#821D2A/);
+    assert.match(payload.html, /Leia as novidades &lt;hoje&gt;/);
+    assert.match(payload.html, new RegExp(`href="https://central\\.example\\.test/inscricao/novidades\\?ref=${ref}"[^>]*>Quero participar`));
+    assert.match(payload.text, /Nossos conteúdos/);
+    assert.doesNotMatch(payload.html, /javascript:|<form|<script/);
+    return Response.json({ id: 'provedor-builder' });
+  });
+});
+
 test('captura e ações públicas exigem confirmação via POST e não expõem dados enviados', async () => {
   const changes = [];
   const router = createPublicCrmRouter({
