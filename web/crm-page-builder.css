@@ -29,12 +29,9 @@
 }
 
 .cpe-shell .bi-type::before { content: "\f5f7"; }
-.cpe-shell .bi-paragraph::before { content: "\f4a4"; }
 .cpe-shell .bi-image::before { content: "\f42a"; }
-.cpe-shell .bi-cursor::before { content: "\f2f6"; }
 .cpe-shell .bi-dash-lg::before { content: "\f63b"; }
 .cpe-shell .bi-card-text::before { content: "\f228"; }
-.cpe-shell .bi-columns-gap::before { content: "\f2cb"; }
 .cpe-shell .bi-square::before { content: "\f584"; }
 .cpe-shell .bi-trash::before { content: "\f5de"; }
 .cpe-shell .bi-display::before { content: "\f302"; }
@@ -42,7 +39,6 @@
 .cpe-shell .bi-eye::before { content: "\f341"; }
 .cpe-shell .bi-floppy::before { content: "\f7d8"; }
 .cpe-shell .bi-plus-lg::before { content: "\f64d"; }
-.cpe-shell .bi-chevron-down::before { content: "\f282"; }
 
 .cpe-header {
   position: sticky;

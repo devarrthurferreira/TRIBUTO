@@ -2,9 +2,9 @@ const PATH = '/marketing/crm';
 const BLOCK_LIMIT = 48;
 const BLOCKS = {
   heading: { name: 'Título', icon: 'type', defaults: { title: 'Título da seção' } },
-  text: { name: 'Texto', icon: 'paragraph', defaults: { text: 'Escreva aqui o conteúdo da seção.' } },
+  text: { name: 'Texto', icon: 'journal-text', defaults: { text: 'Escreva aqui o conteúdo da seção.' } },
   image: { name: 'Imagem', icon: 'image', defaults: {} },
-  button: { name: 'Botão', icon: 'cursor', defaults: { title: 'Saiba mais' } },
+  button: { name: 'Botão', icon: 'link-45deg', defaults: { title: 'Saiba mais' } },
   divider: { name: 'Divisor', icon: 'dash-lg', defaults: {} },
   form: { name: 'Formulário', icon: 'card-text', defaults: { title: 'Receba nossas novidades', text: 'Quero me inscrever' } },
 };
@@ -605,7 +605,7 @@ export function mountCrmPageBuilder(root, { request, onBack, onSaved, onAuthErro
     root.innerHTML = `
       <header class="cpe-header">
         <div class="cpe-heading">
-          <span class="cpe-brand"><i class="bi bi-columns-gap" aria-hidden="true"></i></span>
+          <span class="cpe-brand"><i class="bi bi-grid" aria-hidden="true"></i></span>
           <div class="cpe-heading-text"><h1 data-cpe="pageName">Nova página</h1><div class="cpe-page-state"><span data-cpe="badge" class="cpe-badge">Rascunho</span><span data-cpe="unsaved" hidden></span></div></div>
         </div>
         <div class="cpe-header-actions" data-cpe="actions"></div>
