@@ -433,12 +433,13 @@ a { color: var(--blue); }
 .home-update-card h3 { font-size: 15px; margin: 0 0 8px; }
 .home-update-card p { margin: 4px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .home-update-card .surface-header { padding: 0 0 12px; }
-.home-update-card .surface-header h3 { margin: 0; }
+.home-update-card .surface-header h2, .home-update-card .surface-header h3 { margin: 0; font-size: 17px; }
 .home-update-list { padding: 0; margin: 0; list-style: none; display: grid; gap: 10px; }
 .home-update-item { display: grid; gap: 4px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.5; }
 .home-update-item:first-child { padding-top: 4px; border-top: 0; }
 .home-update-item a { text-underline-offset: 3px; }
-.technology-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.technology-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.technology-actions .feature-card { min-height: 0; }
 .technology-overview { margin-bottom: 22px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .form-dialog::backdrop { background: rgba(45, 15, 22, .44); }
 
@@ -472,5 +473,7 @@ select.task-status { border: 1px solid currentColor; max-width: 135px; }
 
 @media (max-width: 520px) {
   .grant-grid { grid-template-columns: 1fr; }
-  .technology-actions { align-items: stretch; }
+  .technology-actions { grid-template-columns: 1fr; }
 }
+
+#conteudo:focus, #authContent:focus { outline: none; }

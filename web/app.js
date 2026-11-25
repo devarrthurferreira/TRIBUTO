@@ -29,7 +29,7 @@ const actionLabels = {
   fiscalDocumentsRead: 'Consultar documentos fiscais',
 };
 const taskStatusLabels = { open: 'Aberta', in_progress: 'Em andamento', done: 'Concluída' };
-const state = { session: null, view: 'overview', companies: [], users: [], agents: [], modules: [], selectedCompanyCnpj: null, nfsePage: 1, nfseHasMore: false, nfseRequest: 0 };
+const state = { session: null, view: 'overview', companies: [], users: [], agents: [], selectedCompanyCnpj: null, nfsePage: 1, nfseHasMore: false, nfseRequest: 0 };
 
 function node(tag, className, value) {
   const element = document.createElement(tag);
@@ -164,7 +164,7 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   $('authDescription').textContent = setupRequired
     ? 'Crie a conta administradora usando o código definido na hospedagem.'
     : 'Use seu acesso da equipe para continuar.';
-  $('authSubmit').textContent = setupRequired ? 'Criar acesso administrador' : 'Entrar ↗';
+  $('authSubmit').textContent = setupRequired ? 'Criar acesso administrador' : 'Entrar';
   $('authForm').dataset.setup = String(setupRequired);
   formError('authError', message);
 }
@@ -243,7 +243,6 @@ async function logout() {
   state.companies = [];
   state.users = [];
   state.agents = [];
-  state.modules = [];
   for (const section of document.querySelectorAll('.work-section')) section.remove();
   showAuth(false);
 }
@@ -300,20 +299,18 @@ function renderModuleCards() {
     top.append(mark);
     const heading = node('h3', '', module.label);
     const description = node('p', '', module.description);
-    const bottom = node('div', 'module-card-bottom');
-    const backendModule = state.modules.find((item) => item.id === module.id);
-    bottom.append(node('span', '', backendModule?.available === false ? 'Em preparação' : 'Abrir módulo'), node('span', 'arrow', '↗'));
     const button = node('button', 'module-open-button', `Abrir ${module.label}`);
     button.type = 'button';
+    const arrow = node('span', 'arrow', '›');
+    arrow.setAttribute('aria-hidden', 'true');
+    button.append(arrow);
     button.addEventListener('click', () => navigate(module.id));
-    card.append(top, heading, description, bottom, button);
+    card.append(top, heading, description, button);
     target.append(card);
   }
 }
 async function loadDashboard() {
   const data = await request('/dashboard');
-  state.modules = Array.isArray(data.modules) ? data.modules : [];
-  renderModuleCards();
   const metrics = data.metrics || {};
   $('statCompanies').textContent = Number.isFinite(metrics.companies) ? String(metrics.companies) : '—';
   $('statDocuments').textContent = Number.isFinite(metrics.documents) ? String(metrics.documents) : '—';
