@@ -5,6 +5,7 @@ import { MODULES, LEVELS, permissionsFor, canAccess, canAccessCompany, publicUse
 
 const COOKIE = 'tributo_session';
 const SESSION_MS = 12 * 60 * 60_000;
+const SETUP_PASSWORD_MIN_LENGTH = 10;
 const CNPJ = /^\d{14}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const NSU = /^(0|[1-9]\d{0,14})$/;
@@ -124,7 +125,10 @@ export function createPlatformRouter({ store, bootstrapTokenSha256, secureCookie
         if (!bootstrapTokenSha256 || await store.countUsers() !== 0) fail(409, 'SETUP_COMPLETE', 'Configuração inicial indisponível');
         const input = await body(req);
         if (typeof input.setupToken !== 'string' || input.setupToken.length < 32 || !safeEqualHex(sha256(input.setupToken), bootstrapTokenSha256)) fail(403, 'INVALID_SETUP_TOKEN', 'Código de configuração inválido');
-        const user = { _id: randomUUID(), name: field(input.name, 'name', 2, 100), email: email(input.email), passwordHash: await hashPassword(input.password), role: 'admin', active: true, companyCnpjs: [], moduleGrants: {}, createdAt: new Date() };
+        if (typeof input.password !== 'string' || input.password.length < SETUP_PASSWORD_MIN_LENGTH || input.password.length > 128) {
+          fail(400, 'INVALID_INPUT', `Senha deve ter entre ${SETUP_PASSWORD_MIN_LENGTH} e 128 caracteres`);
+        }
+        const user = { _id: randomUUID(), name: field(input.name, 'name', 2, 100), email: email(input.email), passwordHash: await hashPassword(input.password, SETUP_PASSWORD_MIN_LENGTH), role: 'admin', active: true, companyCnpjs: [], moduleGrants: {}, createdAt: new Date() };
         await store.createFirstAdmin(user);
         await store.audit('admin.bootstrap', user._id, user._id);
         return send(res, 201, await startSession(res, user));

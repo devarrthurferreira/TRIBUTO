@@ -1,4 +1,5 @@
 const API = '/v1/platform';
+const DASHBOARD_PATH = '/painel';
 const $ = (id) => document.getElementById(id);
 
 const modules = [
@@ -127,9 +128,12 @@ function relativeTime(value) {
 function isRecent(value) { return !!value && Number.isFinite(new Date(value).getTime()) && Date.now() - new Date(value).getTime() < 5 * 60_000; }
 function companyName(cnpj) { return state.companies.find((company) => company.cnpj === cnpj)?.name || cnpjLabel(cnpj); }
 
-function showAuth(setupRequired, message = '') {
+function showAuth(setupRequired, message = '', preserveRoute = false) {
   state.session = null;
   state.selectedCompanyCnpj = null;
+  if (location.pathname === DASHBOARD_PATH || !preserveRoute && location.hash) {
+    history.replaceState(null, '', `/${preserveRoute ? location.hash : ''}`);
+  }
   $('appView').hidden = true;
   $('authView').hidden = false;
   $('setupTokenRow').hidden = !setupRequired;
@@ -139,6 +143,7 @@ function showAuth(setupRequired, message = '') {
   $('setupName').required = setupRequired;
   $('confirmPassword').required = setupRequired;
   $('authPassword').autocomplete = setupRequired ? 'new-password' : 'current-password';
+  $('authPassword').minLength = setupRequired ? 10 : 0;
   $('authTitle').textContent = setupRequired ? 'Configure o primeiro acesso' : 'Entrar no TRIBUTO';
   $('authDescription').textContent = setupRequired
     ? 'Crie a conta administradora usando o código definido na hospedagem.'
@@ -148,7 +153,11 @@ function showAuth(setupRequired, message = '') {
   formError('authError', message);
 }
 function applySession(session) {
-  if (!session?.user) { showAuth(!!session?.setupRequired); return; }
+  if (!session?.user) { showAuth(!!session?.setupRequired, '', true); return; }
+  if (location.pathname !== DASHBOARD_PATH) {
+    location.replace(`${DASHBOARD_PATH}${location.hash}`);
+    return;
+  }
   state.session = session;
   $('authView').hidden = true;
   $('appView').hidden = false;
@@ -205,7 +214,6 @@ async function logout() {
   state.users = [];
   state.agents = [];
   showAuth(false);
-  history.replaceState(null, '', location.pathname);
 }
 
 function navigate(view) {

@@ -31,7 +31,7 @@
         <span class="eyebrow">ACESSO À PLATAFORMA</span>
         <h2 id="authTitle">Entrar no TRIBUTO</h2>
         <p id="authDescription" class="muted">Use seu acesso da equipe para continuar.</p>
-        <form id="authForm" autocomplete="on">
+        <form id="authForm" method="post" action="/v1/platform/login" autocomplete="on">
           <div id="setupTokenRow" class="field" hidden>
             <label for="setupToken">Código de configuração inicial</label>
             <input id="setupToken" name="setupToken" type="password" autocomplete="off" minlength="16" placeholder="Código definido na hospedagem">
@@ -47,7 +47,7 @@
           </div>
           <div class="field">
             <label for="authPassword">Senha</label>
-            <input id="authPassword" name="password" type="password" required minlength="12" autocomplete="current-password" placeholder="Sua senha">
+            <input id="authPassword" name="password" type="password" required maxlength="128" autocomplete="current-password" placeholder="Sua senha">
           </div>
           <div id="confirmPasswordRow" class="field" hidden>
             <label for="confirmPassword">Confirmar senha</label>

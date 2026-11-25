@@ -3,8 +3,10 @@ import { promisify } from 'node:util';
 
 const scrypt = promisify(scryptCallback);
 
-export async function hashPassword(password) {
-  if (typeof password !== 'string' || password.length < 12 || password.length > 128) throw new Error('Senha deve ter entre 12 e 128 caracteres');
+export async function hashPassword(password, minimumLength = 12) {
+  if (typeof password !== 'string' || password.length < minimumLength || password.length > 128) {
+    throw new Error(`Senha deve ter entre ${minimumLength} e 128 caracteres`);
+  }
   const salt = randomBytes(16);
   const key = await scrypt(password, salt, 64, { N: 16384, r: 8, p: 1 });
   return `scrypt$16384$8$1$${salt.toString('base64')}$${key.toString('base64')}`;

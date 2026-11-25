@@ -93,6 +93,20 @@ async function setup(url) {
   return { cookie: result.cookie, csrf: result.body.csrfToken, user: result.body.user };
 }
 
+test('senha inicial de dez caracteres autentica o primeiro administrador', async () => fixture(async ({ store, url }) => {
+  const credentials = { email: 'admin@example.test', password: 'Test@abc42' };
+  const firstAdmin = { ...credentials, setupToken, name: 'Programação' };
+  const short = await request(url, '/v1/platform/setup', { method: 'POST', data: { ...firstAdmin, password: 'short' } });
+  assert.equal(short.status, 400);
+  assert.equal(await store.countUsers(), 0);
+  const created = await request(url, '/v1/platform/setup', { method: 'POST', data: firstAdmin });
+  assert.equal(created.status, 201);
+  const login = await request(url, '/v1/platform/login', { method: 'POST', data: credentials });
+  assert.equal(login.status, 200);
+  assert.equal(login.body.user.role, 'admin');
+  assert.equal((await request(url, '/v1/platform/dashboard', { cookie: login.cookie })).status, 200);
+}));
+
 test('primeiro admin, CSRF, permissões por módulo e empresa, tarefas', async () => fixture(async ({ store, url }) => {
   const initial = await request(url, '/v1/platform/session');
   assert.equal(initial.body.setupRequired, true);

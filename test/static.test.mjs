@@ -17,6 +17,9 @@ test('servidor entrega painel e API na mesma origem com headers de proteção', 
     assert.match(html.headers.get('content-type'), /text\/html/);
     assert.match(html.headers.get('content-security-policy'), /default-src 'self'/);
     assert.match(await html.text(), /TRIBUTO \| Maximum Contábil/);
+    const dashboard = await fetch(`${origin}/painel`);
+    assert.equal(dashboard.status, 200);
+    assert.match(await dashboard.text(), /id="appView"/);
     for (const asset of ['/styles.css', '/app.js']) assert.equal((await fetch(`${origin}${asset}`)).status, 200);
     assert.equal((await fetch(`${origin}/healthz`)).status, 200);
     assert.equal((await fetch(`${origin}/.env.example`)).status, 404);
