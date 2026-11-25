@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { INTERNAL_WORK_ITEM_MODULES, MODULES, canPerform } from './policy.mjs';
+import { MarketingMetricsMySqlStore } from '../marketing/metrics-mysql.mjs';
 
 // All dates are UTC. Configure the mysql2 pool with timezone: 'Z'.
 const json = (value) => JSON.stringify(value);
@@ -56,7 +57,7 @@ function workItem(row) {
 
 const WORK_ITEM_SELECT = `SELECT task.*, details.details_json, details.completed_at
   FROM platform_work_items task LEFT JOIN platform_marketing_task_details details ON details.work_item_id = task.id`;
-const MARKETING_DETAIL_FIELDS = ['priority', 'tags', 'checklist', 'campaign', 'referenceUrl'];
+const MARKETING_DETAIL_FIELDS = ['priority', 'tags', 'checklist', 'campaign', 'referenceUrl', 'socialChannel', 'desiredReach', 'estimatedReach'];
 
 function marketingDetails(item) {
   return Object.fromEntries(MARKETING_DETAIL_FIELDS.filter(key => item[key] !== undefined).map(key => [key, item[key]]));
@@ -161,10 +162,14 @@ const OPTIONAL_ACCOUNT_COLUMNS = {
 };
 
 export class PlatformMySqlStore {
-  constructor(pool) { this.pool = pool; }
+  constructor(pool) {
+    this.pool = pool;
+    this.marketingMetrics = new MarketingMetricsMySqlStore(this);
+  }
 
   async initialize() {
     for (const statement of TABLES) await this.pool.query(statement);
+    await this.marketingMetrics.initialize();
     await this.allowOptionalAccountFields();
     await this.cleanupExpired();
   }

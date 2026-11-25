@@ -10,6 +10,8 @@ import { createBaileysBridge, readBaileysConfig } from '../whatsapp/baileys.mjs'
 import { createWhatsAppWorkspace } from '../whatsapp/workspace.mjs';
 import { ClubMySqlStore } from '../club/mysql-store.mjs';
 import { createClubRouter } from '../club/routes.mjs';
+import { MarketingCrmStore } from '../marketing/crm-store.mjs';
+import { createMarketingCrmRouter } from '../marketing/crm-routes.mjs';
 
 for (const key of ['MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE']) {
   if (!process.env[key]) throw new Error(`${key} obrigatória`);
@@ -31,6 +33,8 @@ await platformStore.initialize();
 if (await platformStore.countUsers() === 0 && !bootstrapTokenSha256) throw new Error('Configure BOOTSTRAP_ADMIN_TOKEN_SHA256 para o primeiro administrador');
 const clubStore = new ClubMySqlStore(platformStore);
 await clubStore.initialize();
+const marketingCrmStore = new MarketingCrmStore(platformStore);
+await marketingCrmStore.initialize();
 const chatStore = new ChatMySqlStore(store.pool);
 await chatStore.initialize();
 const chat = createChat({ store: platformStore, chatStore });
@@ -43,7 +47,8 @@ await whatsappWorkspace.initialize();
 const bridge = baileysConfig ? createBaileysBridge({ config: baileysConfig, store: whatsappStore, pool: store.pool }) : null;
 if (bridge) await bridge.initialize();
 const whatsapp = createWhatsAppService({ config: whatsappConfig, store: whatsappStore, bridge, workspace: whatsappWorkspace });
-const platformRouter = createPlatformRouter({ store: platformStore, chat, whatsapp, club: createClubRouter(clubStore), bootstrapTokenSha256, secureCookies: process.env.COOKIE_SECURE !== 'false' });
+const platformRouter = createPlatformRouter({ store: platformStore, chat, whatsapp, club: createClubRouter(clubStore),
+  crm: createMarketingCrmRouter(marketingCrmStore), bootstrapTokenSha256, secureCookies: process.env.COOKIE_SECURE !== 'false' });
 const server = createApiServer({ store, agentRegistry: platformStore, platformRouter, whatsapp });
 const io = chat.attach(server);
 server.listen(port, host, () => console.log(`TRIBUTO API ouvindo em ${host}:${port}`));

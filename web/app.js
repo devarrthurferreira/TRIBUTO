@@ -3,6 +3,8 @@ import { mountPortal, setChatNotification } from './portal.js';
 import { mountSectorNavigation } from './sectors.js';
 import { mountUserWizard } from './user-wizard.js';
 import { mountMarketingTasks } from './marketing-tasks.js';
+import { mountMarketingMetrics } from './marketing-metrics.js';
+import { mountMarketingCrm } from './marketing-crm.js';
 import { mountClub } from './club.js';
 
 const API = '/v1/platform';
@@ -41,12 +43,15 @@ const actionLabels = {
   whatsappRead: 'Consultar o WhatsApp do setor',
   whatsappReply: 'Responder no WhatsApp',
   whatsappTicketUpdate: 'Alterar chamados do WhatsApp',
+  marketingCrmRead: 'Consultar contatos e campanhas do CRM',
+  marketingCrmManage: 'Gerenciar contatos e campanhas do CRM',
 };
 const actionDependencies = {
   workItemCreate: 'workItemRead', workItemUpdate: 'workItemRead',
   sectorTalkSend: 'sectorTalkRead', whatsappReply: 'whatsappRead', whatsappTicketUpdate: 'whatsappRead',
+  marketingCrmManage: 'marketingCrmRead',
 };
-const writeActions = new Set(['workItemCreate', 'workItemUpdate', 'whatsappReply', 'whatsappTicketUpdate']);
+const editLevelActions = new Set(['workItemCreate', 'workItemUpdate', 'whatsappReply', 'whatsappTicketUpdate', 'marketingCrmRead', 'marketingCrmManage']);
 const taskStatusLabels = { open: 'Aberta', in_progress: 'Em andamento', done: 'Concluída' };
 const state = { session: null, view: 'overview', companies: [], users: [], agents: [], selectedCompanyCnpj: null, nfsePage: 1, nfseHasMore: false, nfseRequest: 0 };
 
@@ -230,7 +235,7 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   state.selectedClientCnpj = null;
   const query = new URLSearchParams(location.search);
   const preserveMarketingLink = preserveRoute && location.pathname === `${SECTOR_PREFIX}marketing`
-    && (query.get('painel') === 'tasks' || query.has('atividade'));
+    && (['tasks', 'metrics', 'crm'].includes(query.get('painel')) || query.has('atividade'));
   if (!preserveMarketingLink && (location.pathname !== '/' || (!preserveRoute && location.hash))) {
     const fragment = preserveRoute && !location.pathname.startsWith(SECTOR_PREFIX) ? location.hash : '';
     history.replaceState(null, '', `/${fragment}`);
@@ -301,7 +306,15 @@ function applySession(session) {
   $('fiscalDocumentTools').hidden = !canReadFiscalDocuments;
   $('technologyOverview').hidden = !canUse('tecnologia', 'workItemRead');
   $('technologyRestricted').hidden = canUse('tecnologia', 'workItemRead');
-  $('marketingTasksSummary').hidden = !canUse('marketing', 'workItemRead');
+  const marketingTasksAllowed = canUse('marketing', 'workItemRead');
+  $('marketingTasksSummary').hidden = !marketingTasksAllowed;
+  $('marketingMetricsSummary').hidden = !marketingTasksAllowed;
+  $('marketingRecent').hidden = !marketingTasksAllowed;
+  $('marketingCrmSummary').hidden = !canUse('marketing', 'marketingCrmRead');
+  for (const control of $('marketingNavigation').querySelectorAll('[data-marketing-go]')) {
+    control.hidden = control.dataset.marketingGo === 'crm' ? !canUse('marketing', 'marketingCrmRead')
+      : control.dataset.marketingGo !== 'overview' && !marketingTasksAllowed;
+  }
   document.querySelector('[data-go="tecnologia"]').hidden = !canView('tecnologia');
   renderModuleCards();
   void initialLoad();
@@ -401,6 +414,7 @@ function navigate(view, { replace = false } = {}) {
   const surface = sectorNavigation.activate(sector ? {
     id: sector.id, label: sector.label, session: state.session, admin: isAdmin(),
     content: $(`view-${sector.id}`), activities: canUse(sector.id, 'workItemRead'),
+    crm: sector.id === 'marketing' && canUse('marketing', 'marketingCrmRead'),
     fiscalDocuments: sector.id === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead'),
     talk: canUse(sector.id, 'sectorTalkRead'), whatsapp: canUse(sector.id, 'whatsappRead'),
     onPanelChange: sector.id === 'marketing' ? showMarketingPanel : undefined,
@@ -418,25 +432,65 @@ function navigate(view, { replace = false } = {}) {
   return surface;
 }
 
+let activeMarketingPanel;
 let marketingCleanup;
 let marketingLinkedItem;
+let recentMarketingRequest = 0;
 
 function showMarketingPanel(panel) {
-  const showTasks = panel === 'tasks' && canUse('marketing', 'workItemRead');
-  $('marketingTasks').hidden = !showTasks;
-  $('marketingOverview').hidden = showTasks;
-  const linkedItemId = showTasks ? new URLSearchParams(location.search).get('atividade') : null;
-  if (showTasks && marketingCleanup && linkedItemId === marketingLinkedItem) return;
+  const containers = { overview: 'marketingOverview', tasks: 'marketingTasks', metrics: 'marketingMetrics', crm: 'marketingCrm' };
+  const linkedItemId = panel === 'tasks' ? new URLSearchParams(location.search).get('atividade') : null;
+  if (panel === activeMarketingPanel && linkedItemId === marketingLinkedItem) return;
   marketingCleanup?.();
   marketingCleanup = undefined;
+  activeMarketingPanel = panel;
   marketingLinkedItem = linkedItemId;
-  if (!showTasks) return;
-  marketingCleanup = mountMarketingTasks($('marketingTasks'), {
-    request, companies: () => state.companies,
-    canCreate: canUse('marketing', 'workItemCreate'), canUpdate: canUse('marketing', 'workItemUpdate'),
-    canReassignCompany: isAdmin(), linkedItemId,
+  for (const [key, id] of Object.entries(containers)) $(id).hidden = key !== panel;
+  for (const control of $('marketingNavigation').querySelectorAll('[data-marketing-go]')) {
+    if (control.dataset.marketingGo === panel) control.setAttribute('aria-current', 'page');
+    else control.removeAttribute('aria-current');
+  }
+  recentMarketingRequest += 1;
+  const canCreate = canUse('marketing', 'workItemCreate');
+  const canUpdate = canUse('marketing', 'workItemUpdate');
+  if (panel === 'overview' && canUse('marketing', 'workItemRead')) void loadMarketingRecent(recentMarketingRequest);
+  if (panel === 'tasks') marketingCleanup = mountMarketingTasks($('marketingTasks'), {
+    request, canCreate, canUpdate, companies: () => state.companies, canReassignCompany: isAdmin(), linkedItemId,
     onChange: () => void loadDashboard().catch(displayError),
   });
+  if (panel === 'metrics') {
+    const metrics = mountMarketingMetrics($('marketingMetrics'), { request, canCreate, canUpdate, onAuthError: displayError });
+    metrics.open();
+    marketingCleanup = () => metrics.close();
+  }
+  if (panel === 'crm') {
+    const crm = mountMarketingCrm($('marketingCrm'), { request, onAuthError: displayError });
+    const canManage = canUse('marketing', 'marketingCrmManage');
+    crm.open({ canCreate: canManage, canUpdate: canManage });
+    marketingCleanup = () => crm.close();
+  }
+}
+
+async function loadMarketingRecent(sequence) {
+  const list = $('marketingRecentItems');
+  list.replaceChildren(node('p', 'muted', 'Carregando tarefas…'));
+  try {
+    const { items } = await request('/work-items?module=marketing');
+    if (sequence !== recentMarketingRequest) return;
+    if (!items?.length) return list.replaceChildren(node('p', 'muted', 'Nenhuma tarefa disponível.'));
+    list.replaceChildren(...items.slice(0, 5).map((item) => {
+      const row = node('a', 'marketing-recent-item');
+      row.href = `/setor/marketing?painel=tasks&atividade=${encodeURIComponent(item.id)}`;
+      const labels = node('div');
+      labels.append(node('strong', '', item.title), node('span', '', dateLabel(item.dueAt)));
+      row.append(labels, node('span', 'marketing-task-state', taskStatusLabels[item.status] || item.status));
+      return row;
+    }));
+  } catch (error) {
+    if (sequence !== recentMarketingRequest) return;
+    if (error.status === 401) displayError(error);
+    else list.replaceChildren(node('p', 'muted', 'Não foi possível carregar as tarefas recentes.'));
+  }
 }
 function openMenu() { $('sidebar').classList.add('open'); $('menuBackdrop').hidden = false; $('openMenu').setAttribute('aria-expanded', 'true'); }
 function closeMenu() { $('sidebar').classList.remove('open'); $('menuBackdrop').hidden = true; $('openMenu').setAttribute('aria-expanded', 'false'); }
@@ -820,6 +874,7 @@ function renderUserGrants(user, target = $('userGrantOptions')) {
     actions.setAttribute('aria-label', `Ações de ${label}`);
     for (const [action, actionLabel] of Object.entries(actionLabels)) {
       if (action === 'fiscalDocumentsRead' && id !== 'fiscal') continue;
+      if (action.startsWith('marketingCrm') && id !== 'marketing') continue;
       if (legacyModules.some(module => module.id === id) && /^(sectorTalk|whatsapp)/.test(action)) continue;
       const input = node('input');
       input.type = 'checkbox';
@@ -833,7 +888,7 @@ function renderUserGrants(user, target = $('userGrantOptions')) {
       actions.hidden = !level.value;
       for (const action of actions.querySelectorAll('input')) {
         const dependsOn = actionDependencies[action.value];
-        action.disabled = (writeActions.has(action.value) && level.value === 'view')
+        action.disabled = (editLevelActions.has(action.value) && level.value === 'view')
           || Boolean(dependsOn && !actions.querySelector(`input[value="${dependsOn}"]`).checked);
       }
     };
@@ -1339,7 +1394,9 @@ function setupEvents() {
   for (const button of document.querySelectorAll('button.nav-link')) button.addEventListener('click', () => navigate(button.dataset.view));
   for (const button of document.querySelectorAll('button[data-go]')) button.addEventListener('click', () => navigate(button.dataset.go));
   $('companySearch').addEventListener('input', renderCompanies);
-  $('openMarketingTasks').addEventListener('click', () => sectorNavigation.selectPanel('tasks'));
+  for (const control of $('view-marketing').querySelectorAll('[data-marketing-go]')) {
+    control.addEventListener('click', () => sectorNavigation.selectPanel(control.dataset.marketingGo));
+  }
   $('fiscalCompanyLookup').addEventListener('input', renderFiscalCompanyQuickList);
   $('fiscalCompanyFilter').addEventListener('change', () => void loadFiscalDocuments().catch(displayError));
   $('backToCompanies').addEventListener('click', () => navigate(isAdmin() ? `client-${state.selectedCompanyCnpj}` : 'fiscal'));

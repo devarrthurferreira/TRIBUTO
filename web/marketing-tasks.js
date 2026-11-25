@@ -2,9 +2,19 @@ const MARKETING = 'marketing';
 const STATUSES = { open: 'A fazer', in_progress: 'Em andamento', done: 'Concluída' };
 const PRIORITIES = { low: 'Baixa', normal: 'Normal', high: 'Alta', urgent: 'Urgente' };
 const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
+const WIZARD_STEPS = ['Dados da tarefa', 'Dados de métricas', 'Checklist e link do post'];
+export const MARKETING_CHANNELS = {
+  linkedin: { title: 'LinkedIn', icons: ['linkedin'] },
+  'somos-maximum': { title: 'Somos Maximum', icons: ['instagram', 'tiktok'] },
+  'maximum-contabil': { title: 'Maximum Contábil', icons: ['instagram', 'tiktok'] },
+  youtube: { title: 'YouTube', icons: ['youtube'] },
+  'maximum-informa': { title: 'Maximum Informa', icons: ['megaphone'] },
+  newsletter: { title: 'Newsletter', icons: ['newspaper'] },
+};
 const HISTORY_FIELDS = {
   title: 'título', description: 'descrição', status: 'situação', dueAt: 'prazo', assigneeId: 'responsável',
-  companyCnpj: 'empresa', priority: 'prioridade', tags: 'tags', checklist: 'checklist', campaign: 'campanha', referenceUrl: 'link de referência'
+  companyCnpj: 'empresa', priority: 'prioridade', tags: 'tags', checklist: 'checklist', campaign: 'campanha',
+  referenceUrl: 'link do post', socialChannel: 'rede social', desiredReach: 'alcance desejado', estimatedReach: 'alcance estimado',
 };
 const UTC_DAY = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeZone: 'UTC' });
 const LOCAL_TIMESTAMP = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' });
@@ -28,6 +38,16 @@ function labelIcon(name, label) {
   const element = node('span');
   element.append(icon(name), document.createTextNode(label));
   return element;
+}
+
+export function marketingChannelBadge(channel, { label = true } = {}) {
+  if (!Object.hasOwn(MARKETING_CHANNELS, channel)) return null;
+  const { title, icons } = MARKETING_CHANNELS[channel];
+  const badge = node('span', 'mt-channel');
+  badge.append(...icons.map(icon));
+  if (label) badge.append(document.createTextNode(title));
+  else badge.setAttribute('aria-hidden', 'true');
+  return badge;
 }
 
 function normalize(value) {
@@ -96,9 +116,11 @@ function makeTaskCard(item, { assignees, companies, today, openDetails }) {
   const company = companies.find(({ cnpj }) => cnpj === item.companyCnpj);
   if (item.campaign || company) card.append(node('span', 'mt-card-campaign', [item.campaign, company?.name].filter(Boolean).join(' · ')));
   if (item.description) card.append(node('span', 'mt-card-description', item.description));
-  if (item.tags?.length) {
+  const channel = marketingChannelBadge(item.socialChannel);
+  if (channel || item.tags?.length) {
     const tags = node('span', 'mt-tags');
-    for (const tag of item.tags) tags.append(node('span', 'mt-tag', tag));
+    if (channel) tags.append(channel);
+    for (const tag of item.tags || []) tags.append(node('span', 'mt-tag', tag));
     card.append(tags);
   }
   if (item.checklist?.length) {
@@ -152,48 +174,79 @@ function buildShell(root) {
     <div class="mt-board" data-mt="board" aria-label="Quadro por situação"></div>
     <div class="mt-load-more"><button type="button" class="mt-secondary" data-mt="more" hidden>Carregar mais tarefas</button><button type="button" class="mt-secondary" data-mt="retry" hidden>Tentar novamente</button></div>
     <dialog class="mt-dialog" data-mt="dialog" aria-labelledby="marketingTaskDialogTitle">
-      <form class="mt-dialog-form" data-mt="form" method="dialog">
+      <form class="mt-dialog-form" data-mt="form" method="dialog" novalidate>
         <header class="mt-dialog-header">
           <div><p class="mt-eyebrow">Marketing</p><h2 id="marketingTaskDialogTitle" data-mt="dialogTitle"></h2></div>
           <button type="button" class="mt-icon-button" data-mt="close" aria-label="Fechar tarefa">×</button>
         </header>
+        <ol class="mt-steps" data-mt="steps" aria-label="Etapas da tarefa" hidden>
+          ${WIZARD_STEPS.map((name, index) => `<li><button type="button" data-mt-step="${index}" aria-controls="marketingTaskStep${index + 1}"><span class="mt-step-number" aria-hidden="true">${index + 1}</span><span>${name}</span></button></li>`).join('')}
+        </ol>
         <div class="mt-dialog-body" data-mt="dialogBody">
           <p class="mt-feedback" data-mt="loadingDetails" role="status" hidden>Carregando tarefa…</p>
           <fieldset data-mt="fieldSet" class="mt-dialog-fields">
-            <div class="mt-form-grid">
-              <label class="mt-field mt-wide">Título<input name="title" required minlength="3" maxlength="200" placeholder="Ex. Agendar posts da semana"></label>
-              <div class="mt-field"><label for="marketingTaskStatus">Situação</label><select id="marketingTaskStatus" name="status"></select></div>
-              <div class="mt-field"><label for="marketingTaskPriority">Prioridade</label><select id="marketingTaskPriority" name="priority"></select></div>
-              <label class="mt-field">Prazo<input type="date" name="dueAt"></label>
-              <div class="mt-field"><label for="marketingTaskAssignee">Responsável</label><select id="marketingTaskAssignee" name="assigneeId"></select></div>
-              <label class="mt-field">Campanha<input name="campaign" maxlength="120" placeholder="Ex. Planejamento mensal"></label>
-              <div class="mt-field"><label for="marketingTaskCompany">Empresa</label><select id="marketingTaskCompany" name="companyCnpj"></select></div>
-              <label class="mt-field mt-wide">Descrição<textarea name="description" rows="3" maxlength="2000" placeholder="Inclua o contexto, entregáveis e orientações da tarefa"></textarea></label>
-              <div class="mt-field mt-wide"><label for="marketingTaskTags">Tags</label><input id="marketingTaskTags" name="tags" maxlength="416" placeholder="Ex. redes sociais, aprovação" aria-describedby="marketingTaskTagsHelp"><small id="marketingTaskTagsHelp">Separe as tags por vírgula.</small></div>
-              <label class="mt-field mt-wide">Link de referência<input type="url" name="referenceUrl" maxlength="1000" placeholder="https://"></label>
-            </div>
-            <section class="mt-checklist" aria-labelledby="marketingChecklistTitle">
-              <div class="mt-checklist-heading"><h3 id="marketingChecklistTitle">Checklist</h3><span data-mt="checkCount"></span></div>
-              <div data-mt="checkRows"></div>
-              <div class="mt-check-add" data-mt="checkAddBox">
-                <label class="mt-field"><span class="sr-only">Novo item do checklist</span><input data-mt="checkInput" maxlength="140" placeholder="Novo item do checklist"></label>
-                <button type="button" class="mt-secondary" data-mt="checkAdd">Adicionar item</button>
+            <section id="marketingTaskStep1" class="mt-dialog-step" aria-labelledby="marketingTaskStep1Title">
+              <h3 id="marketingTaskStep1Title" tabindex="-1">Dados da tarefa</h3>
+              <div class="mt-form-grid">
+                <label class="mt-field mt-wide">Título<input name="title" required minlength="3" maxlength="200" placeholder="Ex. Agendar posts da semana"></label>
+                <div class="mt-field"><label for="marketingTaskPriority">Prioridade</label><select id="marketingTaskPriority" name="priority"></select></div>
+                <div class="mt-field"><label for="marketingTaskStatus">Status</label><select id="marketingTaskStatus" name="status"></select></div>
+                <label class="mt-field mt-wide">Prazo<input type="date" name="dueAt"></label>
+                <label class="mt-field mt-wide">Descrição<textarea name="description" rows="4" maxlength="2000" placeholder="Inclua o contexto e as orientações da tarefa"></textarea></label>
+              </div>
+              <details class="mt-task-organization" data-mt="organization">
+                <summary>Organização da tarefa</summary>
+                <div class="mt-form-grid">
+                  <div class="mt-field"><label for="marketingTaskAssignee">Responsável</label><select id="marketingTaskAssignee" name="assigneeId"></select></div>
+                  <div class="mt-field"><label for="marketingTaskCompany">Empresa</label><select id="marketingTaskCompany" name="companyCnpj"></select></div>
+                  <label class="mt-field mt-wide">Campanha<input name="campaign" maxlength="120" placeholder="Ex. Planejamento mensal"></label>
+                  <div class="mt-field mt-wide"><label for="marketingTaskTags">Tags</label><input id="marketingTaskTags" name="tags" maxlength="416" placeholder="Ex. redes sociais, aprovação" aria-describedby="marketingTaskTagsHelp"><small id="marketingTaskTagsHelp">Separe as tags por vírgula.</small></div>
+                </div>
+              </details>
+            </section>
+            <section id="marketingTaskStep2" class="mt-dialog-step" aria-labelledby="marketingTaskStep2Title" hidden>
+              <h3 id="marketingTaskStep2Title" tabindex="-1">Dados de métricas</h3>
+              <div class="mt-form-grid">
+                <div class="mt-field mt-wide">
+                  <label for="marketingTaskSocialChannel">Rede social</label>
+                  <div class="mt-channel-picker"><select id="marketingTaskSocialChannel" name="socialChannel" aria-describedby="marketingTaskChannelPlatforms"></select><span class="mt-channel-preview" data-mt="channelPreview" hidden></span></div>
+                  <span id="marketingTaskChannelPlatforms" class="sr-only" data-mt="channelPlatforms"></span>
+                </div>
+                <label class="mt-field">Alcance desejado<input name="desiredReach" type="number" inputmode="numeric" min="0" max="999999999" step="1" placeholder="Ex. 20000"></label>
+                <label class="mt-field">Alcance estimado<input name="estimatedReach" type="number" inputmode="numeric" min="0" max="999999999" step="1" placeholder="Ex. 15000"></label>
               </div>
             </section>
+            <section id="marketingTaskStep3" class="mt-dialog-step" aria-labelledby="marketingTaskStep3Title" hidden>
+              <h3 id="marketingTaskStep3Title" tabindex="-1">Checklist e link do post</h3>
+              <section class="mt-checklist" aria-labelledby="marketingChecklistTitle">
+                <div class="mt-checklist-heading"><h4 id="marketingChecklistTitle">Checklist</h4><span data-mt="checkCount"></span></div>
+                <div data-mt="checkRows"></div>
+                <div class="mt-check-add" data-mt="checkAddBox">
+                  <label class="mt-field"><span class="sr-only">Novo item do checklist</span><input data-mt="checkInput" maxlength="140" placeholder="Novo item do checklist"></label>
+                  <button type="button" class="mt-secondary" data-mt="checkAdd">Adicionar item</button>
+                </div>
+              </section>
+              <label class="mt-field">Link do post<input type="url" name="referenceUrl" maxlength="1000" placeholder="https://"></label>
+              <a class="mt-reference" data-mt="reference" target="_blank" rel="noopener noreferrer" hidden>Abrir link do post <span aria-hidden="true">↗</span></a>
+              <div class="mt-share" data-mt="share" hidden>
+                <button type="button" class="mt-secondary" data-mt="copyLink"><i class="bi bi-link-45deg" aria-hidden="true"></i> Copiar link da tarefa</button>
+                <input type="text" aria-label="Link da tarefa" data-mt="shareUrl" readonly hidden>
+                <p class="mt-feedback" data-mt="shareFeedback" role="status" hidden></p>
+              </div>
+              <section class="mt-history" data-mt="history" aria-labelledby="marketingTaskHistoryTitle" hidden>
+                <h4 id="marketingTaskHistoryTitle">Histórico da tarefa</h4>
+                <ol data-mt="historyEntries"></ol>
+              </section>
+            </section>
           </fieldset>
-          <a class="mt-reference" data-mt="reference" target="_blank" rel="noopener noreferrer" hidden>Abrir referência <span aria-hidden="true">↗</span></a>
-          <div class="mt-share" data-mt="share" hidden>
-            <button type="button" class="mt-secondary" data-mt="copyLink"><i class="bi bi-link-45deg" aria-hidden="true"></i> Copiar link da tarefa</button>
-            <input type="text" aria-label="Link da tarefa" data-mt="shareUrl" readonly hidden>
-            <p class="mt-feedback" data-mt="shareFeedback" role="status" hidden></p>
-          </div>
-          <section class="mt-history" data-mt="history" aria-labelledby="marketingTaskHistoryTitle" hidden>
-            <h3 id="marketingTaskHistoryTitle">Histórico da tarefa</h3>
-            <ol data-mt="historyEntries"></ol>
-          </section>
-          <p class="mt-error" data-mt="dialogError" role="alert" hidden></p>
         </div>
-        <footer class="mt-dialog-footer"><button type="button" class="mt-secondary" data-mt="cancel">Cancelar</button><button type="submit" class="mt-primary" data-mt="save">Criar tarefa</button></footer>
+        <p class="mt-error mt-dialog-error" data-mt="dialogError" role="alert" hidden></p>
+        <footer class="mt-dialog-footer">
+          <button type="button" class="mt-secondary mt-dialog-cancel" data-mt="cancel">Cancelar</button>
+          <button type="button" class="mt-secondary" data-mt="back" hidden><i class="bi bi-chevron-left" aria-hidden="true"></i> Voltar</button>
+          <button type="button" class="mt-primary" data-mt="next" hidden>Continuar <i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+          <button type="submit" class="mt-primary" data-mt="save" hidden>Salvar tarefa</button>
+        </footer>
       </form>
     </dialog>`;
   root.replaceChildren(shell);
@@ -203,11 +256,14 @@ function buildShell(root) {
 export function mountMarketingTasks(root, { request, companies = [], canCreate, canUpdate, canReassignCompany = false, linkedItemId, onChange } = {}) {
   const { shell, ui } = buildShell(root);
   const field = name => ui.form.elements.namedItem(name);
+  const stepButtons = [...ui.steps.querySelectorAll('button')];
+  const stepPanels = [...ui.fieldSet.querySelectorAll('.mt-dialog-step')];
   const listCompanies = () => typeof companies === 'function' ? companies() || [] : companies;
   const items = new Map();
   let teammates = [];
   let page = 0, more = false, loading = false, disposed = false;
   let activeItem = null, editing = false, saving = false, checklist = [], detailsRequest = 0, openTaskId = '';
+  let step = 0, visitedStep = 0;
 
   const message = (target, text = '') => {
     target.textContent = text;
@@ -240,7 +296,7 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
       if (!filter) return true;
       const company = portfolio.find(({ cnpj }) => cnpj === item.companyCnpj);
       const person = teammates.find(({ id }) => id === item.assigneeId);
-      return normalize([item.title, item.description, item.campaign, company?.name, person?.name, ...(item.tags || [])].join(' ')).includes(filter);
+      return normalize([item.title, item.description, item.campaign, MARKETING_CHANNELS[item.socialChannel]?.title, company?.name, person?.name, ...(item.tags || [])].join(' ')).includes(filter);
     });
     const compare = (a, b) => (PRIORITY_RANK[a.priority || 'normal'] - PRIORITY_RANK[b.priority || 'normal'])
       || (a.dueAt || '9999').localeCompare(b.dueAt || '9999') || String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
@@ -319,6 +375,7 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
       const checkbox = node('input');
       checkbox.type = 'checkbox';
       checkbox.checked = entry.done;
+      checkbox.disabled = !editing;
       label.append(checkbox, node('span', '', entry.title));
       checkbox.addEventListener('change', () => { entry.done = checkbox.checked; updateCheckCount(); });
       row.append(label);
@@ -375,6 +432,76 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
     const companyOptions = listCompanies().map(company => [company.cnpj, companyLabel(company)]);
     if (item?.companyCnpj && !companyOptions.some(([cnpj]) => cnpj === item.companyCnpj)) companyOptions.push([item.companyCnpj, 'Empresa vinculada']);
     options(field('companyCnpj'), 'Atividade interna', companyOptions);
+    options(field('socialChannel'), 'Selecione uma rede', Object.entries(MARKETING_CHANNELS).map(([id, channel]) => [id, channel.title]), item?.socialChannel);
+  }
+
+  function renderChannel() {
+    const channel = field('socialChannel').value;
+    const badge = marketingChannelBadge(channel, { label: false });
+    ui.channelPreview.replaceChildren(...(badge ? [badge] : []));
+    ui.channelPreview.hidden = !badge;
+    ui.channelPlatforms.textContent = ['somos-maximum', 'maximum-contabil'].includes(channel) ? 'Instagram e TikTok' : '';
+  }
+
+  function renderStep(index, focus = false) {
+    step = index;
+    visitedStep = Math.max(visitedStep, index);
+    for (const [position, control] of stepButtons.entries()) {
+      const current = position === index;
+      if (current) control.setAttribute('aria-current', 'step');
+      else control.removeAttribute('aria-current');
+      control.disabled = saving || position > visitedStep;
+      stepPanels[position].hidden = !current;
+    }
+    ui.back.hidden = index === 0;
+    ui.next.hidden = index === stepPanels.length - 1;
+    ui.save.hidden = !editing || !ui.next.hidden;
+    ui.dialogBody.scrollTop = 0;
+    if (focus) stepPanels[index].querySelector('h3').focus({ preventScroll: true });
+  }
+
+  function inputTags() {
+    return [...new Map(field('tags').value.split(/[;,]/).map(value => value.trim()).filter(Boolean).map(value => [normalize(value), value])).values()];
+  }
+
+  function invalidField(index) {
+    if (index === 0) {
+      if (field('title').value.trim().length < 3) return ['title', 'Informe um título com pelo menos 3 caracteres.'];
+      if (!field('dueAt').validity.valid) return ['dueAt', 'Informe uma data de prazo válida.'];
+      const tags = inputTags();
+      if (tags.length > 12 || tags.some(tag => tag.length > 32)) return ['tags', 'Use até 12 tags, com no máximo 32 caracteres cada.'];
+    }
+    if (index === 1) {
+      for (const name of ['desiredReach', 'estimatedReach']) {
+        if (!field(name).validity.valid) return [name, 'Informe um alcance inteiro entre 0 e 999.999.999.'];
+      }
+    }
+    if (index === 2) {
+      const value = field('referenceUrl').value.trim();
+      const href = safeUrl(value);
+      if (value && (!href || href.length > 1000)) return ['referenceUrl', 'Informe um link HTTPS válido para o post.'];
+    }
+    return null;
+  }
+
+  function validateStep(index) {
+    const invalid = editing && invalidField(index);
+    if (!invalid) return true;
+    const [name, error] = invalid;
+    if (step !== index) renderStep(index);
+    if (name === 'tags') ui.organization.open = true;
+    message(ui.dialogError, error);
+    field(name).focus();
+    return false;
+  }
+
+  function moveStep(index) {
+    if (saving || ui.steps.hidden || index < 0 || index >= stepPanels.length || index === step) return;
+    message(ui.dialogError);
+    for (let position = step; position < index; position++) {
+      if (!validateStep(position)) return;
+    }
+    renderStep(index, true);
   }
 
   function renderForm(item = null, history = []) {
@@ -382,19 +509,25 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
     editing = item ? Boolean(canUpdate) : Boolean(canCreate);
     ui.dialogTitle.textContent = item ? (editing ? 'Editar tarefa' : 'Detalhes da tarefa') : 'Nova tarefa';
     ui.fieldSet.hidden = false;
-    ui.fieldSet.disabled = !editing;
+    ui.fieldSet.disabled = false;
+    for (const control of ui.form.elements) {
+      if (control.name) control.disabled = !editing;
+    }
     ui.loadingDetails.hidden = true;
+    ui.steps.hidden = false;
     ui.cancel.textContent = editing ? 'Cancelar' : 'Fechar';
-    ui.save.hidden = !editing;
     ui.save.disabled = false;
-    ui.save.textContent = item ? 'Salvar alterações' : 'Criar tarefa';
+    ui.save.textContent = item ? 'Salvar alterações' : 'Salvar tarefa';
     message(ui.dialogError);
     setOptions(item);
     for (const name of ['title', 'description', 'dueAt', 'assigneeId', 'companyCnpj', 'campaign', 'referenceUrl']) field(name).value = item?.[name] || '';
+    for (const name of ['desiredReach', 'estimatedReach']) field(name).value = item?.[name] ?? '';
     field('status').value = item?.status || 'open';
     field('priority').value = item?.priority || 'normal';
-    field('companyCnpj').disabled = Boolean(item && !canReassignCompany);
+    field('companyCnpj').disabled = !editing || Boolean(item && !canReassignCompany);
     field('tags').value = item?.tags?.join(', ') || '';
+    ui.organization.open = Boolean(item?.assigneeId || item?.companyCnpj || item?.campaign || item?.tags?.length);
+    renderChannel();
     checklist = (item?.checklist || []).map(entry => ({ ...entry }));
     ui.checkInput.value = '';
     ui.checkAddBox.hidden = !editing;
@@ -407,7 +540,8 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
     ui.share.hidden = !item;
     ui.shareUrl.hidden = true;
     message(ui.shareFeedback);
-    ui.dialogBody.scrollTop = 0;
+    visitedStep = item ? stepPanels.length - 1 : 0;
+    renderStep(0);
   }
 
   function startNew() {
@@ -423,7 +557,8 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
     const serial = ++detailsRequest;
     openTaskId = id;
     ui.dialogTitle.textContent = 'Detalhes da tarefa';
-    ui.fieldSet.hidden = ui.history.hidden = ui.reference.hidden = ui.share.hidden = ui.save.hidden = true;
+    editing = false;
+    ui.steps.hidden = ui.fieldSet.hidden = ui.back.hidden = ui.next.hidden = ui.save.hidden = true;
     ui.loadingDetails.hidden = false;
     ui.cancel.textContent = 'Fechar';
     message(ui.dialogError);
@@ -443,35 +578,35 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
 
   function getInput() {
     const values = Object.fromEntries(new FormData(ui.form));
-    const tags = [...new Map(values.tags.split(/[;,]/).map(value => value.trim()).filter(Boolean).map(value => [normalize(value), value])).values()];
-    if (tags.length > 12 || tags.some(tag => tag.length > 32)) throw new Error('Use até 12 tags, com no máximo 32 caracteres cada.');
-    if (values.referenceUrl && !safeUrl(values.referenceUrl)) throw new Error('Informe um link HTTPS válido para a referência.');
-    const title = values.title.trim();
-    if (title.length < 3) throw new Error('Informe um título com pelo menos 3 caracteres.');
     if (ui.checkInput.value.trim()) addChecklistItem();
     return {
-      title, description: values.description.trim(), status: values.status, priority: values.priority, dueAt: values.dueAt || null,
+      title: values.title.trim(), description: values.description.trim(), status: values.status, priority: values.priority, dueAt: values.dueAt || null,
       assigneeId: values.assigneeId || null,
       companyCnpj: Object.hasOwn(values, 'companyCnpj') ? values.companyCnpj || null : activeItem?.companyCnpj ?? null,
       campaign: values.campaign.trim(),
-      tags, checklist, referenceUrl: values.referenceUrl.trim(),
+      socialChannel: values.socialChannel,
+      desiredReach: values.desiredReach === '' ? null : field('desiredReach').valueAsNumber,
+      estimatedReach: values.estimatedReach === '' ? null : field('estimatedReach').valueAsNumber,
+      tags: inputTags(), checklist, referenceUrl: safeUrl(values.referenceUrl.trim()),
     };
   }
 
   function setSaving(value) {
     saving = value;
-    ui.save.disabled = ui.cancel.disabled = ui.close.disabled = value;
+    ui.save.disabled = ui.cancel.disabled = ui.close.disabled = ui.back.disabled = ui.next.disabled = value;
     ui.fieldSet.disabled = value;
-    ui.save.textContent = value ? 'Salvando…' : (activeItem ? 'Salvar alterações' : 'Criar tarefa');
+    for (const [position, control] of stepButtons.entries()) control.disabled = value || position > visitedStep;
+    updateCheckCount();
+    ui.save.textContent = value ? 'Salvando…' : (activeItem ? 'Salvar alterações' : 'Salvar tarefa');
   }
 
   async function saveTask(event) {
     event.preventDefault();
     if (!editing || saving) return;
+    if (step < stepPanels.length - 1) { moveStep(step + 1); return; }
     message(ui.dialogError);
-    let input;
-    try { input = getInput(); }
-    catch (error) { message(ui.dialogError, error.message); return; }
+    if (!stepPanels.every((_, index) => validateStep(index))) return;
+    const input = getInput();
     const prior = activeItem;
     const changes = prior ? Object.fromEntries(Object.entries(input).filter(([key, value]) => JSON.stringify(prior[key]) !== JSON.stringify(value))) : input;
     if (prior && !Object.keys(changes).length) { ui.dialog.close(); return; }
@@ -518,6 +653,10 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
   ui.refresh.addEventListener('click', () => void load());
   ui.more.addEventListener('click', () => void load(page + 1));
   ui.newTask.addEventListener('click', startNew);
+  ui.back.addEventListener('click', () => moveStep(step - 1));
+  ui.next.addEventListener('click', () => moveStep(step + 1));
+  for (const [index, control] of stepButtons.entries()) control.addEventListener('click', () => moveStep(index));
+  field('socialChannel').addEventListener('change', renderChannel);
   ui.checkAdd.addEventListener('click', addChecklistItem);
   ui.copyLink.addEventListener('click', () => void copyTaskLink());
   ui.checkInput.addEventListener('keydown', event => {

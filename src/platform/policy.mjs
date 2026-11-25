@@ -9,12 +9,14 @@ const MODULE_ACTIONS = Object.freeze({
   whatsappTicketUpdate: 'edit'
 });
 const FISCAL_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, fiscalDocumentsRead: 'view' });
+const MARKETING_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, marketingCrmRead: 'edit', marketingCrmManage: 'edit' });
 const ACTION_PREREQUISITES = new Map([
   ['workItemCreate', 'workItemRead'],
   ['workItemUpdate', 'workItemRead'],
   ['sectorTalkSend', 'sectorTalkRead'],
   ['whatsappReply', 'whatsappRead'],
-  ['whatsappTicketUpdate', 'whatsappRead']
+  ['whatsappTicketUpdate', 'whatsappRead'],
+  ['marketingCrmManage', 'marketingCrmRead']
 ]);
 
 export const MODULES = Object.freeze([
@@ -32,7 +34,7 @@ export const MODULES = Object.freeze([
 export const LEVELS = Object.freeze(['view', 'edit', 'manage']);
 
 function actionLevels(module) {
-  return module === 'fiscal' ? FISCAL_ACTIONS : MODULE_ACTIONS;
+  return module === 'fiscal' ? FISCAL_ACTIONS : module === 'marketing' ? MARKETING_ACTIONS : MODULE_ACTIONS;
 }
 
 export function grantLevel(grant) {

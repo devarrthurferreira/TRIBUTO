@@ -5,7 +5,7 @@ import { setWhatsAppNotification } from './portal.js';
 const get = (id) => document.getElementById(id);
 const areas = ['setor', 'talk', 'whatsapp'];
 const titles = { setor: 'Setor', talk: 'Talk', whatsapp: 'WhatsApp' };
-const icons = { overview: 'grid', activities: 'list-task', tasks: 'list-task', fiscal: 'receipt', users: 'people', agents: 'broadcast' };
+const icons = { overview: 'grid', activities: 'list-task', tasks: 'list-task', metrics: 'graph-up', crm: 'envelope', fiscal: 'receipt', users: 'people', agents: 'broadcast' };
 
 function activityPanel(sector) {
   return sector.id === 'marketing' ? 'tasks' : 'activities';
@@ -14,6 +14,10 @@ function activityPanel(sector) {
 function sectionOptions(sector) {
   const options = [{ id: 'overview', label: 'Visão geral' }];
   if (sector.activities) options.push({ id: activityPanel(sector), label: sector.id === 'marketing' ? 'Tarefas' : 'Atividades' });
+  if (sector.id === 'marketing') {
+    if (sector.activities) options.push({ id: 'metrics', label: 'Métricas' });
+    if (sector.crm) options.push({ id: 'crm', label: 'CRM' });
+  }
   if (sector.fiscalDocuments) options.push({ id: 'fiscal', label: 'Documentos fiscais' });
   if (sector.admin && sector.id === 'tecnologia') {
     options.push({ id: 'users', label: 'Equipe e acessos', href: '/home#users' });

@@ -14,6 +14,9 @@
   <link rel="stylesheet" href="/sector-whatsapp.css">
   <link rel="stylesheet" href="/user-wizard.css">
   <link rel="stylesheet" href="/marketing-tasks.css">
+  <link rel="stylesheet" href="/marketing.css">
+  <link rel="stylesheet" href="/marketing-metrics.css">
+  <link rel="stylesheet" href="/marketing-crm.css">
   <link rel="stylesheet" href="/club.css">
   <script defer src="/socket.io/socket.io.js"></script>
   <script type="module" src="/app.js"></script>
@@ -244,17 +247,46 @@
           <div class="page-heading"><div><h1 id="rhTitle">Recursos Humanos</h1><p>Espaço do time de Recursos Humanos.</p></div><span class="status-pill status-planned">Em preparação</span></div>
         </section>
 
-        <section class="view" id="view-marketing" aria-labelledby="marketingTitle" hidden>
+        <section class="view" id="view-marketing" aria-label="Marketing" hidden>
+          <nav id="marketingNavigation" class="marketing-navigation" aria-label="Áreas de Marketing">
+            <button type="button" data-marketing-go="overview"><i class="bi bi-grid" aria-hidden="true"></i> Visão geral</button>
+            <button type="button" data-marketing-go="tasks"><i class="bi bi-list-task" aria-hidden="true"></i> Tarefas</button>
+            <button type="button" data-marketing-go="metrics"><i class="bi bi-graph-up" aria-hidden="true"></i> Métricas</button>
+            <button type="button" data-marketing-go="crm"><i class="bi bi-envelope" aria-hidden="true"></i> CRM</button>
+          </nav>
           <div id="marketingOverview">
-            <div class="page-heading"><div><h1 id="marketingTitle">Marketing</h1><p>Campanhas, conteúdo e atividades da equipe.</p></div></div>
-            <article id="marketingTasksSummary" class="feature-card" hidden>
-              <span class="feature-icon blue"><i class="bi bi-list-task" aria-hidden="true"></i></span>
-              <h3>Tarefas</h3>
-              <p>Organize as entregas, distribua responsabilidades e acompanhe os prazos.</p>
-              <button id="openMarketingTasks" class="button button-quiet" type="button">Abrir tarefas <span aria-hidden="true">↗</span></button>
-            </article>
+            <header class="marketing-overview-heading">
+              <h1>Marketing</h1>
+              <p>Planeje conteúdos, acompanhe o alcance e gerencie campanhas de e-mail.</p>
+            </header>
+            <div class="marketing-overview-grid">
+              <article id="marketingTasksSummary" class="marketing-overview-card" hidden>
+                <i class="bi bi-list-task" aria-hidden="true"></i>
+                <h2>Tarefas</h2>
+                <p>Organize as entregas, responsáveis e prazos.</p>
+                <button id="openMarketingTasks" class="button button-quiet" data-marketing-go="tasks" type="button">Abrir tarefas <span aria-hidden="true">↗</span></button>
+              </article>
+              <article id="marketingMetricsSummary" class="marketing-overview-card" hidden>
+                <i class="bi bi-graph-up" aria-hidden="true"></i>
+                <h2>Métricas</h2>
+                <p>Compare o alcance registrado com a meta de cada conteúdo.</p>
+                <button class="button button-quiet" data-marketing-go="metrics" type="button">Abrir métricas <span aria-hidden="true">↗</span></button>
+              </article>
+              <article id="marketingCrmSummary" class="marketing-overview-card" hidden>
+                <i class="bi bi-envelope" aria-hidden="true"></i>
+                <h2>CRM</h2>
+                <p>Gerencie assinantes e prepare campanhas de e-mail.</p>
+                <button class="button button-quiet" data-marketing-go="crm" type="button">Abrir CRM <span aria-hidden="true">↗</span></button>
+              </article>
+            </div>
+            <section id="marketingRecent" class="marketing-recent surface" aria-labelledby="marketingRecentTitle" hidden>
+              <h2 id="marketingRecentTitle">Tarefas atualizadas recentemente</h2>
+              <div id="marketingRecentItems" aria-live="polite"></div>
+            </section>
           </div>
           <div id="marketingTasks" hidden></div>
+          <div id="marketingMetrics" hidden></div>
+          <div id="marketingCrm" hidden></div>
         </section>
 
         <section class="view" id="view-diretoria" aria-labelledby="diretoriaTitle" hidden>

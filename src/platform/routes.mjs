@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ApiError, sha256 } from '../api/validation.mjs';
 import { hashPassword, verifyPassword, newSecret, safeEqualHex } from './auth.mjs';
 import { lookupCep } from './cep.mjs';
+import { handleMarketingMetrics, socialMetricsFields } from '../marketing/metrics-routes.mjs';
 import { INTERNAL_WORK_ITEM_MODULES, MODULES, LEVELS, capabilitiesFor, permissionsFor, canAccess, canAccessCompany, canAccessWorkItemCompany, canPerform, hasLoginCredentials, publicUser } from './policy.mjs';
 
 const COOKIE = 'tributo_session';
@@ -184,7 +185,8 @@ function validateModuleGrants(grants) {
 function publicWorkItem(item) {
   return { id: item._id, module: item.module, companyCnpj: item.companyCnpj, title: item.title, description: item.description || '', status: item.status, dueAt: item.dueAt || null, assigneeId: item.assigneeId || null, createdBy: item.createdBy, createdAt: item.createdAt, updatedAt: item.updatedAt,
     ...(item.module === 'marketing' ? { priority: item.priority || 'normal', tags: item.tags || [], checklist: item.checklist || [],
-      campaign: item.campaign || '', referenceUrl: item.referenceUrl || '', completedAt: item.completedAt || null } : {}) };
+      campaign: item.campaign || '', referenceUrl: item.referenceUrl || '', completedAt: item.completedAt || null,
+      socialChannel: item.socialChannel || '', desiredReach: item.desiredReach ?? null, estimatedReach: item.estimatedReach ?? null } : {}) };
 }
 function dueAt(value) {
   if (value === null || value === '') return null;
@@ -196,7 +198,7 @@ function workItemCompany(module, company) {
 }
 
 function marketingAttributes(input) {
-  const fields = {};
+  const fields = socialMetricsFields(input);
   if (input.priority !== undefined) {
     check(['low', 'normal', 'high', 'urgent'].includes(input.priority), 'prioridade');
     fields.priority = input.priority;
@@ -225,6 +227,19 @@ function marketingAttributes(input) {
   return fields;
 }
 
+function marketingMetricMetadata(input, { partial = false } = {}) {
+  const { priority, checklist, referenceUrl, socialChannel, desiredReach, estimatedReach } = input;
+  const fields = marketingAttributes({ priority, checklist, referenceUrl, socialChannel, desiredReach, estimatedReach });
+  if (!partial || input.title !== undefined) fields.title = field(input.title, 'título', 3, 200);
+  if (input.description !== undefined) fields.description = field(input.description, 'descrição', 0, 2000);
+  if (input.status !== undefined) {
+    check(WORK_ITEM_STATUSES.includes(input.status), 'status');
+    fields.status = input.status;
+  }
+  if (input.dueAt !== undefined) fields.dueAt = dueAt(input.dueAt);
+  return fields;
+}
+
 async function validateTaskAssignee(store, assigneeId, module, companyCnpj) {
   check(typeof assigneeId === 'string' && UUID.test(assigneeId), 'responsável');
   const assignee = await store.findUserById(assigneeId);
@@ -233,7 +248,7 @@ async function validateTaskAssignee(store, assigneeId, module, companyCnpj) {
   }
 }
 
-export function createPlatformRouter({ store, chat, whatsapp, club, bootstrapTokenSha256, secureCookies = true, logger = console }) {
+export function createPlatformRouter({ store, chat, whatsapp, club, crm, bootstrapTokenSha256, secureCookies = true, logger = console }) {
   function loginKey(req, address) { return sha256(`${req.socket.remoteAddress || 'unknown'}:${address}`); }
   async function startSession(res, user) {
     const token = newSecret();
@@ -294,6 +309,13 @@ export function createPlatformRouter({ store, chat, whatsapp, club, bootstrapTok
       }
       if (club && (route === '/club' || route.startsWith('/club/'))) {
         return await club.handleHttp({ req, res, route, user, send, readBody: body, requireAdmin, logger });
+      }
+      if (route === '/marketing/metrics' || route.startsWith('/marketing/metrics/')) {
+        return await handleMarketingMetrics({ req, res, route, user, send, readBody: body, store: store.marketingMetrics,
+          parseMetadata: marketingMetricMetadata, pageNumber });
+      }
+      if (crm && (route === '/marketing/crm' || route.startsWith('/marketing/crm/'))) {
+        return await crm.handleHttp({ req, res, route, user, send, readBody: body });
       }
       if (req.method === 'POST' && route === '/logout') {
         await store.deleteSession(session._id);

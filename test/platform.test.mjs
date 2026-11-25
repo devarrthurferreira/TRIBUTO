@@ -439,11 +439,15 @@ test('tarefas de Marketing mantêm checklist, histórico, conclusão e escopo da
   const details = (access, id) => request(url, `${platform}/work-items/${id}`, access);
 
   const input = { title: 'Publicar conteúdo', description: 'Briefing privado', priority: 'urgent', campaign: 'Campanha de novembro',
-    tags: ['Stories', 'Social'], checklist: [{ title: 'Aprovar arte', done: false }], referenceUrl: 'https://example.test/briefing' };
+    tags: ['Stories', 'Social'], checklist: [{ title: 'Aprovar arte', done: false }], referenceUrl: 'https://example.test/briefing',
+    socialChannel: 'maximum-contabil', desiredReach: 850, estimatedReach: 0 };
   assert.equal((await create(reader, input)).status, 403);
   assert.equal((await list(outsider)).status, 403);
   assert.equal((await create(editor, { ...input, referenceUrl: 'javascript:void(0)' })).status, 400);
   assert.equal((await create(editor, { ...input, tags: ['Social', 'social'] })).status, 400);
+  assert.equal((await create(editor, { ...input, socialChannel: 'invalid' })).status, 400);
+  assert.equal((await create(editor, { ...input, desiredReach: -1 })).status, 400);
+  assert.equal((await create(editor, { ...input, estimatedReach: 1_000_000_000 })).status, 400);
   assert.equal((await create(editor, { ...input, companyCnpj: CNPJ_B })).status, 403);
   assert.equal((await create(editor, { ...input, companyCnpj: CNPJ_A, assigneeId: reader.id })).body.error, 'UNKNOWN_ASSIGNEE');
   assert.equal((await create(editor, { ...input, assigneeId: outsider.id })).body.error, 'UNKNOWN_ASSIGNEE');
@@ -453,6 +457,9 @@ test('tarefas de Marketing mantêm checklist, histórico, conclusão e escopo da
   assert.equal(task.companyCnpj, null);
   assert.equal(task.completedAt, null);
   assert.equal(task.priority, 'urgent');
+  assert.equal(task.socialChannel, 'maximum-contabil');
+  assert.equal(task.desiredReach, 850);
+  assert.equal(task.estimatedReach, 0);
   assert.ok(task.checklist[0].id);
   assert.deepEqual((await list(reader)).body.items.map(item => item.id), [task.id]);
   const choices = (await list(reader)).body.assignees;
@@ -464,6 +471,7 @@ test('tarefas de Marketing mantêm checklist, histórico, conclusão e escopo da
   const completed = finished.body.item;
   assert.ok(completed.completedAt);
   assert.equal(completed.checklist[0].done, true);
+  assert.equal(completed.desiredReach, 850);
   assert.equal((await edit(editor, task.id, { campaign: 'Tentativa antiga', expectedUpdatedAt: task.updatedAt })).status, 409);
   const retagged = await edit(editor, task.id, { tags: ['Edição'] });
   assert.equal(retagged.body.item.completedAt, completed.completedAt);
@@ -482,12 +490,19 @@ test('tarefas de Marketing mantêm checklist, histórico, conclusão e escopo da
   assert.deepEqual(record.history[0].fields.sort(), ['companyCnpj', 'status']);
   assert.equal(JSON.stringify(record.history).includes('Briefing privado'), false);
 
+  const cleared = (await edit(editor, task.id, { socialChannel: '', desiredReach: null, estimatedReach: null })).body.item;
+  assert.equal(cleared.socialChannel, '');
+  assert.equal(cleared.desiredReach, null);
+  assert.equal(cleared.estimatedReach, null);
+
   const imported = await create(editor, { title: 'Tarefa concluída cadastrada', status: 'done' });
   assert.ok(imported.body.item.completedAt);
   const oldTimestamp = new Date('2025-01-01T12:00:00.000Z');
   for (let i = 0; i < 100; i++) {
     const id = randomUUID();
-    store.items.set(id, { ...task, _id: id, title: `Tarefa antiga ${i}`, priority: undefined, status: 'done', createdAt: oldTimestamp, updatedAt: oldTimestamp });
+    store.items.set(id, { ...task, _id: id, title: `Tarefa antiga ${i}`, priority: undefined,
+      socialChannel: undefined, desiredReach: undefined, estimatedReach: undefined,
+      status: 'done', createdAt: oldTimestamp, updatedAt: oldTimestamp });
   }
   const first = (await list(editor)).body;
   const second = (await request(url, `${platform}/work-items?module=marketing&page=2`, editor)).body;
@@ -497,6 +512,8 @@ test('tarefas de Marketing mantêm checklist, histórico, conclusão e escopo da
   assert.equal(second.hasMore, false);
   assert.equal(second.items[0].priority, 'normal');
   assert.equal(second.items[0].completedAt, null);
+  assert.equal(second.items[0].socialChannel, '');
+  assert.equal(second.items[0].desiredReach, null);
   assert.equal(second.assignees, undefined);
   assert.equal(new Set([...first.items, ...second.items].map(item => item.id)).size, 102);
 }));
