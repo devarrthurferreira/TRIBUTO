@@ -337,10 +337,10 @@ function updateLayout(state) {
 }
 
 function workspaceRequest(state, path, options = {}) {
-  const { body, signal = state.signal, method } = options;
+  const { body, signal = state.signal, method, query } = options;
   return body
     ? request(path, { signal, method, token: state.token, body: { sector: state.sector, ...body } })
-    : request(path + '?' + new URLSearchParams({ sector: state.sector }), { signal });
+    : request(path + '?' + new URLSearchParams({ sector: state.sector, ...query }), { signal });
 }
 
 function closeNavPopover(state, restoreFocus = false) {
@@ -439,7 +439,9 @@ function openWorkspace(state, section, page) {
   if (state.active === section && state.activePage === child?.id) return;
   state.viewRequest?.abort();
   clearTimeout(state.connectionTimer);
-  state.autoPairOnOpen = section === 'connections';
+  state.connectionSelected = false;
+  state.connectionData = null;
+  state.ui.workspace.replaceChildren();
   state.active = section;
   state.activePage = child?.id;
   for (const button of state.ui.navigation.querySelectorAll('[data-tab]')) {
@@ -632,7 +634,7 @@ async function changeConnection(state, action, button) {
   }
   if (state.signal.aborted) return;
   if (state.active === 'connections') {
-    state.autoPairOnOpen = false;
+    if (result && action !== 'connect') state.connectionSelected = false;
     renderConnection(state, result || previous);
     if (failure) showError(state, failure);
     else if (result.unlinkConfirmed === false) setStatus(state, 'A conexão local foi interrompida. Confira o aparelho na lista de dispositivos do WhatsApp.');
@@ -640,11 +642,20 @@ async function changeConnection(state, action, button) {
   if (result) void refreshSummary(state).catch(() => {});
 }
 
-function connectionButton(state, label, action, options) {
-  const button = actionButton(label, (button) => changeConnection(state, action, button), options);
+function connectionButton(state, label, action, { handle = button => changeConnection(state, action, button), ...options } = {}) {
+  const button = actionButton(label, handle, options);
   button.dataset.connectionAction = action;
   button.disabled = Boolean(state.connectionBusy);
   return button;
+}
+
+function selectConnection(state, button) {
+  const data = state.connectionData;
+  if (state.connectionBusy || !data?.canManage || data.connection?.provider !== 'baileys') return;
+  state.connectionSelected = true;
+  if (['disconnected', 'error'].includes(data.connection.status)) return changeConnection(state, 'connect', button);
+  renderConnection(state, data);
+  if (PAIRING_STATES.includes(data.connection.status)) return loadWorkspace(state, { preserve: true });
 }
 
 function renderPairing(state, connection, hasQr) {
@@ -675,9 +686,12 @@ function renderPairing(state, connection, hasQr) {
 function renderConnection(state, data) {
   const { connection = {}, canManage } = data;
   if (connection.provider) state.provider = connection.provider;
+  const manageable = canManage && connection.provider === 'baileys' && connection.status !== 'disabled';
   const pending = PAIRING_STATES.includes(connection.status);
+  if (!manageable || ['disconnected', 'error'].includes(connection.status)) state.connectionSelected = false;
+  const selected = state.connectionSelected;
   const expiresAt = Date.parse(connection.qrExpiresAt);
-  const hasQr = canManage && connection.status === 'qr' && (Number.isNaN(expiresAt) || expiresAt > Date.now())
+  const hasQr = selected && pending && !connection.phone && connection.status === 'qr' && (Number.isNaN(expiresAt) || expiresAt > Date.now())
     && typeof connection.qrImage === 'string' && connection.qrImage.length < 500_000 && QR_IMAGE.test(connection.qrImage);
   clearTimeout(state.connectionTimer);
   if (pending && !state.connectionBusy) {
@@ -690,10 +704,12 @@ function renderConnection(state, data) {
   const busy = Boolean(state.connectionBusy);
   state.connectionData = data;
   if (state.ui.workspace.firstElementChild?.classList.contains('wa-connection-area')
+    && state.renderedConnectionSelected === selected
     && state.renderedConnectionBusy === busy
     && previous?.canManage === canManage
     && ['status', 'provider', 'phone', 'reason', 'qrImage', 'qrExpiresAt'].every(key => previous?.connection?.[key] === connection[key])
     && Boolean(state.ui.workspace.querySelector('.wa-qr')) === hasQr) return;
+  state.renderedConnectionSelected = selected;
   state.renderedConnectionBusy = busy;
 
   const focusedAction = state.ui.workspace.contains(document.activeElement) && document.activeElement.dataset.connectionAction;
@@ -726,13 +742,22 @@ function renderConnection(state, data) {
     card.append(element('p', 'wa-supporting-text', 'O servidor ainda precisa habilitar um provedor de WhatsApp para este setor.'));
   }
   grid.append(card);
-  if (canManage && connection.provider === 'baileys' && connection.status !== 'disabled') {
-    if (pending && !connection.phone) grid.append(renderPairing(state, connection, hasQr));
-    else if (!pending) {
+  if (manageable) {
+    if (selected && pending && !connection.phone) grid.append(renderPairing(state, connection, hasQr));
+    else {
       const actions = element('div', 'wa-workspace-actions');
-      actions.append(connection.status === 'connected'
-        ? connectionButton(state, 'Desconectar número', 'disconnect')
-        : connectionButton(state, 'Conectar número', 'connect', { symbol: 'link-45deg', primary: true }));
+      if (selected) {
+        if (connection.status === 'connected') actions.append(connectionButton(state, 'Desconectar número', 'disconnect'));
+        actions.append(connectionButton(state, 'Fechar configuração', 'close', { handle: () => {
+          state.viewRequest?.abort();
+          state.connectionSelected = false;
+          renderConnection(state, state.connectionData);
+        } }));
+      } else {
+        actions.append(connectionButton(state, 'Selecionar', 'select', {
+          handle: button => selectConnection(state, button), symbol: 'arrow-up-right', primary: true
+        }));
+      }
       card.append(actions);
     }
   }
@@ -861,15 +886,9 @@ async function loadWorkspace(state, { preserve = false } = {}) {
       await refreshTags(state, signal);
       if (fromCurrentRequest()) renderTags(state);
     } else if (active === 'connections') {
-      const data = await workspaceRequest(state, '/connections', { signal });
-      if (!fromCurrentRequest()) return;
-      renderConnection(state, data);
-      if (state.autoPairOnOpen && !document.hidden) {
-        state.autoPairOnOpen = false;
-        if (data.canManage && data.connection?.provider === 'baileys' && data.connection.status === 'disconnected' && !data.connection.phone) {
-          void changeConnection(state, 'connect');
-        }
-      }
+      const query = state.connectionSelected ? { pairing: '1' } : undefined;
+      const data = await workspaceRequest(state, '/connections', { signal, query });
+      if (fromCurrentRequest()) renderConnection(state, data);
     } else if (active === 'settings' || activePage === 'absence') {
       const data = await workspaceRequest(state, '/settings', { signal });
       if (fromCurrentRequest()) {

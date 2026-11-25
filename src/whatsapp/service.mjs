@@ -196,7 +196,8 @@ export function createWhatsAppService({ config, store, bridge, workspace, fetche
         }
         else throw invalid('action');
       } else if (req.method !== 'GET') throw unavailable();
-      const data = sectorBridge ? await sectorBridge.status({ includeQr: canManage }) : { state: configured ? 'connected' : 'disabled' };
+      const includeQr = canManage && (input?.action === 'connect' || query.get('pairing') === '1');
+      const data = sectorBridge ? await sectorBridge.status({ includeQr }) : { state: configured ? 'connected' : 'disabled' };
       return send(res, 200, { canManage, unlinkConfirmed, connection: { ...data, status: data.state, provider } });
     }
     const connectionState = sectorBridge ? (await sectorBridge.status()).state : configured ? 'connected' : 'disabled';

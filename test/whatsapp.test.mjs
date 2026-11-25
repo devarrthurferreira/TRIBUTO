@@ -206,15 +206,17 @@ test('Baileys pairing is restricted to administrators in the configured sector',
     },
   };
   const whatsapp = createWhatsAppService({ bridge, store: fixtureStore() });
-  const get = (route, user, input) => whatsapp.handleHttp({
-    req: { method: input ? 'POST' : 'GET', url: '/v1/platform' + route + '?sector=tecnologia' },
+  const get = (route, user, input, query = '') => whatsapp.handleHttp({
+    req: { method: input ? 'POST' : 'GET', url: '/v1/platform' + route + '?sector=tecnologia' + query },
     route, user, readBody: async () => input, send: (_, status, data) => ({ status, data }),
   });
   const action = { sector: 'tecnologia', action: 'connect' };
   assert.equal((await get('/whatsapp/connections', admin)).data.connection.status, 'disconnected');
   await assert.rejects(get('/whatsapp/connections', observer, action), { status: 403 });
   assert.equal((await get('/whatsapp/connections', admin, action)).data.connection.qrImage, qrImage);
-  assert.equal((await get('/whatsapp/connections', observer)).data.connection.qrImage, undefined);
+  assert.equal((await get('/whatsapp/connections', admin)).data.connection.qrImage, undefined);
+  assert.equal((await get('/whatsapp/connections', admin, null, '&pairing=1')).data.connection.qrImage, qrImage);
+  assert.equal((await get('/whatsapp/connections', observer, null, '&pairing=1')).data.connection.qrImage, undefined);
   const cancel = { ...action, action: 'cancel' };
   await assert.rejects(get('/whatsapp/connections', observer, cancel), { status: 403 });
   assert.equal((await get('/whatsapp/connections', admin, cancel)).data.connection.status, 'disconnected');
