@@ -69,8 +69,10 @@ export function canAccessCompany(user, cnpj) {
   return Boolean(user?.active && (user.role === 'admin' || user.companyCnpjs?.includes(cnpj)));
 }
 
+export const INTERNAL_WORK_ITEM_MODULES = Object.freeze(['tecnologia', 'marketing']);
+
 export function canAccessWorkItemCompany(user, module, cnpj) {
-  if (cnpj === null) return Boolean(user?.active && module === 'tecnologia');
+  if (cnpj === null) return Boolean(user?.active && INTERNAL_WORK_ITEM_MODULES.includes(module));
   return canAccessCompany(user, cnpj);
 }
 

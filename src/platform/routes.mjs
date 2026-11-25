@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ApiError, sha256 } from '../api/validation.mjs';
 import { hashPassword, verifyPassword, newSecret, safeEqualHex } from './auth.mjs';
 import { lookupCep } from './cep.mjs';
-import { MODULES, LEVELS, capabilitiesFor, permissionsFor, canAccess, canAccessCompany, canAccessWorkItemCompany, canPerform, publicUser } from './policy.mjs';
+import { INTERNAL_WORK_ITEM_MODULES, MODULES, LEVELS, capabilitiesFor, permissionsFor, canAccess, canAccessCompany, canAccessWorkItemCompany, canPerform, publicUser } from './policy.mjs';
 
 const COOKIE = 'tributo_session';
 const SESSION_MS = 12 * 60 * 60_000;
@@ -12,6 +12,9 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USERNAME = /^[a-z0-9]{1,35}\.[a-z0-9]{1,38}$/;
 const NSU = /^(0|[1-9]\d{0,14})$/;
 const MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/;
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const WORK_ITEM_STATUSES = ['open', 'in_progress', 'done'];
+const MARKETING_PAGE_SIZE = 100;
 const LOCAL_DATE = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
 
 function fail(status, code, message) { throw new ApiError(status, code, message); }
@@ -154,11 +157,55 @@ function validateModuleGrants(grants) {
   return Object.fromEntries(entries);
 }
 function publicWorkItem(item) {
-  return { id: item._id, module: item.module, companyCnpj: item.companyCnpj, title: item.title, description: item.description || '', status: item.status, dueAt: item.dueAt || null, assigneeId: item.assigneeId || null, createdBy: item.createdBy, createdAt: item.createdAt, updatedAt: item.updatedAt };
+  return { id: item._id, module: item.module, companyCnpj: item.companyCnpj, title: item.title, description: item.description || '', status: item.status, dueAt: item.dueAt || null, assigneeId: item.assigneeId || null, createdBy: item.createdBy, createdAt: item.createdAt, updatedAt: item.updatedAt,
+    ...(item.module === 'marketing' ? { priority: item.priority || 'normal', tags: item.tags || [], checklist: item.checklist || [],
+      campaign: item.campaign || '', referenceUrl: item.referenceUrl || '', completedAt: item.completedAt || null } : {}) };
 }
 function dueAt(value) {
   if (value === null || value === '') return null;
   return dateField(value, 'dueAt');
+}
+
+function workItemCompany(module, company) {
+  return INTERNAL_WORK_ITEM_MODULES.includes(module) && (company == null || company === '') ? null : cnpj(company);
+}
+
+function marketingAttributes(input) {
+  const fields = {};
+  if (input.priority !== undefined) {
+    check(['low', 'normal', 'high', 'urgent'].includes(input.priority), 'prioridade');
+    fields.priority = input.priority;
+  }
+  if (input.campaign !== undefined) fields.campaign = field(input.campaign, 'campanha', 0, 120);
+  if (input.tags !== undefined) {
+    check(Array.isArray(input.tags) && input.tags.length <= 12, 'tags');
+    fields.tags = input.tags.map(value => field(value, 'tag', 1, 32));
+    check(new Set(fields.tags.map(value => value.normalize('NFC').toLocaleLowerCase('pt-BR'))).size === fields.tags.length, 'tags duplicadas');
+  }
+  if (input.checklist !== undefined) {
+    check(Array.isArray(input.checklist) && input.checklist.length <= 30, 'checklist');
+    fields.checklist = input.checklist.map(entry => {
+      check(entry && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.done === 'boolean', 'item do checklist');
+      check(entry.id === undefined || (typeof entry.id === 'string' && UUID.test(entry.id)), 'id do item do checklist');
+      return { id: entry.id?.toLowerCase() || randomUUID(), title: field(entry.title, 'item do checklist', 1, 140), done: entry.done };
+    });
+    check(new Set(fields.checklist.map(entry => entry.id)).size === fields.checklist.length, 'itens repetidos no checklist');
+  }
+  if (input.referenceUrl !== undefined) {
+    const value = field(input.referenceUrl, 'link de referência', 0, 1000);
+    const url = URL.canParse(value) ? new URL(value) : null;
+    check(!value || (url?.protocol === 'https:' && !url.username && !url.password && url.href.length <= 1000), 'link de referência HTTPS');
+    fields.referenceUrl = url ? url.href : '';
+  }
+  return fields;
+}
+
+async function validateTaskAssignee(store, assigneeId, module, companyCnpj) {
+  check(typeof assigneeId === 'string' && UUID.test(assigneeId), 'responsável');
+  const assignee = await store.findUserById(assigneeId);
+  if (!canPerform(assignee, module, 'workItemRead') || !canAccessWorkItemCompany(assignee, module, companyCnpj)) {
+    fail(400, 'UNKNOWN_ASSIGNEE', 'Responsável sem acesso à empresa e módulo');
+  }
 }
 
 export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha256, secureCookies = true, logger = console }) {
@@ -406,23 +453,41 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
         if (module && !canPerform(user, module, 'workItemRead')) fail(403, 'FORBIDDEN', 'Sem acesso às tarefas do módulo');
         if (companyCnpj && !canAccessCompany(user, companyCnpj)) fail(403, 'FORBIDDEN', 'Sem acesso à empresa');
         const modules = MODULES.filter(x => canPerform(user, x.id, 'workItemRead')).map(x => x.id);
-        const items = await store.listWorkItems({ modules, companyCnpjs: user.role === 'admin' ? null : user.companyCnpjs, module, companyCnpj });
+        const scope = { modules, companyCnpjs: user.role === 'admin' ? null : user.companyCnpjs, module, companyCnpj };
+        if (module === 'marketing') {
+          const page = pageNumber(url.searchParams, 'page', 1, 10_000);
+          const [items, people] = await Promise.all([
+            store.listWorkItems({ ...scope, limit: MARKETING_PAGE_SIZE + 1, offset: (page - 1) * MARKETING_PAGE_SIZE }),
+            page === 1 ? store.listUsers() : [],
+          ]);
+          const assignees = people.filter(person => canPerform(person, module, 'workItemRead')
+            && (!companyCnpj || canAccessCompany(person, companyCnpj))).map(({ _id: id, name }) => ({ id, name }));
+          return send(res, 200, { items: items.slice(0, MARKETING_PAGE_SIZE).map(publicWorkItem),
+            ...(page === 1 ? { assignees } : {}), page, hasMore: items.length > MARKETING_PAGE_SIZE });
+        }
+        const items = await store.listWorkItems(scope);
         return send(res, 200, { items: items.map(publicWorkItem) });
       }
       if (req.method === 'POST' && route === '/work-items') {
         const input = await body(req);
         check(MODULES.some(x => x.id === input.module), 'module');
-        const companyCnpj = input.module === 'tecnologia' && (input.companyCnpj == null || input.companyCnpj === '') ? null : cnpj(input.companyCnpj);
+        const companyCnpj = workItemCompany(input.module, input.companyCnpj);
         if (!canPerform(user, input.module, 'workItemCreate') || !canAccessWorkItemCompany(user, input.module, companyCnpj)) fail(403, 'FORBIDDEN', 'Sem permissão para criar tarefas nesta empresa e módulo');
         if (companyCnpj && !await store.companyExists(companyCnpj)) fail(400, 'UNKNOWN_COMPANY', 'Empresa não cadastrada');
         const now = new Date();
-        const item = { _id: randomUUID(), module: input.module, companyCnpj, title: field(input.title, 'title', 3, 200), description: input.description === undefined ? '' : field(input.description, 'description', 0, 2000), status: 'open', dueAt: input.dueAt === undefined ? null : dueAt(input.dueAt), assigneeId: input.assigneeId || null, createdBy: user._id, createdAt: now, updatedAt: now };
+        const marketing = input.module === 'marketing';
+        const status = marketing && input.status !== undefined ? input.status : 'open';
+        check(WORK_ITEM_STATUSES.includes(status), 'status');
+        const item = { _id: randomUUID(), module: input.module, companyCnpj, title: field(input.title, 'title', 3, 200), description: input.description === undefined ? '' : field(input.description, 'description', 0, 2000), status, dueAt: input.dueAt === undefined ? null : dueAt(input.dueAt), assigneeId: input.assigneeId ?? null, createdBy: user._id, createdAt: now, updatedAt: now,
+          ...(marketing ? { ...marketingAttributes(input), completedAt: status === 'done' ? now : null } : {}) };
         if (item.assigneeId) {
-          const assignee = await store.findUserById(item.assigneeId);
-          if (!canPerform(assignee, item.module, 'workItemRead') || !canAccessWorkItemCompany(assignee, item.module, item.companyCnpj)) fail(400, 'UNKNOWN_ASSIGNEE', 'Responsável sem acesso à empresa e módulo');
+          await validateTaskAssignee(store, item.assigneeId, item.module, item.companyCnpj);
+        } else {
+          check(!marketing || item.assigneeId === null, 'responsável');
+          item.assigneeId = null;
         }
         await store.createWorkItem(item);
-        await store.audit('work_item.create', user._id, item._id, { companyCnpj: item.companyCnpj, module: item.module });
+        if (!marketing) await store.audit('work_item.create', user._id, item._id, { companyCnpj: item.companyCnpj, module: item.module });
         return send(res, 201, { item: publicWorkItem(item) });
       }
       const itemMatch = /^\/work-items\/([a-f0-9-]{36})$/.exec(route);
@@ -431,28 +496,46 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
         if (!item || !canPerform(user, item.module, 'workItemRead') || !canAccessWorkItemCompany(user, item.module, item.companyCnpj)) {
           fail(404, 'NOT_FOUND', 'Tarefa não encontrada');
         }
-        return send(res, 200, { item: publicWorkItem(item) });
+        const result = { item: publicWorkItem(item) };
+        if (item.module === 'marketing') result.history = await store.listWorkItemHistory(item._id);
+        return send(res, 200, result);
       }
       if (req.method === 'PATCH' && itemMatch) {
         const item = await store.getWorkItem(itemMatch[1]);
         if (!item) fail(404, 'NOT_FOUND', 'Tarefa não encontrada');
         if (!canPerform(user, item.module, 'workItemUpdate') || !canAccessWorkItemCompany(user, item.module, item.companyCnpj)) fail(403, 'FORBIDDEN', 'Sem permissão para editar tarefas nesta empresa e módulo');
         const input = await body(req);
-        const changes = {};
+        const marketing = item.module === 'marketing';
+        const changes = marketing ? marketingAttributes(input) : {};
+        if (marketing && input.companyCnpj !== undefined) {
+          const destination = workItemCompany(item.module, input.companyCnpj);
+          if (destination !== item.companyCnpj) {
+            requireAdmin(user);
+            if (destination && !await store.companyExists(destination)) fail(400, 'UNKNOWN_COMPANY', 'Empresa não cadastrada');
+            changes.companyCnpj = destination;
+          }
+        }
         if (input.title !== undefined) changes.title = field(input.title, 'title', 3, 200);
         if (input.description !== undefined) changes.description = field(input.description, 'description', 0, 2000);
-        if (input.status !== undefined) { check(['open', 'in_progress', 'done'].includes(input.status), 'status'); changes.status = input.status; }
+        if (input.status !== undefined) { check(WORK_ITEM_STATUSES.includes(input.status), 'status'); changes.status = input.status; }
         if (input.dueAt !== undefined) changes.dueAt = dueAt(input.dueAt);
-        if (input.assigneeId !== undefined) {
-          if (input.assigneeId !== null) {
-            const assignee = await store.findUserById(input.assigneeId);
-            if (!canPerform(assignee, item.module, 'workItemRead') || !canAccessWorkItemCompany(assignee, item.module, item.companyCnpj)) fail(400, 'UNKNOWN_ASSIGNEE', 'Responsável sem acesso à empresa e módulo');
-          }
-          changes.assigneeId = input.assigneeId;
+        if (input.assigneeId !== undefined) changes.assigneeId = input.assigneeId;
+        const companyChanged = Object.hasOwn(changes, 'companyCnpj') && changes.companyCnpj !== item.companyCnpj;
+        const assigneeChanged = Object.hasOwn(changes, 'assigneeId') && (!marketing || changes.assigneeId !== item.assigneeId);
+        if (companyChanged || assigneeChanged) {
+          const assigneeId = Object.hasOwn(changes, 'assigneeId') ? changes.assigneeId : item.assigneeId;
+          const companyCnpj = companyChanged ? changes.companyCnpj : item.companyCnpj;
+          if (assigneeId !== null) await validateTaskAssignee(store, assigneeId, item.module, companyCnpj);
         }
         check(Object.keys(changes).length > 0, 'changes');
-        const updated = await store.updateWorkItem(item._id, changes);
-        await store.audit('work_item.update', user._id, item._id, { fields: Object.keys(changes) });
+        if (marketing && input.expectedUpdatedAt !== undefined && (typeof input.expectedUpdatedAt !== 'string'
+          || Date.parse(input.expectedUpdatedAt) !== new Date(item.updatedAt).getTime())) {
+          fail(409, 'TASK_UPDATED', 'A tarefa foi alterada. Reabra os detalhes para conferir a versão atual.');
+        }
+        const expected = marketing ? { updatedAt: item.updatedAt, companyCnpj: item.companyCnpj, assigneeId: item.assigneeId } : undefined;
+        const updated = await store.updateWorkItem(item._id, changes, { expected, actorId: user._id });
+        if (!updated) fail(409, 'TASK_UPDATED', 'A tarefa foi alterada. Reabra os detalhes para conferir a versão atual.');
+        if (!marketing) await store.audit('work_item.update', user._id, item._id, { fields: Object.keys(changes) });
         return send(res, 200, { item: publicWorkItem(updated) });
       }
       return send(res, 404, { error: 'NOT_FOUND', message: 'Rota inexistente' });

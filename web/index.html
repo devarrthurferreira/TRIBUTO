@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/sectors.css">
   <link rel="stylesheet" href="/sector-whatsapp.css">
   <link rel="stylesheet" href="/user-wizard.css">
+  <link rel="stylesheet" href="/marketing-tasks.css">
   <script defer src="/socket.io/socket.io.js"></script>
   <script type="module" src="/app.js"></script>
 </head>
@@ -239,7 +240,16 @@
         </section>
 
         <section class="view" id="view-marketing" aria-labelledby="marketingTitle" hidden>
-          <div class="page-heading"><div><h1 id="marketingTitle">Marketing</h1><p>Espaço do time de Marketing.</p></div><span class="status-pill status-planned">Em preparação</span></div>
+          <div id="marketingOverview">
+            <div class="page-heading"><div><h1 id="marketingTitle">Marketing</h1><p>Campanhas, conteúdo e atividades da equipe.</p></div></div>
+            <article id="marketingTasksSummary" class="feature-card" hidden>
+              <span class="feature-icon blue"><i class="bi bi-list-task" aria-hidden="true"></i></span>
+              <h3>Tarefas</h3>
+              <p>Organize as entregas, distribua responsabilidades e acompanhe os prazos.</p>
+              <button id="openMarketingTasks" class="button button-quiet" type="button">Abrir tarefas <span aria-hidden="true">↗</span></button>
+            </article>
+          </div>
+          <div id="marketingTasks" hidden></div>
         </section>
 
         <section class="view" id="view-diretoria" aria-labelledby="diretoriaTitle" hidden>

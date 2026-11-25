@@ -5,11 +5,15 @@ import { setWhatsAppNotification } from './portal.js';
 const get = (id) => document.getElementById(id);
 const areas = ['setor', 'talk', 'whatsapp'];
 const titles = { setor: 'Setor', talk: 'Talk', whatsapp: 'WhatsApp' };
-const icons = { overview: 'grid', activities: 'list-task', fiscal: 'receipt', users: 'people', agents: 'broadcast' };
+const icons = { overview: 'grid', activities: 'list-task', tasks: 'list-task', fiscal: 'receipt', users: 'people', agents: 'broadcast' };
+
+function activityPanel(sector) {
+  return sector.id === 'marketing' ? 'tasks' : 'activities';
+}
 
 function sectionOptions(sector) {
   const options = [{ id: 'overview', label: 'Visão geral' }];
-  if (sector.activities) options.push({ id: 'activities', label: 'Atividades' });
+  if (sector.activities) options.push({ id: activityPanel(sector), label: sector.id === 'marketing' ? 'Tarefas' : 'Atividades' });
   if (sector.fiscalDocuments) options.push({ id: 'fiscal', label: 'Documentos fiscais' });
   if (sector.admin && sector.id === 'tecnologia') {
     options.push({ id: 'users', label: 'Equipe e acessos', href: '/home#users' });
@@ -85,25 +89,24 @@ export function mountSectorNavigation() {
       else {
         control.type = 'button';
         if (id === selectedPanel) control.setAttribute('aria-current', 'page');
-        control.addEventListener('click', () => {
-          selectedPanel = id;
-          app.dataset.sectorPanel = id;
-          const url = new URL(location.href);
-          if (id === 'overview') url.searchParams.delete('painel'); else url.searchParams.set('painel', id);
-          if (id !== 'activities') url.searchParams.delete('atividade');
-          if (url.href !== location.href) history.pushState(null, '', url);
-          renderSubnav();
-          if (matchMedia('(max-width: 700px)').matches) {
-            expanded = false;
-            subnav.hidden = true;
-            buttons.setor.setAttribute('aria-expanded', 'false');
-            get('conteudo').focus({ preventScroll: true });
-          } else list.querySelector('[aria-current]')?.focus();
-          document.querySelector('.portal-header')?.scrollIntoView({ block: 'start' });
-        });
+        control.addEventListener('click', () => selectPanel(id, { fromSubnav: true }));
       }
       return control;
     }));
+  }
+
+  function selectPanel(id, { fromSubnav = false } = {}) {
+    if (!context || activeArea !== 'setor' || !sectionOptions(context).some(item => item.id === id && !item.href)) return;
+    const url = new URL(location.href);
+    if (id === 'overview') url.searchParams.delete('painel'); else url.searchParams.set('painel', id);
+    if (id !== activityPanel(context)) url.searchParams.delete('atividade');
+    if (url.href !== location.href) history.pushState(null, '', url);
+    const mobile = matchMedia('(max-width: 700px)').matches;
+    if (mobile) expanded = false;
+    if (mobile || !fromSubnav) get('conteudo').focus({ preventScroll: true });
+    syncLocation();
+    if (!mobile && fromSubnav) subnav.querySelector('[aria-current]')?.focus({ preventScroll: true });
+    document.querySelector('.portal-header')?.scrollIntoView({ block: 'start' });
   }
 
   function showArea(area) {
@@ -119,6 +122,7 @@ export function mountSectorNavigation() {
     buttons.setor.setAttribute('aria-expanded', String(!subnav.hidden));
     setChatSurface({ mount: talkMount, show: area === 'talk' });
     document.title = area === 'setor' ? `${context.label} | Central Maximum` : `${titles[area]} · ${context.label} | Central Maximum`;
+    context.onPanelChange?.(area === 'setor' ? selectedPanel : null);
     if (!changed) return;
     stopBadgePoll();
     stopWhatsApp?.();
@@ -144,7 +148,8 @@ export function mountSectorNavigation() {
   function syncLocation() {
     if (!context) return;
     const query = new URLSearchParams(location.search);
-    const candidate = query.get('painel') || (query.has('atividade') ? 'activities' : 'overview');
+    const requested = query.get('painel');
+    const candidate = requested === 'activities' || (!requested && query.has('atividade')) ? activityPanel(context) : requested || 'overview';
     selectedPanel = sectionOptions(context).some(({ id, href }) => id === candidate && !href) ? candidate : 'overview';
     app.dataset.sectorPanel = selectedPanel;
     renderSubnav();
@@ -158,6 +163,7 @@ export function mountSectorNavigation() {
   }
 
   function leave() {
+    context?.onPanelChange?.(null);
     if (context) stopWhatsApp?.();
     stopWhatsApp = undefined;
     stopBadgePoll();
@@ -197,7 +203,7 @@ export function mountSectorNavigation() {
   for (const area of areas) buttons[area].addEventListener('click', () => open(area));
   window.addEventListener('popstate', syncLocation);
   return {
-    activate, leave, open,
+    activate, leave, open, selectPanel,
     setTalkUnread(count) { notification(buttons.talk, get('sectorTalkDot'), 'Talk', count); },
   };
 }

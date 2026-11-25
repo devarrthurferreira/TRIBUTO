@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { createPlatformRouter } from '../src/platform/routes.mjs';
-import { canPerform, canAccessWorkItemCompany } from '../src/platform/policy.mjs';
+import { INTERNAL_WORK_ITEM_MODULES, canPerform, canAccessWorkItemCompany } from '../src/platform/policy.mjs';
 import { sha256 } from '../src/api/validation.mjs';
 
 const CNPJ_A = '12345678000195';
@@ -79,15 +80,35 @@ class MemoryPlatformStore {
   async createAgent(agent) { this.agents.set(agent._id, agent); }
   async revokeAgent(id) { const value = this.agents.get(id); if (value) value.active = false; return value; }
   async findAgentByTokenHash(hash) { return [...this.agents.values()].find(x => x.tokenSha256 === hash && x.active); }
-  async listWorkItems({ modules, companyCnpjs, module, companyCnpj }) {
+  async listWorkItems({ modules, companyCnpjs, module, companyCnpj, limit = 500, offset = 0 }) {
     return [...this.items.values()].filter(item =>
       (module ? item.module === module : modules.includes(item.module)) &&
-      (companyCnpjs === null || companyCnpjs.includes(item.companyCnpj) || item.module === 'tecnologia' && item.companyCnpj === null) &&
-      (!companyCnpj || item.companyCnpj === companyCnpj));
+      (companyCnpjs === null || companyCnpjs.includes(item.companyCnpj) || INTERNAL_WORK_ITEM_MODULES.includes(item.module) && item.companyCnpj === null) &&
+      (!companyCnpj || item.companyCnpj === companyCnpj))
+      .sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt) || right._id.localeCompare(left._id))
+      .slice(offset, offset + limit);
   }
   async getWorkItem(id) { return this.items.get(id); }
-  async createWorkItem(item) { this.items.set(item._id, item); }
-  async updateWorkItem(id, changes) { const value = { ...this.items.get(id), ...changes }; this.items.set(id, value); return value; }
+  async listWorkItemHistory(id) {
+    return this.auditEntries.filter(event => event.subject === id && event.action.startsWith('work_item.')).slice(-30).reverse().map(event => ({
+      action: event.action.split('.')[1], at: event.at, actorName: this.users.get(event.actorId)?.name || 'Usuário indisponível',
+      fields: event.detail.fields || [], ...(event.detail.status ? { status: event.detail.status } : {})
+    }));
+  }
+  async createWorkItem(item) {
+    this.items.set(item._id, item);
+    if (item.module === 'marketing') await this.audit('work_item.create', item.createdBy, item._id, { status: item.status });
+  }
+  async updateWorkItem(id, changes, { expected, actorId } = {}) {
+    const previous = this.items.get(id);
+    if (!previous || expected && (previous.updatedAt !== expected.updatedAt || previous.companyCnpj !== expected.companyCnpj || previous.assigneeId !== expected.assigneeId)) return null;
+    const updatedAt = new Date(Math.max(Date.now(), new Date(previous.updatedAt).getTime() + 1));
+    const value = { ...previous, ...changes, updatedAt };
+    if (value.module === 'marketing') value.completedAt = value.status !== 'done' ? null : previous.status === 'done' ? previous.completedAt : updatedAt;
+    this.items.set(id, value);
+    if (value.module === 'marketing') await this.audit('work_item.update', actorId, id, { fields: Object.keys(changes), status: changes.status });
+    return value;
+  }
   async listFiscalDocuments(allowed, cnpj, page, limit) {
     const rows = [...this.documents.values()].filter(x => (allowed === null || allowed.includes(x.companyCnpj)) && (!cnpj || x.companyCnpj === cnpj));
     const documents = rows.slice((page - 1) * limit, page * limit).map(({ _id, companyCnpj, source, nsu, documentKey, receivedAt }) => ({ id: _id, companyCnpj, source, nsu, documentKey, receivedAt }));
@@ -114,7 +135,7 @@ class MemoryPlatformStore {
     const rows = [...this.documents.values()].filter(x => x.companyCnpj === cnpj && x.source === 'NFSE');
     return { source: 'NFSE', lastNsu: rows.at(-1)?.nsu ?? null, lastSeenAt: rows.at(-1)?.receivedAt ?? null, status: rows.length ? 'received' : 'never_collected' };
   }
-  async audit(action, actorId, subject) { this.auditEntries.push({ action, actorId, subject }); }
+  async audit(action, actorId, subject, detail = {}) { this.auditEntries.push({ action, actorId, subject, detail, at: new Date() }); }
 }
 
 async function fixture(run) {
@@ -301,6 +322,92 @@ test('Tecnologia aceita demandas internas e aplica bloqueios por ação', async 
   assert.equal((await request(url, itemPath, { ...complete, ...member })).status, 403);
   const invalid = await request(url, userPath, { method: 'PATCH', ...admin, data: { moduleGrants: { tecnologia: { level: 'edit', blockedActions: ['fiscalDocumentsRead'] } } } });
   assert.equal(invalid.status, 400);
+}));
+
+test('tarefas de Marketing mantêm checklist, histórico, conclusão e escopo da carteira', async () => fixture(async ({ store, url }) => {
+  const platform = '/v1/platform';
+  const admin = await setup(url);
+  for (const company of [CNPJ_A, CNPJ_B]) {
+    assert.equal((await request(url, `${platform}/companies`, { method: 'POST', ...admin, data: { cnpj: company, name: company } })).status, 201);
+  }
+  async function member(name, moduleGrants, companyCnpjs) {
+    const credentials = { email: `${name.toLowerCase()}@example.test`, password: 'senha-exemplo-longa-123' };
+    const created = await request(url, `${platform}/users`, { method: 'POST', ...admin,
+      data: { ...credentials, name, role: 'member', moduleGrants, companyCnpjs } });
+    assert.equal(created.status, 201);
+    const login = await request(url, `${platform}/login`, { method: 'POST', data: credentials });
+    assert.equal(login.status, 200);
+    return { id: created.body.user.id, cookie: login.cookie, csrf: login.body.csrfToken };
+  }
+  const editor = await member('Editora', { marketing: 'edit' }, [CNPJ_A]);
+  const reader = await member('Leitora', { marketing: 'view' }, []);
+  const outsider = await member('Outro', { tecnologia: 'edit' }, [CNPJ_A, CNPJ_B]);
+  const list = access => request(url, `${platform}/work-items?module=marketing`, access);
+  const create = (access, data) => request(url, `${platform}/work-items`, { method: 'POST', ...access, data: { module: 'marketing', ...data } });
+  const edit = (access, id, data) => request(url, `${platform}/work-items/${id}`, { method: 'PATCH', ...access, data });
+  const details = (access, id) => request(url, `${platform}/work-items/${id}`, access);
+
+  const input = { title: 'Publicar conteúdo', description: 'Briefing privado', priority: 'urgent', campaign: 'Campanha de novembro',
+    tags: ['Stories', 'Social'], checklist: [{ title: 'Aprovar arte', done: false }], referenceUrl: 'https://example.test/briefing' };
+  assert.equal((await create(reader, input)).status, 403);
+  assert.equal((await list(outsider)).status, 403);
+  assert.equal((await create(editor, { ...input, referenceUrl: 'javascript:void(0)' })).status, 400);
+  assert.equal((await create(editor, { ...input, tags: ['Social', 'social'] })).status, 400);
+  assert.equal((await create(editor, { ...input, companyCnpj: CNPJ_B })).status, 403);
+  assert.equal((await create(editor, { ...input, companyCnpj: CNPJ_A, assigneeId: reader.id })).body.error, 'UNKNOWN_ASSIGNEE');
+  assert.equal((await create(editor, { ...input, assigneeId: outsider.id })).body.error, 'UNKNOWN_ASSIGNEE');
+  const created = await create(editor, { ...input, assigneeId: editor.id });
+  assert.equal(created.status, 201);
+  const task = created.body.item;
+  assert.equal(task.companyCnpj, null);
+  assert.equal(task.completedAt, null);
+  assert.equal(task.priority, 'urgent');
+  assert.ok(task.checklist[0].id);
+  assert.deepEqual((await list(reader)).body.items.map(item => item.id), [task.id]);
+  const choices = (await list(reader)).body.assignees;
+  assert.deepEqual(choices.map(({ name }) => name).sort(), ['Arthur', 'Editora', 'Leitora']);
+  assert.ok(choices.every(choice => Object.keys(choice).sort().join(',') === 'id,name'));
+
+  const finished = await edit(editor, task.id, { status: 'done', checklist: [{ ...task.checklist[0], done: true }], expectedUpdatedAt: task.updatedAt });
+  assert.equal(finished.status, 200);
+  const completed = finished.body.item;
+  assert.ok(completed.completedAt);
+  assert.equal(completed.checklist[0].done, true);
+  assert.equal((await edit(editor, task.id, { campaign: 'Tentativa antiga', expectedUpdatedAt: task.updatedAt })).status, 409);
+  const retagged = await edit(editor, task.id, { tags: ['Edição'] });
+  assert.equal(retagged.body.item.completedAt, completed.completedAt);
+  assert.equal((await edit(reader, task.id, { title: 'Tentativa sem acesso' })).status, 403);
+  assert.equal((await edit(editor, task.id, { companyCnpj: CNPJ_A, status: 'in_progress' })).status, 403);
+  const linked = await edit(admin, task.id, { companyCnpj: CNPJ_A, status: 'in_progress' });
+  assert.equal(linked.status, 200);
+  assert.equal(linked.body.item.completedAt, null);
+  assert.equal(linked.body.item.companyCnpj, CNPJ_A);
+  assert.equal((await details(reader, task.id)).status, 404);
+  assert.equal((await edit(editor, task.id, { companyCnpj: null })).status, 403);
+  assert.equal((await edit(editor, task.id, { companyCnpj: CNPJ_B })).status, 403);
+  const record = (await details(editor, task.id)).body;
+  assert.deepEqual(record.history.map(({ action }) => action), ['update', 'update', 'update', 'create']);
+  assert.equal(record.history[0].actorName, 'Arthur');
+  assert.deepEqual(record.history[0].fields.sort(), ['companyCnpj', 'status']);
+  assert.equal(JSON.stringify(record.history).includes('Briefing privado'), false);
+
+  const imported = await create(editor, { title: 'Tarefa concluída cadastrada', status: 'done' });
+  assert.ok(imported.body.item.completedAt);
+  const oldTimestamp = new Date('2025-01-01T12:00:00.000Z');
+  for (let i = 0; i < 100; i++) {
+    const id = randomUUID();
+    store.items.set(id, { ...task, _id: id, title: `Tarefa antiga ${i}`, priority: undefined, status: 'done', createdAt: oldTimestamp, updatedAt: oldTimestamp });
+  }
+  const first = (await list(editor)).body;
+  const second = (await request(url, `${platform}/work-items?module=marketing&page=2`, editor)).body;
+  assert.equal(first.items.length, 100);
+  assert.equal(first.hasMore, true);
+  assert.equal(second.items.length, 2);
+  assert.equal(second.hasMore, false);
+  assert.equal(second.items[0].priority, 'normal');
+  assert.equal(second.items[0].completedAt, null);
+  assert.equal(second.assignees, undefined);
+  assert.equal(new Set([...first.items, ...second.items].map(item => item.id)).size, 102);
 }));
 
 test('token do agente é exibido uma vez e documentos não expõem XML', async () => fixture(async ({ store, url }) => {

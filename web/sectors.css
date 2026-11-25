@@ -83,6 +83,7 @@
   min-height: calc(100dvh - var(--portal-header-size));
   padding-top: clamp(20px, 2.8vw, 42px);
 }
+#marketingTasksSummary { width: min(100%, 460px); }
 .app-shell[data-sector-area="setor"]:not([data-sector-panel="activities"]) .view > .work-section,
 .app-shell[data-sector-area="setor"]:not([data-sector-panel="fiscal"]) #fiscalDocumentTools,
 .app-shell[data-sector-area="setor"][data-sector-panel="activities"] .view > :is(.feature-grid, .module-message, .technology-overview),

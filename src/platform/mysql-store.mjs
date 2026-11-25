@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { MODULES, canPerform } from './policy.mjs';
+import { INTERNAL_WORK_ITEM_MODULES, MODULES, canPerform } from './policy.mjs';
 
 // All dates are UTC. Configure the mysql2 pool with timezone: 'Z'.
 const json = (value) => JSON.stringify(value);
@@ -46,8 +46,24 @@ function workItem(row) {
     _id: row.id, module: row.module, companyCnpj: row.company_cnpj || null,
     title: row.title, description: row.description, status: row.status,
     dueAt: row.due_at, assigneeId: row.assignee_id, createdBy: row.created_by,
-    createdAt: sqlDate(row.created_at), updatedAt: sqlDate(row.updated_at)
+    createdAt: sqlDate(row.created_at), updatedAt: sqlDate(row.updated_at),
+    ...(row.module === 'marketing' ? { ...parse(row.details_json, {}), completedAt: sqlDate(row.completed_at) } : {})
   };
+}
+
+const WORK_ITEM_SELECT = `SELECT task.*, details.details_json, details.completed_at
+  FROM platform_work_items task LEFT JOIN platform_marketing_task_details details ON details.work_item_id = task.id`;
+const MARKETING_DETAIL_FIELDS = ['priority', 'tags', 'checklist', 'campaign', 'referenceUrl'];
+
+function marketingDetails(item) {
+  return Object.fromEntries(MARKETING_DETAIL_FIELDS.filter(key => item[key] !== undefined).map(key => [key, item[key]]));
+}
+
+async function saveMarketingDetails(connection, task, completedAt) {
+  const details = json(marketingDetails(task));
+  await connection.execute(`INSERT INTO platform_marketing_task_details (work_item_id, details_json, completed_at)
+    VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE details_json = ?, completed_at = ?`,
+  [task._id, details, completedAt, details, completedAt]);
 }
 
 function scope(column, allowed, parameters) {
@@ -59,9 +75,9 @@ function scope(column, allowed, parameters) {
 
 function workItemCompanyScope(allowed, modules, parameters) {
   const companies = scope('company_cnpj', allowed, parameters);
-  // An empty company key is an internal Technology task in existing databases.
-  return allowed !== null && modules.includes('tecnologia')
-    ? `(${companies} OR (module = 'tecnologia' AND company_cnpj = ''))`
+  const internal = INTERNAL_WORK_ITEM_MODULES.filter(module => modules.includes(module));
+  return allowed !== null && internal.length
+    ? `(${companies} OR (${scope('module', internal, parameters)} AND company_cnpj = ''))`
     : companies;
 }
 
@@ -119,6 +135,11 @@ const TABLES = [
     updated_at DATETIME(3) NOT NULL,
     KEY idx_platform_work_scope (module, company_cnpj, status, due_at),
     KEY idx_platform_work_updated (updated_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_marketing_task_details (
+    work_item_id CHAR(36) NOT NULL PRIMARY KEY,
+    details_json LONGTEXT NOT NULL,
+    completed_at DATETIME(3) NULL
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS platform_audit (
     id CHAR(36) NOT NULL PRIMARY KEY, action VARCHAR(100) NOT NULL,
@@ -316,7 +337,7 @@ export class PlatformMySqlStore {
     });
   }
 
-  async listWorkItems({ modules, companyCnpjs, module, companyCnpj }) {
+  async listWorkItems({ modules, companyCnpjs, module, companyCnpj, limit = 500, offset = 0 }) {
     const params = [];
     const clauses = [module ? 'module = ?' : scope('module', modules, params)];
     if (module) params.push(module);
@@ -324,21 +345,58 @@ export class PlatformMySqlStore {
       clauses.push('company_cnpj = ?'); params.push(companyCnpj);
       if (companyCnpjs !== null && !companyCnpjs.includes(companyCnpj)) return [];
     } else clauses.push(workItemCompanyScope(companyCnpjs, modules, params));
-    return (await this.rows(`SELECT * FROM platform_work_items WHERE ${clauses.join(' AND ')} ORDER BY updated_at DESC LIMIT 500`, params)).map(workItem);
+    return (await this.rows(`${WORK_ITEM_SELECT} WHERE ${clauses.join(' AND ')} ORDER BY updated_at DESC, task.id DESC LIMIT ? OFFSET ?`, [...params, limit, offset])).map(workItem);
   }
-  async getWorkItem(id) { return workItem(await this.one('SELECT * FROM platform_work_items WHERE id = ?', [id])); }
+  async getWorkItem(id) { return workItem(await this.one(`${WORK_ITEM_SELECT} WHERE task.id = ?`, [id])); }
+  async listWorkItemHistory(id) {
+    const rows = await this.rows(`SELECT audit.action, audit.at, audit.detail_json, people.name
+      FROM platform_audit audit LEFT JOIN platform_users people ON people.id = audit.actor_id
+      WHERE audit.subject = ? AND audit.action IN ('work_item.create', 'work_item.update')
+      ORDER BY audit.at DESC, audit.id DESC LIMIT 30`, [id]);
+    return rows.map(row => {
+      const detail = parse(row.detail_json, {});
+      return { action: row.action === 'work_item.create' ? 'create' : 'update', at: sqlDate(row.at),
+        actorName: row.name || 'Usuário indisponível', fields: detail.fields || [], ...(detail.status ? { status: detail.status } : {}) };
+    });
+  }
   async createWorkItem(item) {
-    await this.pool.execute(`INSERT INTO platform_work_items (id, module, company_cnpj, title, description, status,
+    const insert = connection => connection.execute(`INSERT INTO platform_work_items (id, module, company_cnpj, title, description, status,
       due_at, assignee_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [item._id, item.module, item.companyCnpj ?? '', item.title, item.description, item.status, item.dueAt,
       item.assigneeId, item.createdBy, item.createdAt, item.updatedAt]);
+    if (item.module !== 'marketing') return insert(this.pool);
+    await this.transaction(async connection => {
+      await insert(connection);
+      await saveMarketingDetails(connection, item, item.completedAt);
+      await this.insertAudit(connection, 'work_item.create', item.createdBy, item._id, { module: item.module, status: item.status });
+    });
   }
-  async updateWorkItem(id, changes) {
-    const fields = { title: 'title', description: 'description', status: 'status', dueAt: 'due_at', assigneeId: 'assignee_id' };
-    const entries = Object.entries(changes).filter(([key]) => Object.hasOwn(fields, key));
-    await this.pool.execute(`UPDATE platform_work_items SET ${entries.map(([key]) => `${fields[key]} = ?`).join(', ')}, updated_at = ? WHERE id = ?`,
-      [...entries.map(([, value]) => value), new Date(), id]);
+  async updateWorkItem(id, changes, { expected, actorId } = {}) {
+    if (expected) return this.transaction(async connection => {
+      // Lock the task before reading or changing its optional details.
+      const [[locked]] = await connection.execute('SELECT * FROM platform_work_items WHERE id = ? FOR UPDATE', [id]);
+      if (!locked || locked.module !== 'marketing' || sqlDate(locked.updated_at) !== new Date(expected.updatedAt).toISOString()
+        || (locked.company_cnpj || null) !== expected.companyCnpj || locked.assignee_id !== expected.assigneeId) return null;
+      const [[row]] = await connection.execute(`${WORK_ITEM_SELECT} WHERE task.id = ?`, [id]);
+      const current = workItem(row);
+      const updatedAt = new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1));
+      const updated = { ...current, ...changes, updatedAt };
+      const completedAt = updated.status !== 'done' ? null
+        : current.status === 'done' ? current.completedAt && new Date(current.completedAt) : updatedAt;
+      await this.updateWorkItemFields(connection, id, changes, updatedAt);
+      await saveMarketingDetails(connection, updated, completedAt);
+      await this.insertAudit(connection, 'work_item.update', actorId, id, { fields: Object.keys(changes), ...(changes.status ? { status: changes.status } : {}) });
+      return { ...updated, completedAt: completedAt?.toISOString() ?? null };
+    });
+    await this.updateWorkItemFields(this.pool, id, changes, new Date());
     return this.getWorkItem(id);
+  }
+  async updateWorkItemFields(connection, id, changes, updatedAt) {
+    const fields = { title: 'title', description: 'description', status: 'status', dueAt: 'due_at', assigneeId: 'assignee_id', companyCnpj: 'company_cnpj' };
+    const entries = Object.entries(changes).filter(([key]) => Object.hasOwn(fields, key));
+    const assignments = [...entries.map(([key]) => `${fields[key]} = ?`), 'updated_at = ?'];
+    await connection.execute(`UPDATE platform_work_items SET ${assignments.join(', ')} WHERE id = ?`,
+      [...entries.map(([key, value]) => key === 'companyCnpj' ? value ?? '' : value), updatedAt, id]);
   }
 
   async dashboard(person) {

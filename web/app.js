@@ -2,6 +2,7 @@ import { destroyChat, initChat, openChat } from './chat.js';
 import { mountPortal, setChatNotification } from './portal.js';
 import { mountSectorNavigation } from './sectors.js';
 import { mountUserWizard } from './user-wizard.js';
+import { mountMarketingTasks } from './marketing-tasks.js';
 
 const API = '/v1/platform';
 const DASHBOARD_PATH = '/home';
@@ -192,7 +193,10 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   state.session = null;
   state.selectedCompanyCnpj = null;
   state.selectedClientCnpj = null;
-  if (location.pathname !== '/' || (!preserveRoute && location.hash)) {
+  const query = new URLSearchParams(location.search);
+  const preserveMarketingLink = preserveRoute && location.pathname === `${SECTOR_PREFIX}marketing`
+    && (query.get('painel') === 'tasks' || query.has('atividade'));
+  if (!preserveMarketingLink && (location.pathname !== '/' || (!preserveRoute && location.hash))) {
     const fragment = preserveRoute && !location.pathname.startsWith(SECTOR_PREFIX) ? location.hash : '';
     history.replaceState(null, '', `/${fragment}`);
   }
@@ -262,6 +266,7 @@ function applySession(session) {
   $('fiscalDocumentTools').hidden = !canReadFiscalDocuments;
   $('technologyOverview').hidden = !canUse('tecnologia', 'workItemRead');
   $('technologyRestricted').hidden = canUse('tecnologia', 'workItemRead');
+  $('marketingTasksSummary').hidden = !canUse('marketing', 'workItemRead');
   document.querySelector('[data-go="tecnologia"]').hidden = !canView('tecnologia');
   renderModuleCards();
   void initialLoad();
@@ -366,6 +371,7 @@ function navigate(view, { replace = false } = {}) {
     content: $(`view-${sector.id}`), activities: canUse(sector.id, 'workItemRead'),
     fiscalDocuments: sector.id === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead'),
     talk: canUse(sector.id, 'sectorTalkRead'), whatsapp: canUse(sector.id, 'whatsappRead'),
+    onPanelChange: sector.id === 'marketing' ? showMarketingPanel : undefined,
   } : null, { home: state.view === 'overview' });
   $('conteudo').focus({ preventScroll: true });
   if (state.view === 'users') void loadUsers().catch(displayError);
@@ -374,8 +380,29 @@ function navigate(view, { replace = false } = {}) {
   if (state.view === 'client-detail') void loadClientDetail(state.selectedClientCnpj).catch(displayError);
   if (state.view === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead')) void loadFiscalDocuments().catch(displayError);
   if (state.view === 'company-detail') void loadCompanyDetail().catch(displayError);
-  if (canUse(state.view, 'workItemRead')) void loadWorkItems(state.view).catch(displayError);
+  if (state.view !== 'marketing' && canUse(state.view, 'workItemRead')) void loadWorkItems(state.view).catch(displayError);
   return surface;
+}
+
+let marketingCleanup;
+let marketingLinkedItem;
+
+function showMarketingPanel(panel) {
+  const showTasks = panel === 'tasks' && canUse('marketing', 'workItemRead');
+  $('marketingTasks').hidden = !showTasks;
+  $('marketingOverview').hidden = showTasks;
+  const linkedItemId = showTasks ? new URLSearchParams(location.search).get('atividade') : null;
+  if (showTasks && marketingCleanup && linkedItemId === marketingLinkedItem) return;
+  marketingCleanup?.();
+  marketingCleanup = undefined;
+  marketingLinkedItem = linkedItemId;
+  if (!showTasks) return;
+  marketingCleanup = mountMarketingTasks($('marketingTasks'), {
+    request, companies: () => state.companies,
+    canCreate: canUse('marketing', 'workItemCreate'), canUpdate: canUse('marketing', 'workItemUpdate'),
+    canReassignCompany: isAdmin(), linkedItemId,
+    onChange: () => void loadDashboard().catch(displayError),
+  });
 }
 function openMenu() { $('sidebar').classList.add('open'); $('menuBackdrop').hidden = false; $('openMenu').setAttribute('aria-expanded', 'true'); }
 function closeMenu() { $('sidebar').classList.remove('open'); $('menuBackdrop').hidden = true; $('openMenu').setAttribute('aria-expanded', 'false'); }
@@ -1263,6 +1290,7 @@ function setupEvents() {
   for (const button of document.querySelectorAll('button.nav-link')) button.addEventListener('click', () => navigate(button.dataset.view));
   for (const button of document.querySelectorAll('button[data-go]')) button.addEventListener('click', () => navigate(button.dataset.go));
   $('companySearch').addEventListener('input', renderCompanies);
+  $('openMarketingTasks').addEventListener('click', () => sectorNavigation.selectPanel('tasks'));
   $('fiscalCompanyLookup').addEventListener('input', renderFiscalCompanyQuickList);
   $('fiscalCompanyFilter').addEventListener('change', () => void loadFiscalDocuments().catch(displayError));
   $('backToCompanies').addEventListener('click', () => navigate(isAdmin() ? `client-${state.selectedCompanyCnpj}` : 'fiscal'));
