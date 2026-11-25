@@ -183,6 +183,8 @@ function setPortalContext(view) {
   $('portalSector').textContent = label;
   $('portalSector').title = label;
   $('appView').dataset.view = view;
+  $('homeClub').hidden = view !== 'overview';
+  $('railClub').hidden = view === 'overview';
 }
 
 function showAuth(setupRequired, message = '', preserveRoute = false) {

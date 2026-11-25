@@ -56,6 +56,8 @@
   font-size: 18px;
 }
 .portal-icon:hover, .portal-popover[open] > summary { background: var(--portal-hover); color: var(--blue); }
+.portal-home-club { display: flex; justify-content: center; gap: 7px; width: auto; padding-inline: 10px; color: var(--blue); text-decoration: none; }
+.portal-home-club span { font-size: 12px; font-weight: 650; }
 .portal-menu { display: none; }
 .portal-popover { position: relative; }
 .portal-popover summary, .portal-summary > summary { cursor: pointer; list-style: none; }
@@ -306,6 +308,8 @@
   .portal-brand { gap: 6px; }
   .portal-controls { gap: 2px; }
   .portal-icon { width: 30px; height: 34px; font-size: 16px; }
+  .portal-home-club { padding-inline: 0; }
+  .portal-home-club span { display: none; }
   .portal-sector { font-size: 10px; }
   .portal-header-divider { height: 17px; }
   .portal-logo { width: clamp(82px, 24vw, 118px); }
