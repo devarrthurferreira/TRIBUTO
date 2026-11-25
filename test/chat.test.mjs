@@ -133,11 +133,31 @@ test('chat em polling autentica destinatários, guarda mensagens e protege anexo
     assert.equal(file.status, 200);
     assert.match(file.headers.get('content-disposition'), /^attachment/);
     assert.equal(await file.text(), 'A,B\n1,2');
+
+    ana.moduleGrants.tecnologia = { level: 'view', blockedActions: ['sectorTalkSend'] };
+    const readOnly = await (await request(ana)).json();
+    assert.equal(readOnly.rooms.find(room => room.id === input.room).readOnly, true);
+    const target = { room: 'sector:tecnologia', id: sent.message.id };
+    assert.equal((await sender.timeout(3000).emitWithAck('chat:send', { ...input, clientId: randomUUID() })).code, 'CHAT_FORBIDDEN');
+    assert.equal((await sender.timeout(3000).emitWithAck('chat:edit', { ...target, text: 'Envio bloqueado' })).code, 'CHAT_FORBIDDEN');
+    assert.equal((await sender.timeout(3000).emitWithAck('chat:delete', target)).code, 'CHAT_FORBIDDEN');
+    assert.equal((await request(ana, '/messages?room=sector%3Atecnologia')).status, 200);
+    ana.moduleGrants.tecnologia = 'view';
+
+    bruno.moduleGrants.tecnologia = { level: 'view', blockedActions: ['sectorTalkRead'] };
+    const restricted = await (await request(bruno)).json();
+    assert.ok(restricted.modules.some(module => module.id === 'tecnologia'));
+    assert.ok(!restricted.rooms.some(room => room.id === input.room));
+    assert.equal(restricted.unread, 0);
+    assert.equal((await request(bruno, '/messages?room=sector%3Atecnologia')).status, 403);
+    assert.equal((await request(bruno, attachmentPath)).status, 404);
+    assert.equal((await recipient.timeout(3000).emitWithAck('chat:send', { ...input, clientId: randomUUID() })).code, 'CHAT_FORBIDDEN');
+    bruno.moduleGrants.tecnologia = 'view';
+
     assert.equal((await request(bruno)).status, 200);
     assert.equal((await (await request(bruno)).json()).unread, 1);
     assert.equal((await request(bruno, '/read', { room: 'sector:tecnologia', through: sent.message.id })).status, 200);
     assert.equal((await (await request(bruno)).json()).unread, 0);
-    const target = { room: 'sector:tecnologia', id: sent.message.id };
     const unauthorizedEdit = await recipient.timeout(3000).emitWithAck('chat:edit', { ...target, text: 'Outro autor' });
     assert.equal(unauthorizedEdit.code, 'CHAT_NOT_FOUND');
     const unauthorizedDelete = await recipient.timeout(3000).emitWithAck('chat:delete', target);
@@ -167,6 +187,7 @@ test('chat em polling autentica destinatários, guarda mensagens e protege anexo
     const afterDeleteEdit = await sender.timeout(3000).emitWithAck('chat:edit', { ...target, text: 'Recriar mensagem' });
     assert.equal(afterDeleteEdit.code, 'CHAT_DELETED');
 
+    ana.moduleGrants.tecnologia = { level: 'view', blockedActions: ['sectorTalkSend'] };
     const privateEvent = once(outsider, 'chat:message');
     const privateSent = await sender.timeout(3000).emitWithAck('chat:send', { ...input, clientId: randomUUID(), room: `direct:${carla._id}`, attachments: [] });
     assert.equal(privateSent.ok, true);
@@ -174,6 +195,7 @@ test('chat em polling autentica destinatários, guarda mensagens e protege anexo
     assert.equal(privateReceived.message.room, `direct:${ana._id}`);
     assert.equal(privateReceived.message.reference, null);
     assert.equal((await (await request(carla, `/messages?room=direct%3A${ana._id}`)).json()).messages[0].reference, null);
+    ana.moduleGrants.tecnologia = 'view';
     const blocked = await outsider.timeout(3000).emitWithAck('chat:send', { ...input, clientId: randomUUID() });
     assert.equal(blocked.code, 'CHAT_FORBIDDEN');
     const invalidFile = await sender.timeout(3000).emitWithAck('chat:send', { ...input, clientId: randomUUID(),

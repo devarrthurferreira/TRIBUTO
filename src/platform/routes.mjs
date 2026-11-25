@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ApiError, sha256 } from '../api/validation.mjs';
 import { hashPassword, verifyPassword, newSecret, safeEqualHex } from './auth.mjs';
+import { lookupCep } from './cep.mjs';
 import { MODULES, LEVELS, capabilitiesFor, permissionsFor, canAccess, canAccessCompany, canAccessWorkItemCompany, canPerform, publicUser } from './policy.mjs';
 
 const COOKIE = 'tributo_session';
@@ -8,8 +9,10 @@ const SESSION_MS = 12 * 60 * 60_000;
 const SETUP_PASSWORD_MIN_LENGTH = 10;
 const CNPJ = /^\d{14}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const USERNAME = /^[a-z0-9]{1,35}\.[a-z0-9]{1,38}$/;
 const NSU = /^(0|[1-9]\d{0,14})$/;
 const MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/;
+const LOCAL_DATE = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
 
 function fail(status, code, message) { throw new ApiError(status, code, message); }
 function check(condition, field) { if (!condition) fail(400, 'INVALID_INPUT', `Campo inválido: ${field}`); }
@@ -44,6 +47,46 @@ function email(value) {
   check(EMAIL.test(normalized), 'email');
   return normalized;
 }
+function loginIdentifier(value) {
+  const normalized = field(value, 'e-mail ou usuário', 3, 254).toLowerCase();
+  if (normalized.includes('@')) return email(normalized);
+  check(USERNAME.test(normalized), 'usuário');
+  return normalized;
+}
+function dateField(value, name) {
+  const parsed = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00Z`) : null;
+  check(parsed && !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value, name);
+  return value;
+}
+function profileFor(input) {
+  check(input && typeof input === 'object' && !Array.isArray(input), 'dados pessoais');
+  const firstName = field(input.firstName, 'nome', 1, 50);
+  const lastName = field(input.lastName, 'sobrenome', 1, 50);
+  const cpf = field(input.cpf, 'CPF', 11, 20).replace(/[.\s-]/g, '');
+  check(/^\d{11}$/.test(cpf) && !/^(\d)\1{10}$/.test(cpf), 'CPF');
+  const digits = [...cpf].map(Number);
+  const cpfDigit = (length) => digits.slice(0, length).reduce((sum, digit, index) => sum + digit * (length + 1 - index), 0) * 10 % 11 % 10;
+  check(digits[9] === cpfDigit(9) && digits[10] === cpfDigit(10), 'CPF');
+  const birthDate = dateField(input.birthDate, 'nascimento');
+  check(birthDate >= '1900-01-01' && birthDate < LOCAL_DATE.format(new Date()), 'nascimento');
+  const phone = field(input.phone, 'telefone', 10, 24).replace(/[().\s-]/g, '');
+  check(/^(?:\+?55)?[1-9]\d{9,10}$/.test(phone), 'telefone');
+  check(typeof input.hasChildren === 'boolean', 'possui filhos');
+  const childrenCount = input.childrenCount ?? 0;
+  check(Number.isInteger(childrenCount) && (input.hasChildren ? childrenCount >= 1 && childrenCount <= 99 : childrenCount === 0), 'quantidade de filhos');
+  const address = input.address;
+  check(address && typeof address === 'object' && !Array.isArray(address), 'endereço');
+  const cep = field(address.cep, 'CEP', 8, 12).replace(/[\s-]/g, '');
+  check(/^\d{8}$/.test(cep), 'CEP');
+  return { firstName, lastName, cpf, birthDate, email: email(input.email), phone: phone.replace(/^\+/, ''), hasChildren: input.hasChildren, childrenCount,
+    address: { cep, street: field(address.street, 'logradouro', 2, 160), neighborhood: field(address.neighborhood, 'bairro', 1, 100), number: field(address.number, 'número', 1, 30) } };
+}
+function usernameFor({ firstName, lastName }) {
+  const normalize = (value) => value.normalize('NFD').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 35);
+  const username = `${normalize(firstName)}.${normalize(lastName)}`;
+  check(USERNAME.test(username), 'nome e sobrenome do usuário');
+  return username;
+}
 function validCnpj(value) {
   if (typeof value !== 'string' || !CNPJ.test(value) || /^(\d)\1{13}$/.test(value)) return false;
   const digits = [...value].map(Number);
@@ -51,6 +94,7 @@ function validCnpj(value) {
   return digits[12] === checksum(12, [5,4,3,2,9,8,7,6,5,4,3,2]) && digits[13] === checksum(13, [6,5,4,3,2,9,8,7,6,5,4,3,2]);
 }
 function cnpj(value) { check(validCnpj(value), 'cnpj'); return value; }
+function companyView({ cnpj, name, active, createdAt }) { return { cnpj, name, active, createdAt }; }
 function month(value, name) {
   if (value === null) return null;
   check(MONTH.test(value), name);
@@ -90,10 +134,14 @@ function requireCsrf(req, session) {
 function sessionView(user, session, setupRequired = false) {
   return { user: publicUser(user), permissions: permissionsFor(user), capabilities: capabilitiesFor(user), csrfToken: session?.csrfToken ?? null, setupRequired };
 }
-function validateAccess(input) {
-  check(Array.isArray(input.companyCnpjs) && input.companyCnpjs.length <= 1000 && input.companyCnpjs.every(validCnpj) && new Set(input.companyCnpjs).size === input.companyCnpjs.length, 'companyCnpjs');
-  check(input.moduleGrants && typeof input.moduleGrants === 'object' && !Array.isArray(input.moduleGrants), 'moduleGrants');
-  const entries = Object.entries(input.moduleGrants).map(([id, grant]) => {
+async function validateCompanyGrants(store, companies) {
+  check(Array.isArray(companies) && companies.length <= 1000 && companies.every(validCnpj) && new Set(companies).size === companies.length, 'companyCnpjs');
+  for (const cnpj of companies) if (!await store.companyExists(cnpj)) fail(400, 'UNKNOWN_COMPANY', 'Empresa não cadastrada');
+  return companies;
+}
+function validateModuleGrants(grants) {
+  check(grants && typeof grants === 'object' && !Array.isArray(grants), 'moduleGrants');
+  const entries = Object.entries(grants).map(([id, grant]) => {
     const module = MODULES.find(entry => entry.id === id);
     const name = `moduleGrants.${id}`;
     check(module, name);
@@ -103,16 +151,14 @@ function validateAccess(input) {
     check(Array.isArray(blocked) && blocked.length <= module.actions.length && blocked.every(action => module.actions.includes(action)) && new Set(blocked).size === blocked.length, `${name}.blockedActions`);
     return [id, blocked.length ? { level: grant.level, blockedActions: blocked } : grant.level];
   });
-  return { companyCnpjs: input.companyCnpjs, moduleGrants: Object.fromEntries(entries) };
+  return Object.fromEntries(entries);
 }
 function publicWorkItem(item) {
   return { id: item._id, module: item.module, companyCnpj: item.companyCnpj, title: item.title, description: item.description || '', status: item.status, dueAt: item.dueAt || null, assigneeId: item.assigneeId || null, createdBy: item.createdBy, createdAt: item.createdAt, updatedAt: item.updatedAt };
 }
 function dueAt(value) {
   if (value === null || value === '') return null;
-  const parsed = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00Z`) : null;
-  check(parsed && !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value, 'dueAt');
-  return value;
+  return dateField(value, 'dueAt');
 }
 
 export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha256, secureCookies = true, logger = console }) {
@@ -146,13 +192,13 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
       }
       if (req.method === 'POST' && route === '/login') {
         const input = await body(req);
-        const address = email(input.email);
+        const identifier = loginIdentifier(input.identifier ?? input.email);
         check(typeof input.password === 'string' && input.password.length <= 256, 'password');
-        const key = loginKey(req, address);
+        const user = identifier.includes('@') ? await store.findUserByEmail(identifier) : await store.findUserByUsername(identifier);
+        const key = loginKey(req, user?.email || identifier);
         if (await store.reserveLoginAttempt(key) > 5) fail(429, 'TOO_MANY_ATTEMPTS', 'Aguarde antes de tentar novamente');
-        const user = await store.findUserByEmail(address);
         if (!user || !user.active || !await verifyPassword(input.password, user.passwordHash)) {
-          fail(401, 'INVALID_CREDENTIALS', 'E-mail ou senha incorretos');
+          fail(401, 'INVALID_CREDENTIALS', 'Usuário, e-mail ou senha incorretos');
         }
         await store.clearLoginFailures(key);
         await store.audit('auth.login', user._id, user._id);
@@ -163,6 +209,11 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
       if (!auth) fail(401, 'UNAUTHORIZED', 'Entre para continuar');
       const { user, session } = auth;
       if (req.method !== 'GET' && req.method !== 'HEAD') requireCsrf(req, session);
+      if (req.method === 'GET' && route === '/cep') {
+        requireAdmin(user);
+        const cep = new URL(req.url, 'http://localhost').searchParams.get('cep');
+        return send(res, 200, await lookupCep(cep));
+      }
       if (chat && (route === '/chat' || route.startsWith('/chat/'))) {
         return await chat.handleHttp({ req, res, route, user, send, readBody: body });
       }
@@ -227,14 +278,50 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
       }
       if (req.method === 'GET' && route === '/companies') {
         const companies = await store.listCompanies(user.role === 'admin' ? null : user.companyCnpjs);
-        return send(res, 200, { companies: companies.map(({ cnpj: key, name, active, createdAt }) => ({ cnpj: key, name, active, createdAt })) });
+        return send(res, 200, { companies: companies.map(companyView) });
       }
       if (req.method === 'POST' && route === '/companies') {
         requireAdmin(user);
         const input = await body(req);
         const company = { _id: randomUUID(), cnpj: cnpj(input.cnpj), name: field(input.name, 'name', 2, 160), active: true, createdAt: new Date() };
         await store.createCompany(company, user._id);
-        return send(res, 201, { company: { cnpj: company.cnpj, name: company.name, active: true, createdAt: company.createdAt } });
+        return send(res, 201, { company: companyView(company) });
+      }
+      const managedCompany = /^\/companies\/(\d{14})$/.exec(route);
+      if (managedCompany && ['GET', 'PATCH'].includes(req.method)) {
+        requireAdmin(user);
+        const key = cnpj(managedCompany[1]);
+        if (req.method === 'GET') {
+          const company = await store.getCompany(key);
+          if (!company) fail(404, 'NOT_FOUND', 'Empresa não cadastrada');
+          const members = (await store.listUsers()).filter(person => person.role === 'member').map(person => ({
+            id: person._id, name: person.name, email: person.email, active: person.active,
+            hasAccess: person.companyCnpjs?.includes(key) || false,
+          }));
+          return send(res, 200, { company: companyView(company), members });
+        }
+        const input = await body(req);
+        const changes = {};
+        if (input.name !== undefined) changes.name = field(input.name, 'name', 2, 160);
+        if (input.active !== undefined) { check(typeof input.active === 'boolean', 'active'); changes.active = input.active; }
+        check(Object.keys(changes).length > 0, 'changes');
+        const company = await store.updateCompany(key, changes, user._id);
+        if (!company) fail(404, 'NOT_FOUND', 'Empresa não cadastrada');
+        return send(res, 200, { company: companyView(company) });
+      }
+      const companyAccess = /^\/companies\/(\d{14})\/access\/([a-f0-9-]{36})$/.exec(route);
+      if (companyAccess && req.method === 'PATCH') {
+        requireAdmin(user);
+        const key = cnpj(companyAccess[1]);
+        const input = await body(req);
+        check(typeof input.hasAccess === 'boolean', 'hasAccess');
+        if (!await store.companyExists(key)) fail(404, 'NOT_FOUND', 'Empresa não cadastrada');
+        const result = await store.setCompanyAccess(key, companyAccess[2], input.hasAccess, user._id);
+        if (result === 'not_found') fail(404, 'NOT_FOUND', 'Usuário não encontrado');
+        if (result === 'admin') fail(409, 'ADMIN_COMPANY_ACCESS', 'Administradores têm acesso a todas as empresas');
+        if (result === 'inactive') fail(409, 'USER_INACTIVE', 'Ative o usuário antes de conceder acesso');
+        if (result === 'limit') fail(409, 'PORTFOLIO_LIMIT', 'A carteira deste usuário atingiu o limite de empresas');
+        return send(res, 200, { hasAccess: result });
       }
       if (req.method === 'GET' && route === '/users') {
         requireAdmin(user);
@@ -244,13 +331,25 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
         requireAdmin(user);
         const input = await body(req);
         check(['admin', 'member'].includes(input.role), 'role');
-        const access = validateAccess(input);
-        for (const companyCnpj of access.companyCnpjs) if (!await store.companyExists(companyCnpj)) fail(400, 'UNKNOWN_COMPANY', 'Empresa não cadastrada');
-        const member = { _id: randomUUID(), name: field(input.name, 'name', 2, 100), email: email(input.email), passwordHash: await hashPassword(input.password), role: input.role, active: true, ...access, createdAt: new Date() };
-        await store.createUser(member, user._id);
-        return send(res, 201, { user: publicUser(member) });
+        check(typeof input.password === 'string' && input.password.length >= 12 && input.password.length <= 128, 'senha de 12 a 128 caracteres');
+        const profile = input.profile === undefined ? null : profileFor(input.profile);
+        const name = field(profile ? `${profile.firstName} ${profile.lastName}` : input.name, 'nome completo', 2, 100);
+        const username = profile ? usernameFor(profile) : null;
+        const address = email(input.email);
+        const moduleGrants = validateModuleGrants(input.moduleGrants);
+        const companyCnpjs = await validateCompanyGrants(store, input.companyCnpjs);
+        const member = { _id: randomUUID(), name, email: address, username, profile, moduleGrants, companyCnpjs,
+          passwordHash: await hashPassword(input.password), role: input.role, active: true, createdAt: new Date() };
+        const savedUsername = await store.createUser(member, user._id);
+        return send(res, 201, { user: publicUser({ ...member, username: savedUsername }) });
       }
       const userMatch = /^\/users\/([a-f0-9-]{36})$/.exec(route);
+      if (req.method === 'GET' && userMatch) {
+        requireAdmin(user);
+        const target = await store.findUserById(userMatch[1]);
+        if (!target) fail(404, 'NOT_FOUND', 'Usuário não encontrado');
+        return send(res, 200, { user: publicUser(target), profile: await store.getUserProfile(target._id) });
+      }
       if (req.method === 'PATCH' && userMatch) {
         requireAdmin(user);
         const input = await body(req);
@@ -260,11 +359,8 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
         if (input.name !== undefined) changes.name = field(input.name, 'name', 2, 100);
         if (input.active !== undefined) { check(typeof input.active === 'boolean', 'active'); changes.active = input.active; }
         if (input.role !== undefined) { check(['admin', 'member'].includes(input.role), 'role'); changes.role = input.role; }
-        if (input.companyCnpjs !== undefined || input.moduleGrants !== undefined) {
-          const access = validateAccess({ companyCnpjs: input.companyCnpjs ?? target.companyCnpjs, moduleGrants: input.moduleGrants ?? target.moduleGrants });
-          for (const companyCnpj of access.companyCnpjs) if (!await store.companyExists(companyCnpj)) fail(400, 'UNKNOWN_COMPANY', 'Empresa não cadastrada');
-          Object.assign(changes, access);
-        }
+        if (input.companyCnpjs !== undefined) changes.companyCnpjs = await validateCompanyGrants(store, input.companyCnpjs);
+        if (input.moduleGrants !== undefined) changes.moduleGrants = validateModuleGrants(input.moduleGrants);
         check(Object.keys(changes).length > 0, 'changes');
         if (target._id === user._id && (changes.role && changes.role !== 'admin' || changes.active === false)) fail(409, 'SELF_LOCKOUT', 'Não é possível retirar o próprio acesso de administrador');
         const updated = await store.updateUser(target._id, changes);
@@ -363,6 +459,9 @@ export function createPlatformRouter({ store, chat, whatsapp, bootstrapTokenSha2
     } catch (error) {
       if (error instanceof ApiError) return send(res, error.status, { error: error.code, message: error.message });
       if (error?.message === 'SETUP_COMPLETE') return send(res, 409, { error: 'SETUP_COMPLETE', message: 'Configuração inicial já concluída' });
+      if (error?.code === 'DUPLICATE_USER_EMAIL') return send(res, 409, { error: error.code, message: 'E-mail de acesso já cadastrado' });
+      if (error?.code === 'DUPLICATE_USER_CPF') return send(res, 409, { error: error.code, message: 'CPF já cadastrado' });
+      if (error?.code === 'USERNAME_UNAVAILABLE') return send(res, 409, { error: error.code, message: 'Não foi possível gerar um nome de usuário disponível' });
       if (error?.code === 11000) return send(res, 409, { error: 'DUPLICATE', message: 'Registro já existente' });
       logger.error('Platform API failure', { error: error?.message ?? String(error) });
       return send(res, 500, { error: 'INTERNAL_ERROR', message: 'Falha interna' });

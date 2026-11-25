@@ -9,6 +9,8 @@ const ALLOWED = new Map([
   ...MODULES.map(({ id }) => [`/setor/${id}`, ['index.html', 'text/html; charset=utf-8']]),
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/user-wizard.js', ['user-wizard.js', 'text/javascript; charset=utf-8']],
+  ['/user-wizard.css', ['user-wizard.css', 'text/css; charset=utf-8']],
   ['/portal.js', ['portal.js', 'text/javascript; charset=utf-8']],
   ['/portal.css', ['portal.css', 'text/css; charset=utf-8']],
   ['/sectors.js', ['sectors.js', 'text/javascript; charset=utf-8']],

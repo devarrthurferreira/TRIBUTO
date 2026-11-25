@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/chat.css">
   <link rel="stylesheet" href="/sectors.css">
   <link rel="stylesheet" href="/sector-whatsapp.css">
+  <link rel="stylesheet" href="/user-wizard.css">
   <script defer src="/socket.io/socket.io.js"></script>
   <script type="module" src="/app.js"></script>
 </head>
@@ -30,7 +31,7 @@
       <div id="authContent" class="auth-panel" tabindex="-1">
         <div class="auth-card">
           <h2 id="authTitle">Entrar na Central</h2>
-          <p id="authDescription" class="muted">Use seu e-mail corporativo para continuar.</p>
+          <p id="authDescription" class="muted">Use seu acesso da equipe para continuar.</p>
           <form id="authForm" method="post" action="/v1/platform/login" autocomplete="on">
             <div id="setupTokenRow" class="field" hidden>
               <label for="setupToken">Código de configuração inicial</label>
@@ -42,8 +43,8 @@
               <input id="setupName" name="name" autocomplete="name" maxlength="120" placeholder="Nome do administrador">
             </div>
             <div class="field">
-              <label for="authEmail">E-mail</label>
-              <input id="authEmail" name="email" type="email" required autocomplete="username" placeholder="voce@maximumcontabil.com.br">
+              <label id="authEmailLabel" for="authEmail">Usuário ou e-mail</label>
+              <input id="authEmail" name="identifier" type="text" required autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="254" placeholder="nome.sobrenome ou seu e-mail">
             </div>
             <div class="field">
               <label for="authPassword">Senha</label>
@@ -77,7 +78,7 @@
           <div class="portal-popover-panel">
             <h2>Configurações</h2>
             <button id="changePasswordButton" type="button"><i class="bi bi-key" aria-hidden="true"></i> Alterar minha senha</button>
-            <button type="button" data-go="companies"><i class="bi bi-buildings" aria-hidden="true"></i> Empresas</button>
+            <button id="portalCompanySettings" type="button" data-go="companies" hidden><i class="bi bi-buildings" aria-hidden="true"></i> Empresas/Clientes</button>
             <button id="portalUsers" type="button" data-go="users" hidden><i class="bi bi-people" aria-hidden="true"></i> Equipe e acessos</button>
             <button id="portalAgents" type="button" data-go="agents" hidden><i class="bi bi-broadcast" aria-hidden="true"></i> Agentes de coleta</button>
           </div>
@@ -98,6 +99,8 @@
             <button id="logoutButton" type="button"><i class="bi bi-box-arrow-right" aria-hidden="true"></i> Sair da plataforma</button>
           </div>
         </details>
+        <a id="portalCompanies" class="portal-shortcut" href="/home#companies" aria-label="Empresas/Clientes" title="Empresas/Clientes" hidden><i class="bi bi-buildings" aria-hidden="true"></i><span>Empresas/Clientes</span></a>
+        <a id="portalClub" class="portal-shortcut" href="/home#club" aria-label="Clube" title="Clube de Benefícios"><i class="bi bi-gift" aria-hidden="true"></i><span>Clube</span></a>
       </div>
     </header>
     <div class="portal-content-layout">
@@ -118,7 +121,7 @@
         <a class="nav-link" data-view="fiscal" href="/setor/fiscal"><span class="nav-icon" aria-hidden="true">▤</span> Fiscal</a>
         <a class="nav-link" data-view="diretoria" href="/setor/diretoria"><span class="nav-icon" aria-hidden="true">▧</span> Diretoria</a>
         <p class="nav-caption">ORGANIZAÇÃO</p>
-        <button class="nav-link" data-view="companies" type="button"><span class="nav-icon" aria-hidden="true">▥</span> Empresas</button>
+        <button class="nav-link" data-view="companies" type="button" hidden><span class="nav-icon" aria-hidden="true">▥</span> Empresas/Clientes</button>
         <button class="nav-link" data-view="users" type="button"><span class="nav-icon" aria-hidden="true">⊙</span> Equipe e acessos</button>
         <button class="nav-link" data-view="agents" type="button"><span class="nav-icon" aria-hidden="true">⌁</span> Agentes de coleta</button>
         <a class="nav-link" data-view="financeiro" href="/setor/financeiro" hidden><span class="nav-icon" aria-hidden="true">◉</span> Financeiro</a>
@@ -241,6 +244,15 @@
           <div class="page-heading"><div><h1 id="diretoriaTitle">Diretoria</h1><p>Espaço de acompanhamento da Diretoria.</p></div><span class="status-pill status-planned">Em preparação</span></div>
         </section>
 
+        <section class="view" id="view-club" aria-labelledby="clubTitle" hidden>
+          <div class="page-heading"><div><h1 id="clubTitle">Clube de Benefícios</h1></div></div>
+          <div class="surface portal-club-status">
+            <div class="portal-club-mark"><i class="bi bi-gift" aria-hidden="true"></i></div>
+            <h2>Portal de benefícios temporariamente indisponível</h2>
+            <p class="muted">O acesso ao Clube será liberado aqui quando o portal estiver disponível.</p>
+          </div>
+        </section>
+
         <section class="view" id="view-fiscal" aria-labelledby="fiscalTitle" hidden>
           <div class="page-heading"><div><p class="eyebrow">MÓDULO FISCAL</p><h1 id="fiscalTitle">Fiscal</h1><p>Documentos, eventos e solicitações em uma visão consultiva.</p></div><span class="status-pill status-planned">Conectores em preparação</span></div>
           <div id="fiscalDocumentTools">
@@ -249,7 +261,7 @@
               <article class="feature-card"><span class="feature-icon teal">◇</span><h3>NFS-e</h3><p>Serviços recebidos e prestados conforme a cobertura do ambiente nacional e dos municípios.</p><span class="feature-tag">Integração planejada</span></article>
               <article class="feature-card"><span class="feature-icon amber">◷</span><h3>Cancelamentos</h3><p>Solicite ao emissor, acompanhe o prazo e confira o evento oficial da nota.</p><span class="feature-tag">Fluxo em preparação</span></article>
             </div>
-            <article class="surface section-spaced"><div class="surface-header"><div><p class="eyebrow">CARTEIRA FISCAL</p><h3>NFS-e por empresa</h3></div><button type="button" class="text-button" data-go="companies">Ver empresas ↗</button></div><div id="fiscalCompanyQuickList" class="list-content" aria-live="polite"></div></article>
+            <article class="surface section-spaced"><div class="surface-header"><div><p class="eyebrow">CARTEIRA FISCAL</p><h3>NFS-e por empresa</h3></div><button id="fiscalAllCompanies" type="button" class="text-button" data-go="companies" hidden>Empresas/Clientes <span aria-hidden="true">↗</span></button></div><div class="list-toolbar"><label class="search-field"><i class="bi bi-search" aria-hidden="true"></i><span class="sr-only">Buscar empresa na carteira fiscal</span><input id="fiscalCompanyLookup" type="search" placeholder="Buscar por nome ou CNPJ"></label></div><div id="fiscalCompanyQuickList" class="list-content" aria-live="polite"></div></article>
             <article class="surface section-spaced"><div class="surface-header"><div><p class="eyebrow">DOCUMENTOS</p><h3>Chaves e dados fiscais recebidos pela API</h3></div><label class="work-filter"><span class="sr-only">Filtrar empresa</span><select id="fiscalCompanyFilter" aria-label="Filtrar empresa nas notas"></select></label></div><div id="fiscalDocumentsList" class="list-content" aria-live="polite"></div></article>
           </div>
         </section>
@@ -283,8 +295,39 @@
         </section>
 
         <section class="view" id="view-companies" aria-labelledby="companiesTitle" hidden>
-          <div class="page-heading"><div><p class="eyebrow">ORGANIZAÇÃO</p><h1 id="companiesTitle">Empresas</h1><p>Uma carteira central, com acesso definido por usuário e módulo.</p></div><button id="newCompanyButton" class="button button-primary" type="button">+ Nova empresa</button></div>
+          <div class="page-heading"><div><h1 id="companiesTitle">Empresas e clientes</h1><p>Cadastros e acessos da carteira da Maximum.</p></div><button id="newCompanyButton" class="button button-primary" type="button">+ Nova empresa</button></div>
           <article class="surface"><div class="list-toolbar"><label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">Buscar empresa</span><input id="companySearch" type="search" placeholder="Buscar por nome ou CNPJ"></label><span id="companiesCount" class="list-count">— empresas</span></div><div id="companiesList" class="list-content" aria-live="polite"></div></article>
+        </section>
+
+        <section class="view client-admin" id="view-client-detail" aria-labelledby="clientDetailTitle" hidden>
+          <a class="text-button client-back" href="/home#companies">← Voltar a Empresas e clientes</a>
+          <div class="page-heading client-heading">
+            <div><h1 id="clientDetailTitle">Ficha da empresa</h1><p id="clientDetailCnpj" hidden></p></div>
+            <div id="clientDetailActions" class="client-actions" hidden>
+              <button class="button button-quiet" id="clientLinkButton" type="button" aria-expanded="false" aria-controls="clientLinkPanel"><i class="bi bi-link-45deg" aria-hidden="true"></i> Gerar link</button>
+              <button class="button button-primary" id="clientEditButton" type="button">Editar cadastro</button>
+            </div>
+          </div>
+          <p id="clientDetailError" class="form-message" role="alert" hidden></p>
+          <div id="clientDetailContent" class="client-content" hidden>
+            <section id="clientLinkPanel" class="surface client-link-panel" aria-labelledby="clientLinkHeading" hidden>
+              <h2 id="clientLinkHeading">Link da ficha administrativa</h2>
+              <p>Abre a ficha para administradores autenticados na Central.</p>
+              <div class="field client-link-field"><label for="clientLinkValue">Link da empresa</label><div><input id="clientLinkValue" type="url" readonly><button class="button button-quiet" id="clientCopyLink" type="button">Copiar link</button></div></div>
+            </section>
+            <section class="surface client-record" aria-labelledby="clientRecordHeading">
+              <div class="surface-header"><h2 id="clientRecordHeading">Dados da empresa</h2><span id="clientDetailStatus" class="status-pill"></span></div>
+              <dl class="client-record-data"><div><dt>CNPJ</dt><dd id="clientRecordCnpj"></dd></div><div><dt>Cadastrada em</dt><dd id="clientRecordSince"></dd></div></dl>
+              <div class="client-record-actions"><a class="text-button" id="clientFiscalLink" href="/setor/fiscal">Consultar NFS-e ↗</a></div>
+            </section>
+            <section class="surface client-access" aria-labelledby="clientAccessHeading">
+              <div class="surface-header"><div><h2 id="clientAccessHeading">Acessos à empresa</h2><p>Vincule membros à carteira da empresa. Cada pessoa usa as permissões dos seus módulos.</p></div><span id="clientAccessCount" class="list-count"></span></div>
+              <div class="list-toolbar"><label class="search-field"><i class="bi bi-search" aria-hidden="true"></i><span class="sr-only">Buscar pessoas</span><input id="clientAccessSearch" type="search" placeholder="Buscar por nome ou e-mail" autocomplete="off"></label></div>
+              <ul id="clientAccessList" class="list-content client-access-list"></ul>
+              <p id="clientAccessEmpty" class="client-access-empty" hidden></p>
+              <p id="clientAccessFeedback" class="sr-only" role="status"></p>
+            </section>
+          </div>
         </section>
 
         <section class="view" id="view-company-detail" aria-labelledby="companyDetailTitle" hidden>
@@ -322,6 +365,7 @@
       <p class="dialog-description">A empresa ficará disponível conforme as permissões concedidas à equipe.</p>
       <div class="field"><label for="companyName">Razão social</label><input id="companyName" name="name" required maxlength="160" placeholder="Nome da empresa"></div>
       <div class="field"><label for="companyCnpj">CNPJ</label><input id="companyCnpj" name="cnpj" inputmode="numeric" required maxlength="18" placeholder="00.000.000/0000-00"></div>
+      <div id="companyStatusField" class="field" hidden><label for="companyStatus">Situação cadastral</label><select id="companyStatus" name="active"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
       <p id="companyError" class="form-message" role="alert" hidden></p>
       <div class="dialog-actions"><button type="button" class="button button-quiet close-dialog">Cancelar</button><button type="submit" class="button button-primary">Salvar empresa</button></div>
     </form>
@@ -329,18 +373,84 @@
 
   <dialog id="userDialog" class="form-dialog" aria-labelledby="userDialogTitle">
     <form id="userForm" method="dialog">
-      <div class="dialog-header"><div><p class="eyebrow">ACESSO</p><h2 id="userDialogTitle">Novo usuário</h2></div><button type="button" class="icon-button close-dialog" aria-label="Fechar">×</button></div>
+      <div class="dialog-header"><h2 id="userDialogTitle">Editar acesso</h2><button type="button" class="icon-button close-dialog" aria-label="Fechar">×</button></div>
       <p class="dialog-description">Conceda somente os módulos e empresas necessários para essa pessoa.</p>
       <div class="field"><label for="userName">Nome</label><input id="userName" name="name" required maxlength="120" placeholder="Nome da pessoa"></div>
-      <div class="field"><label for="userEmail">E-mail</label><input id="userEmail" name="email" type="email" required placeholder="pessoa@maximumcontabil.com.br"></div>
-      <div id="userPasswordRow" class="field"><label for="userPassword">Senha inicial</label><input id="userPassword" name="password" type="password" required minlength="12" autocomplete="new-password" placeholder="Ao menos 12 caracteres"><small>Entregue a senha à pessoa por um canal seguro.</small></div>
+      <div class="field"><label for="userEmail">E-mail</label><input id="userEmail" type="email" readonly></div>
       <div class="field"><label for="userRole">Perfil</label><select id="userRole" name="role"><option value="member">Membro da equipe</option><option value="admin">Administrador</option></select></div>
-      <label id="userActiveRow" class="check-row" hidden><input id="userActive" type="checkbox" checked> Acesso ativo</label>
+      <label class="check-row"><input id="userActive" type="checkbox" checked> Acesso ativo</label>
       <p id="userFullAccessNote" class="muted" hidden>Administradores têm acesso a todos os módulos, ações e empresas.</p>
       <fieldset id="userModuleGrants" class="access-fieldset"><legend>Permissões por módulo</legend><div id="userGrantOptions" class="grant-grid"></div></fieldset>
       <fieldset id="userCompanyGrants" class="access-fieldset"><legend>Empresas permitidas</legend><div id="userCompanyOptions" class="checkbox-grid"></div><small>Para membros, selecione as empresas da carteira.</small></fieldset>
       <p id="userError" class="form-message" role="alert" hidden></p>
-      <div class="dialog-actions"><button type="button" class="button button-quiet close-dialog">Cancelar</button><button type="submit" class="button button-primary">Criar acesso</button></div>
+      <div class="dialog-actions"><button type="button" class="button button-quiet close-dialog">Cancelar</button><button type="submit" class="button button-primary">Salvar alterações</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="userWizardDialog" class="form-dialog user-wizard" aria-labelledby="userWizardTitle">
+    <form id="userWizardForm" novalidate>
+      <div class="dialog-header user-wizard-header">
+        <h2 id="userWizardTitle">Novo usuário</h2>
+        <button type="button" class="icon-button close-dialog" aria-label="Fechar" data-wizard-dismiss>×</button>
+      </div>
+      <ol class="user-wizard-steps" aria-label="Etapas do cadastro">
+        <li aria-current="step"><span aria-hidden="true">1</span><small>Dados pessoais</small></li>
+        <li><span aria-hidden="true">2</span><small>Dados de permissões</small></li>
+        <li><span aria-hidden="true">3</span><small>Dados de carteira</small></li>
+        <li><span aria-hidden="true">4</span><small>Dados de acesso</small></li>
+      </ol>
+      <div class="user-wizard-content">
+        <section class="user-wizard-step" aria-labelledby="userWizardPersonalTitle">
+          <h3 id="userWizardPersonalTitle" tabindex="-1">Dados pessoais</h3>
+          <div class="user-wizard-fields">
+            <div class="field"><label for="newUserFirstName">Nome</label><input id="newUserFirstName" autocomplete="given-name" maxlength="50" required></div>
+            <div class="field"><label for="newUserLastName">Sobrenome</label><input id="newUserLastName" autocomplete="family-name" maxlength="50" required></div>
+            <div class="field"><label for="newUserCpf">CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" required></div>
+            <div class="field"><label for="newUserBirthDate">Nascimento</label><input id="newUserBirthDate" type="date" autocomplete="bday" required></div>
+            <div class="field"><label for="newUserEmail">E-mail</label><input id="newUserEmail" type="email" autocomplete="email" maxlength="254" required></div>
+            <div class="field"><label for="newUserPhone">Telefone</label><input id="newUserPhone" type="tel" autocomplete="tel" maxlength="19" placeholder="(00) 00000-0000" required></div>
+            <div class="field"><label for="newUserHasChildren">Possui filhos?</label><select id="newUserHasChildren" required><option value="" disabled selected>Selecione</option><option value="no">Não</option><option value="yes">Sim</option></select></div>
+            <div class="field" id="newUserChildrenRow" hidden><label for="newUserChildrenCount">Quantidade de filhos</label><input id="newUserChildrenCount" type="number" min="1" max="99" step="1" inputmode="numeric"></div>
+          </div>
+          <fieldset class="user-wizard-address">
+            <legend>Endereço</legend>
+            <div class="user-wizard-fields">
+              <div class="field"><label for="newUserCep">CEP</label><div class="user-wizard-inline"><input id="newUserCep" autocomplete="postal-code" inputmode="numeric" maxlength="9" placeholder="00000-000" aria-describedby="newUserCepStatus" required><button id="newUserSearchCep" class="button button-quiet" type="button" aria-label="Buscar CEP">Buscar</button></div><small id="newUserCepStatus" role="status"></small></div>
+              <div class="field"><label for="newUserStreet">Logradouro</label><input id="newUserStreet" autocomplete="address-line1" maxlength="160" required></div>
+              <div class="field"><label for="newUserNeighborhood">Bairro</label><input id="newUserNeighborhood" maxlength="100" required></div>
+              <div class="field"><label for="newUserAddressNumber">Número</label><input id="newUserAddressNumber" maxlength="30" placeholder="Número ou S/N" required></div>
+            </div>
+          </fieldset>
+        </section>
+        <section class="user-wizard-step" aria-labelledby="userWizardPermissionsTitle" hidden>
+          <h3 id="userWizardPermissionsTitle" tabindex="-1">Dados de permissões</h3>
+          <div class="field user-wizard-profile"><label for="newUserRole">Perfil de acesso</label><select id="newUserRole"><option value="member">Membro da equipe</option><option value="admin">Administrador</option></select></div>
+          <p class="user-wizard-note" id="newUserRoleNote" hidden>Administradores têm acesso completo aos módulos, ações e empresas.</p>
+          <fieldset id="newUserModuleGrants" class="access-fieldset user-wizard-grants"><legend>Permissões por módulo</legend><div id="newUserGrantOptions" class="grant-grid"></div></fieldset>
+        </section>
+        <section class="user-wizard-step" aria-labelledby="userWizardPortfolioTitle" hidden>
+          <h3 id="userWizardPortfolioTitle" tabindex="-1">Dados de carteira</h3>
+          <p class="user-wizard-note" id="newUserPortfolioNote" hidden>O administrador tem acesso a todas as empresas.</p>
+          <div id="newUserPortfolio">
+            <p>Selecione as empresas da carteira. Você pode criar o acesso sem vincular empresas.</p>
+            <div class="user-wizard-portfolio-tools"><div class="field"><label for="newUserCompanySearch" class="sr-only">Buscar empresa da carteira</label><input id="newUserCompanySearch" type="search" placeholder="Buscar empresa por nome ou CNPJ"></div><output id="newUserCompanyCount" aria-live="polite">0 selecionadas</output></div>
+            <div id="newUserCompanyOptions" class="checkbox-grid user-wizard-companies"></div>
+            <p id="newUserNoCompanies" class="user-wizard-note" hidden></p>
+          </div>
+        </section>
+        <section class="user-wizard-step" aria-labelledby="userWizardCredentialsTitle" hidden>
+          <h3 id="userWizardCredentialsTitle" tabindex="-1">Dados de acesso</h3>
+          <div class="user-wizard-fields">
+            <div class="field"><label for="newUserUsername">Usuário</label><input id="newUserUsername" autocomplete="off" readonly><small>O sistema acrescenta um número se o usuário já existir.</small></div>
+            <div class="field"><label for="newUserAccessEmail">E-mail de acesso</label><input id="newUserAccessEmail" type="email" readonly></div>
+            <div class="field user-wizard-wide"><label for="newUserPassword">Senha de acesso</label><input id="newUserPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required aria-describedby="newUserPasswordHint"><small id="newUserPasswordHint">Digite pelo menos 12 caracteres e compartilhe a senha por um canal seguro.</small></div>
+          </div>
+        </section>
+      </div>
+      <div class="user-wizard-footer">
+        <p id="newUserError" class="form-message" role="alert" hidden></p>
+        <div class="dialog-actions"><button type="button" class="button button-quiet close-dialog" data-wizard-dismiss>Cancelar</button><button id="userWizardBack" type="button" class="button button-quiet" hidden>Voltar</button><button id="userWizardContinue" type="submit" class="button button-primary">Continuar</button></div>
+      </div>
     </form>
   </dialog>
 

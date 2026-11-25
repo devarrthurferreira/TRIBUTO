@@ -12,14 +12,29 @@ const setupToken = 'initial-setup-secret-' + 'x'.repeat(45);
 class MemoryPlatformStore {
   constructor() {
     this.users = new Map(); this.companies = new Map(); this.agents = new Map();
+    this.profiles = new Map();
     this.sessions = new Map(); this.items = new Map(); this.documents = new Map(); this.failures = new Map(); this.auditEntries = [];
   }
   async countUsers() { return this.users.size; }
   async createFirstAdmin(user) { if (this.users.size) throw new Error('SETUP_COMPLETE'); this.users.set(user._id, user); }
   async findUserByEmail(email) { return [...this.users.values()].find(x => x.email === email); }
+  async findUserByUsername(username) { return [...this.users.values()].find(x => x.username === username); }
   async findUserById(id) { return this.users.get(id); }
+  async getUserProfile(id) { return this.profiles.get(id) ?? null; }
   async listUsers() { return [...this.users.values()]; }
-  async createUser(user) { this.users.set(user._id, user); }
+  async createUser(user) {
+    const { profile, username: base, ...account } = user;
+    const users = [...this.users.values()];
+    if (users.some(({ email }) => email === account.email)) throw Object.assign(new Error('DUPLICATE_USER_EMAIL'), { code: 'DUPLICATE_USER_EMAIL' });
+    if (profile && [...this.profiles.values()].some(({ cpf }) => cpf === profile.cpf)) {
+      throw Object.assign(new Error('DUPLICATE_USER_CPF'), { code: 'DUPLICATE_USER_CPF' });
+    }
+    let username = base;
+    for (let attempt = 2; username && users.some((other) => other.username === username); attempt += 1) username = `${base}${attempt}`;
+    this.users.set(user._id, { ...account, username });
+    if (profile) this.profiles.set(user._id, profile);
+    return username;
+  }
   async updateUser(id, changes) { const value = { ...this.users.get(id), ...changes }; this.users.set(id, value); return value; }
   async changePassword(id, hash, currentSessionHash) { this.users.get(id).passwordHash = hash; for (const [key, value] of this.sessions) if (value.userId === id && key !== currentSessionHash) this.sessions.delete(key); }
   async createSession(value) { this.sessions.set(value._id, value); }
@@ -28,8 +43,28 @@ class MemoryPlatformStore {
   async reserveLoginAttempt(key) { const value = this.failures.get(key); const count = (value?.until > Date.now() ? value.count : 0) + 1; this.failures.set(key, { count, until: Date.now() + 300_000 }); return count; }
   async clearLoginFailures(key) { this.failures.delete(key); }
   async listCompanies(allowed) { return [...this.companies.values()].filter(x => allowed === null || allowed.includes(x.cnpj)); }
+  async getCompany(key) { return this.companies.get(key); }
   async companyExists(key) { return this.companies.has(key); }
   async createCompany(company) { this.companies.set(company.cnpj, company); }
+  async updateCompany(key, changes, actorId) {
+    const previous = this.companies.get(key);
+    if (!previous) return null;
+    const updated = { ...previous, ...changes };
+    this.companies.set(key, updated);
+    await this.audit('company.update', actorId, key);
+    return updated;
+  }
+  async setCompanyAccess(key, id, hasAccess, actorId) {
+    const person = this.users.get(id);
+    if (!person) return 'not_found';
+    if (person.role === 'admin') return 'admin';
+    if (hasAccess && !person.active) return 'inactive';
+    if (person.companyCnpjs.includes(key) === hasAccess) return hasAccess;
+    if (hasAccess && person.companyCnpjs.length >= 1000) return 'limit';
+    person.companyCnpjs = hasAccess ? [...person.companyCnpjs, key] : person.companyCnpjs.filter(value => value !== key);
+    await this.audit(hasAccess ? 'company.access.grant' : 'company.access.revoke', actorId, key);
+    return hasAccess;
+  }
   async dashboard(user) {
     const companyScope = user.role === 'admin' ? null : user.companyCnpjs;
     const documents = canPerform(user, 'fiscal', 'fiscalDocumentsRead')
@@ -107,6 +142,66 @@ async function setup(url) {
   return { cookie: result.cookie, csrf: result.body.csrfToken, user: result.body.user };
 }
 
+test('cadastro guiado normaliza usuário, separa dados pessoais e usa o mesmo limite de login por e-mail ou usuário', async () => fixture(async ({ store, url }) => {
+  const path = '/v1/platform';
+  const admin = await setup(url);
+  const company = { cnpj: CNPJ_A, name: 'Empresa de teste' };
+  assert.equal((await request(url, `${path}/companies`, { method: 'POST', ...admin, data: company })).status, 201);
+  const profile = { firstName: 'João Pedro', lastName: 'D’Ávila', cpf: '529.982.247-25', birthDate: '1996-02-29', email: 'Pessoal@example.test',
+    phone: '+55 (32) 99999-9999', hasChildren: true, childrenCount: 2,
+    address: { cep: '36015-010', street: 'Rua de teste', neighborhood: 'Centro', number: 'S/N' } };
+  const password = 'senha-do-usuario-123';
+  const accountData = { email: 'acesso@example.test', password, role: 'member', companyCnpjs: [CNPJ_A], moduleGrants: { fiscal: 'view' }, profile };
+  const addUser = (data) => request(url, `${path}/users`, { method: 'POST', ...admin, data });
+  assert.equal((await addUser({ ...accountData, profile: { ...profile, cpf: '11111111111' } })).status, 400);
+  assert.equal((await addUser({ ...accountData, profile: { ...profile, birthDate: '1997-02-29' } })).status, 400);
+  assert.equal((await addUser({ ...accountData, profile: { ...profile, childrenCount: 0 } })).status, 400);
+  assert.equal((await addUser({ ...accountData, profile: { ...profile, hasChildren: false } })).status, 400);
+  const created = await addUser(accountData);
+  assert.equal(created.status, 201);
+  assert.equal(created.body.user.username, 'joaopedro.davila');
+  assert.deepEqual(created.body.user.companyCnpjs, [CNPJ_A]);
+  assert.deepEqual(created.body.user.moduleGrants, { fiscal: 'view' });
+  const assertSafeUser = ({ user, profile }) => {
+    assert.equal(profile, undefined);
+    for (const key of ['passwordHash', 'profile', 'cpf', 'birthDate', 'address']) assert.equal(user[key], undefined);
+  };
+  assertSafeUser(created.body);
+  const duplicateEmail = await addUser({ ...accountData, profile: { ...profile, cpf: '111.444.777-35' } });
+  assert.equal(duplicateEmail.status, 409);
+  assert.equal(duplicateEmail.body.error, 'DUPLICATE_USER_EMAIL');
+  const duplicateCpf = await addUser({ ...accountData, email: 'segundo@example.test' });
+  assert.equal(duplicateCpf.status, 409);
+  assert.equal(duplicateCpf.body.error, 'DUPLICATE_USER_CPF');
+  const second = await addUser({ ...accountData, email: 'segundo@example.test', profile: { ...profile, cpf: '111.444.777-35', hasChildren: false, childrenCount: null } });
+  assert.equal(second.status, 201);
+  assert.equal(second.body.user.username, 'joaopedro.davila2');
+
+  const route = `${path}/users/${created.body.user.id}`;
+  const adminDetail = await request(url, route, admin);
+  assert.equal(adminDetail.status, 200);
+  assert.deepEqual(adminDetail.body.profile, { ...profile, cpf: '52998224725', phone: '5532999999999', email: 'pessoal@example.test', address: { ...profile.address, cep: '36015010' } });
+  assertSafeUser({ user: adminDetail.body.user });
+  const list = await request(url, `${path}/users`, admin);
+  list.body.users.forEach(user => assertSafeUser({ user }));
+  const login = (identifier, password) => request(url, `${path}/login`, { method: 'POST', data: { identifier, password } });
+  const result = await login('  JO AOPEDRO.DAVILA  ', password);
+  assert.equal(result.status, 400);
+  const validLogin = await login('  JOAOPEDRO.DAVILA  ', password);
+  assert.equal(validLogin.status, 200);
+  assertSafeUser(validLogin.body);
+  assertSafeUser((await request(url, `${path}/session`, { cookie: validLogin.cookie })).body);
+  assert.equal((await request(url, route, { cookie: validLogin.cookie })).status, 403);
+  assert.equal((await request(url, `${path}/users`, { cookie: validLogin.cookie, csrf: validLogin.body.csrfToken, method: 'POST', data: accountData })).status, 403);
+  assert.equal((await request(url, `${path}/login`, { method: 'POST', data: { email: accountData.email, password } })).status, 200);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const identifier = attempt % 2 ? accountData.email : created.body.user.username;
+    assert.equal((await login(identifier, 'senha-errada')).status, 401);
+  }
+  assert.equal((await login(accountData.email, password)).status, 429);
+  assert.equal((await store.findUserById(created.body.user.id)).profile, undefined);
+}));
+
 test('senha inicial de dez caracteres autentica o primeiro administrador', async () => fixture(async ({ store, url }) => {
   const credentials = { email: 'admin@example.test', password: 'Test@abc42' };
   const firstAdmin = { ...credentials, setupToken, name: 'Programação' };
@@ -170,7 +265,8 @@ test('Tecnologia aceita demandas internas e aplica bloqueios por ação', async 
   const member = { cookie: loggedIn.cookie, csrf: loggedIn.body.csrfToken };
   assert.equal(loggedIn.body.permissions.tecnologia, 'edit');
   assert.deepEqual(loggedIn.body.capabilities.tecnologia, {
-    workItemRead: true, workItemCreate: true, workItemUpdate: false
+    workItemRead: true, workItemCreate: true, workItemUpdate: false,
+    sectorTalkRead: true, sectorTalkSend: true, whatsappRead: true, whatsappReply: true, whatsappTicketUpdate: true
   });
 
   const requestItem = (access, item) => request(url, `${path}/work-items`, { method: 'POST', ...access, data: item });
@@ -192,8 +288,13 @@ test('Tecnologia aceita demandas internas e aplica bloqueios por ação', async 
   assert.equal((await request(url, `${path}/dashboard`, member)).body.metrics.documents, null);
 
   const userPath = `${path}/users/${person.body.user.id}`;
-  const edited = await request(url, userPath, { method: 'PATCH', ...admin, data: { moduleGrants: { tecnologia: { level: 'manage', blockedActions: ['workItemRead'] } } } });
+  const edited = await request(url, userPath, { method: 'PATCH', ...admin, data: { moduleGrants: { tecnologia: { level: 'manage', blockedActions: ['workItemRead', 'sectorTalkRead', 'whatsappRead'] } } } });
   assert.equal(edited.status, 200);
+  const refreshed = await request(url, `${path}/session`, member);
+  assert.deepEqual(refreshed.body.capabilities.tecnologia, {
+    workItemRead: false, workItemCreate: false, workItemUpdate: false,
+    sectorTalkRead: false, sectorTalkSend: false, whatsappRead: false, whatsappReply: false, whatsappTicketUpdate: false
+  });
   assert.equal((await request(url, `${path}/work-items?module=tecnologia`, member)).status, 403);
   assert.deepEqual((await request(url, `${path}/work-items`, member)).body.items, []);
   assert.equal((await requestItem(member, { module: 'tecnologia', title: 'Bloqueada' })).status, 403);
@@ -266,4 +367,49 @@ test('Fiscal isola dados de NFS-e por empresa, filtra competência e respeita ac
   assert.equal(dpMember.status, 201);
   const dpLogin = await request(url, '/v1/platform/login', { method: 'POST', data: { email: 'dp2@maximumcontabil.com.br', password: 'senha-dp-12234567890' } });
   assert.equal((await request(url, `/v1/platform/companies/${CNPJ_A}/nfse`, { cookie: dpLogin.cookie })).status, 403);
+}));
+
+test('cadastro e carteira de uma empresa exigem administração e preservam o acesso fiscal autorizado', async () => fixture(async ({ store, url }) => {
+  const admin = await setup(url);
+  const customerPath = `/v1/platform/companies/${CNPJ_A}`;
+  const credentials = { email: 'fiscal-carteira@example.test', password: 'senha-fiscal-carteira-789' };
+  for (const cnpj of [CNPJ_A, CNPJ_B]) {
+    assert.equal((await request(url, '/v1/platform/companies', { method: 'POST', ...admin, data: { cnpj, name: 'Empresa original' } })).status, 201);
+  }
+  const created = await request(url, '/v1/platform/users', { method: 'POST', ...admin, data: {
+    ...credentials, name: 'Analista Fiscal', role: 'member', companyCnpjs: [CNPJ_B], moduleGrants: { fiscal: 'view' },
+  } });
+  assert.equal(created.status, 201);
+  const id = created.body.user.id;
+  const member = { cookie: (await request(url, '/v1/platform/login', { method: 'POST', data: credentials })).cookie };
+  member.csrf = (await request(url, '/v1/platform/session', member)).body.csrfToken;
+  const grantPath = `${customerPath}/access/${id}`;
+
+  assert.equal((await request(url, customerPath)).status, 401);
+  assert.equal((await request(url, customerPath, member)).status, 403);
+  assert.equal((await request(url, customerPath, { method: 'PATCH', ...member, data: { name: 'Nome indevido' } })).status, 403);
+  assert.equal((await request(url, grantPath, { method: 'PATCH', ...member, data: { hasAccess: true } })).status, 403);
+  assert.equal((await request(url, `${customerPath}/nfse`, member)).status, 403);
+
+  const detail = await request(url, customerPath, admin);
+  assert.equal(detail.status, 200);
+  assert.deepEqual(detail.body.members, [{ id, name: 'Analista Fiscal', email: credentials.email, active: true, hasAccess: false }]);
+  const edited = await request(url, customerPath, { method: 'PATCH', ...admin, data: { name: 'Cliente atualizado', active: false } });
+  assert.equal(edited.status, 200);
+  assert.equal(edited.body.company.name, 'Cliente atualizado');
+  assert.equal((await request(url, customerPath, admin)).body.company.active, false);
+  assert.equal((await request(url, `${customerPath}/access/${admin.user.id}`, { method: 'PATCH', ...admin, data: { hasAccess: false } })).status, 409);
+
+  const grant = hasAccess => request(url, grantPath, { method: 'PATCH', ...admin, data: { hasAccess } });
+  assert.deepEqual((await grant(true)).body, { hasAccess: true });
+  assert.deepEqual((await grant(true)).body, { hasAccess: true });
+  assert.equal((await request(url, customerPath, member)).status, 403);
+  assert.equal((await request(url, `${customerPath}/nfse`, member)).status, 200);
+  assert.deepEqual((await store.findUserById(id)).companyCnpjs, [CNPJ_B, CNPJ_A]);
+  assert.deepEqual((await store.findUserById(id)).moduleGrants, { fiscal: 'view' });
+  assert.deepEqual((await grant(false)).body, { hasAccess: false });
+  assert.equal((await request(url, `${customerPath}/nfse`, member)).status, 403);
+  assert.deepEqual((await store.findUserById(id)).companyCnpjs, [CNPJ_B]);
+  assert.deepEqual(store.auditEntries.filter(entry => entry.action.startsWith('company.')).map(entry => entry.action),
+    ['company.update', 'company.access.grant', 'company.access.revoke']);
 }));

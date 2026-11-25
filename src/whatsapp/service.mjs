@@ -1,6 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { ApiError } from '../api/validation.mjs';
-import { canAccess, MODULES } from '../platform/policy.mjs';
+import { canPerform, MODULES } from '../platform/policy.mjs';
 
 const WHATSAPP_WEBHOOK = '/v1/whatsapp/webhook';
 const SECTORS = new Set(MODULES.map(({ id }) => id));
@@ -176,7 +176,7 @@ export function createWhatsAppService({ config, store, bridge, workspace, fetche
     const input = ['POST', 'PATCH'].includes(req.method) ? await readBody(req) : null;
     const sector = input?.sector ?? query.get('sector');
     if (!SECTORS.has(sector)) throw invalid('sector');
-    if (!canAccess(user, sector)) throw new ApiError(403, 'WHATSAPP_FORBIDDEN', 'Sem acesso ao WhatsApp deste setor.');
+    if (!canPerform(user, sector, 'whatsappRead')) throw new ApiError(403, 'WHATSAPP_FORBIDDEN', 'Sem acesso ao WhatsApp deste setor.');
     const canManage = user.role === 'admin';
     const sectorBridge = bridge?.sector === sector ? bridge : null;
     const scope = (sectorBridge?.scope() || (config?.sector === sector ? config : null));
@@ -205,8 +205,8 @@ export function createWhatsAppService({ config, store, bridge, workspace, fetche
       provider: provider === 'baileys' ? 'Baileys' : 'WhatsApp Cloud API' });
     if (result) return send(res, 200, result);
     const absence = configured ? await workspace?.absence(sector) : null;
-    const canReply = configured && !absence?.enabled && connectionState === 'connected' && canAccess(user, sector, 'edit');
-    const canManageTickets = configured && canAccess(user, sector, 'edit');
+    const canReply = configured && !absence?.enabled && connectionState === 'connected' && canPerform(user, sector, 'whatsappReply');
+    const canManageTickets = configured && canPerform(user, sector, 'whatsappTicketUpdate');
     if (req.method === 'GET' && route === '/whatsapp') {
       if (!configured) return send(res, 200, { configured, provider, canReply, canManage, conversations: [], unread: 0, hasMore: false });
       const rawPage = query.get('page') ?? '1';

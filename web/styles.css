@@ -269,6 +269,35 @@ a { color: var(--blue); }
 .company-heading { margin-top: 4px; }
 .company-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 15px; }
 .company-open { min-height: 34px; padding: 7px 11px; font-size: 11px; white-space: nowrap; }
+.client-admin { max-width: 1000px; margin-inline: auto; }
+.client-back { display: inline-flex; align-items: center; min-height: 36px; padding-inline: 0; text-decoration: none; }
+.client-heading { margin-block: 10px 24px; }
+.client-heading h1 { overflow-wrap: anywhere; }
+.client-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: none; flex-wrap: wrap; }
+.client-content { display: grid; gap: 18px; }
+.client-content h2 { margin: 0; font-size: 17px; }
+.client-content p { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.client-link-panel { padding: clamp(16px, 3vw, 22px); }
+.client-link-field { max-width: 670px; }
+.client-link-field > div { display: flex; align-items: stretch; gap: 8px; }
+.client-link-field input { min-width: 0; }
+.client-link-field button { flex: none; }
+.client-record-data { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 175px), 1fr)); gap: 14px; padding: 18px 22px; margin: 0; }
+.client-record-data dt { color: var(--muted); margin-block-end: 5px; font-size: 12px; }
+.client-record-data dd { margin: 0; color: var(--ink); font-size: 14px; font-weight: 650; }
+.client-record-actions { border-block-start: 1px solid var(--portal-edge); padding: 10px 22px; }
+.client-record-actions a { display: inline-block; padding-inline: 0; text-decoration: none; }
+.client-access-list { list-style: none; margin: 0; }
+.client-access-row { gap: 10px; }
+.client-access-row button { flex: none; }
+.client-access-info { min-width: 0; overflow-wrap: anywhere; }
+.client-content .client-access-empty { padding: 18px 22px; margin: 0; }
+@media (max-width: 550px) {
+  .client-actions { justify-content: start; }
+  .client-link-field > div { flex-wrap: wrap; }
+  .client-access .surface-header { align-items: start; flex-direction: column; }
+  .client-access-row { flex-wrap: wrap; }
+}
 .coverage-banner { display: flex; align-items: center; gap: 15px; padding: 18px 21px; border: 1px solid #cddde9; border-radius: 14px; background: #edf5fa; color: #36566b; line-height: 1.5; }
 .coverage-icon { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; font-size: 21px; color: #117d83; background: #d6f1ed; }
 .coverage-icon.waiting { color: #9e712c; background: #fff3df; }

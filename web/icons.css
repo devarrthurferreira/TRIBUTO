@@ -23,6 +23,7 @@
 .bi-laptop::before { content: "\f456"; }
 .bi-megaphone::before { content: "\f484"; }
 .bi-buildings::before { content: "\f87d"; }
+.bi-gift::before { content: "\f3eb"; }
 .bi-calculator::before { content: "\f1e0"; }
 .bi-receipt::before { content: "\f50f"; }
 .bi-briefcase::before { content: "\f1cc"; }

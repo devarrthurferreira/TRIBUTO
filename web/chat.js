@@ -185,6 +185,10 @@ function updateSend(state) {
   updateMutationControls(state);
 }
 
+function canReviseRoom(room) {
+  return room && (room.kind !== 'sector' || !room.readOnly);
+}
+
 async function api(state, suffix = '', options = {}) {
   const headers = { Accept: 'application/json' };
   if (options.body) {
@@ -226,7 +230,19 @@ async function refreshSummary(state) {
     const known = state.roomLookup.get(id);
     state.roomLookup.set(id, { ...(known || { id, name: person.name, kind: 'direct', unread: 0 }), online: person.online });
   }
-  if (state.room && state.roomLookup.has(state.room.id)) state.room = state.roomLookup.get(state.room.id);
+  if (state.room) {
+    const previous = state.room;
+    const room = state.roomLookup.get(previous.id);
+    if (room) {
+      state.room = room;
+      if (canReviseRoom(previous) !== canReviseRoom(room)) {
+        if (!canReviseRoom(room)) closeMutation(state, false);
+        if (state.historyReady) renderMessages(state);
+      }
+    } else if (previous.kind === 'sector') {
+      clearUnavailableRoom(state);
+    }
+  }
   updateUnread(state, summary.unread);
   renderRoomList(state);
   showPendingRoom(state);
@@ -342,6 +358,30 @@ function selectRoom(state, room, focus = false) {
   });
 }
 
+function clearUnavailableRoom(state) {
+  const { refs, room } = state;
+  const focusSearch = refs.thread.contains(document.activeElement);
+  state.room = null;
+  state.roomSeq += 1;
+  state.historyReady = false;
+  state.hasMore = false;
+  state.messages.clear();
+  state.pendingUpdates.clear();
+  state.drafts.delete(room.id);
+  state.marked.delete(room.id);
+  closeMutation(state, false);
+  refs.text.value = '';
+  refs.draftParts.replaceChildren();
+  refs.linkChooser.hidden = true;
+  refs.messages.replaceChildren();
+  refs.thread.hidden = true;
+  refs.blank.hidden = false;
+  state.dialog.dataset.mobileView = 'list';
+  if (state.pendingRoom === room.id) state.pendingRoom = null;
+  remember(state);
+  if (focusSearch) refs.search.focus({ preventScroll: true });
+}
+
 function scrollEnd(state) {
   state.refs.messages.scrollTop = state.refs.messages.scrollHeight;
 }
@@ -422,7 +462,7 @@ function messageElement(state, message) {
     }
   }
   block.append(meta, body);
-  if (sentByMe) {
+  if (sentByMe && canReviseRoom(state.room)) {
     const actions = el('div', 'chat-message-actions');
     for (const [action, label] of [['edit', 'Editar'], ['delete', 'Excluir']]) {
       const button = actionButton(label, action);
@@ -559,7 +599,7 @@ function updateMutationControls(state) {
 
 function startMutation(state, id, type) {
   const message = state.messages.get(id);
-  if (!message || message.deletedAt || state.mutation?.pending) return;
+  if (!canReviseRoom(state.room) || !message || message.deletedAt || state.mutation?.pending) return;
   const { mutation, mutationTitle, mutationHint, mutationLabel, mutationText, mutationSubmit, mutationCancel } = state.refs;
   const deleting = type === 'delete';
   state.mutation = { id, type, room: message.room, originalText: message.text, pending: false };
@@ -588,7 +628,7 @@ function closeMutation(state, focus = true) {
 async function submitMutation(state, event) {
   event.preventDefault();
   const action = state.mutation;
-  if (!action || action.pending || !state.socket?.connected || state.refs.mutationSubmit.disabled) return;
+  if (!canReviseRoom(state.room) || !action || action.pending || !state.socket?.connected || state.refs.mutationSubmit.disabled) return;
   const { id, room, type } = action;
   const input = { id, room };
   if (type === 'edit') input.text = state.refs.mutationText.value.trim();
@@ -889,7 +929,10 @@ function bindChat(state) {
   refs.mutation.addEventListener('submit', event => void submitMutation(state, event));
   refs.mutationText.addEventListener('input', () => updateMutationControls(state));
   refs.mutationCancel.addEventListener('click', () => closeMutation(state));
-  document.addEventListener('visibilitychange', () => markRead(state), { signal: state.abort.signal });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || !state.dialog.open) return;
+    void refreshSummary(state).then(() => markRead(state)).catch(() => reportSummaryFailure(state));
+  }, { signal: state.abort.signal });
 }
 
 export function initChat(session, { notify, surface } = {}) {

@@ -58,7 +58,7 @@ export function mountSectorNavigation() {
   }
 
   async function pollWhatsAppBadge() {
-    if (!context || activeArea === 'whatsapp') return;
+    if (!context?.whatsapp || activeArea === 'whatsapp') return;
     const controller = new AbortController();
     badgeRequest = controller;
     const id = context.id;
@@ -129,7 +129,7 @@ export function mountSectorNavigation() {
   }
 
   function open(area, { updateHistory = true } = {}) {
-    if (!context) return false;
+    if (!context || (area !== 'setor' && !context[area])) return false;
     if (area === 'setor') expanded = activeArea !== 'setor' || !expanded;
     if (updateHistory) {
       const url = new URL(location.href);
@@ -148,7 +148,13 @@ export function mountSectorNavigation() {
     selectedPanel = sectionOptions(context).some(({ id, href }) => id === candidate && !href) ? candidate : 'overview';
     app.dataset.sectorPanel = selectedPanel;
     renderSubnav();
-    showArea(urlArea());
+    const area = urlArea();
+    if (area !== 'setor' && !context[area]) {
+      const url = new URL(location.href);
+      url.searchParams.delete('aba');
+      history.replaceState(null, '', url);
+      showArea('setor');
+    } else showArea(area);
   }
 
   function leave() {
@@ -174,6 +180,8 @@ export function mountSectorNavigation() {
     if (context?.id !== sector.id) leave();
     context = sector;
     nav.hidden = false;
+    buttons.talk.hidden = !sector.talk;
+    buttons.whatsapp.hidden = !sector.whatsapp;
     app.dataset.sectorActive = 'true';
     syncLocation();
     return { mount: talkMount, show: activeArea === 'talk' };

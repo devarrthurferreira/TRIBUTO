@@ -1,0 +1,153 @@
+.user-wizard {
+  --wizard-gutter: clamp(16px, 4vw, 34px);
+  --wizard-accent: var(--blue);
+  width: min(790px, calc(100% - 28px));
+  max-height: min(90dvh, 820px);
+  padding: 0;
+  overflow: hidden;
+  background: var(--portal-surface);
+  border: 1px solid var(--portal-edge);
+  border-radius: 22px;
+}
+.user-wizard form {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  min-height: min(640px, 86dvh);
+  max-height: min(90dvh, 820px);
+}
+.user-wizard-header {
+  align-items: center;
+  padding: clamp(14px, 3vw, 23px) var(--wizard-gutter) 12px;
+  gap: 12px;
+}
+.user-wizard-header h2 {
+  margin: 0;
+  font-size: clamp(20px, 3.4vw, 27px);
+}
+.user-wizard-header .icon-button:hover { background: var(--portal-hover); }
+.user-wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 0 var(--wizard-gutter);
+  border-block-end: 1px solid var(--portal-edge);
+  list-style: none;
+}
+.user-wizard-steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 7px 12px;
+  border-block-end: 2px solid transparent;
+  color: var(--muted);
+  min-width: 0;
+}
+.user-wizard-steps li:first-child { padding-inline-start: 0; }
+.user-wizard-steps li > span {
+  display: grid;
+  place-items: center;
+  flex: 0 0 26px;
+  height: 26px;
+  border: 1px solid var(--portal-edge);
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+}
+.user-wizard-steps li > small { font-size: 11px; font-weight: 600; line-height: 1.35; }
+.user-wizard-steps li[aria-current] { border-color: var(--wizard-accent); color: var(--wizard-accent); }
+.user-wizard-steps li[aria-current] > span, .user-wizard-steps li.step-complete > span {
+  border-color: transparent;
+  color: var(--wizard-accent);
+  background: var(--portal-hover);
+}
+.user-wizard-content {
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 21px var(--wizard-gutter) 25px;
+  background: var(--portal-floor);
+}
+.user-wizard-step:not([hidden]) { animation: user-wizard-step-in .16s ease-out; }
+@keyframes user-wizard-step-in {
+  from { opacity: .45; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.user-wizard-step h3 { margin: 0 0 17px; font-size: clamp(18px, 3vw, 22px); letter-spacing: -.025em; }
+.user-wizard-step h3:focus { outline: 0; }
+.user-wizard-step p { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.user-wizard-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 15px; }
+.user-wizard .field { min-width: 0; margin: 0; }
+.user-wizard .field label, .user-wizard .grant-grid label { color: var(--ink); }
+.user-wizard .field input, .user-wizard .field select, .user-wizard .grant-grid select {
+  background: var(--portal-surface);
+  border-color: var(--portal-edge);
+  font-size: 13px;
+}
+.user-wizard .field input[readonly] { background: var(--portal-hover); }
+.user-wizard .field small { color: var(--muted); }
+.user-wizard-wide { grid-column: 1 / -1; }
+.user-wizard-address {
+  min-inline-size: 0;
+  margin: 18px 0 0;
+  padding: 13px clamp(10px, 2.3vw, 17px) 16px;
+  border: 1px solid var(--portal-edge);
+  border-radius: 13px;
+}
+.user-wizard-address legend { padding: 0 5px; color: var(--ink); font-size: 12px; font-weight: 700; }
+.user-wizard-inline { display: flex; align-items: stretch; gap: 7px; }
+.user-wizard-inline .button { padding-inline: 10px; font-size: 11px; }
+.user-wizard .button-quiet { background: var(--portal-surface); border-color: var(--portal-edge); color: var(--ink); }
+.user-wizard .button-quiet:hover:not(:disabled) { background: var(--portal-hover); }
+.user-wizard-profile { width: min(100%, 270px); }
+.user-wizard-grants { padding: 0; border: 0; }
+.user-wizard-grants legend { margin-block-end: 9px; padding: 0; color: var(--ink); }
+.user-wizard .grant-module { background: var(--portal-surface); border-color: var(--portal-edge); padding: 13px; border-radius: 12px; }
+.user-wizard .grant-level label { font-size: 12px; }
+.user-wizard .grant-actions { border-block-start: 1px solid var(--portal-edge); padding-block-start: 10px; }
+.user-wizard .grant-action:has(input:disabled) { color: var(--muted); }
+.user-wizard .user-wizard-note {
+  margin: 14px 0 0;
+  border: 1px solid var(--portal-edge);
+  padding: 12px;
+  border-radius: 11px;
+  background: var(--portal-surface);
+  color: var(--ink-soft);
+}
+.user-wizard-portfolio-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-block: 12px; }
+.user-wizard-portfolio-tools .field { flex: 1 0 200px; max-width: 100%; }
+.user-wizard-portfolio-tools output { color: var(--wizard-accent); font-size: 12px; font-weight: 600; }
+.user-wizard-companies { max-height: none; gap: 7px; }
+.user-wizard-companies label {
+  display: flex;
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 12px;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  background: var(--portal-surface);
+  border: 1px solid var(--portal-edge);
+  border-radius: 10px;
+}
+.user-wizard-companies label:has(input:checked) { background: var(--portal-hover); }
+.user-wizard-companies input { flex: none; margin: 0; accent-color: var(--wizard-accent); }
+.user-wizard-footer { border-top: 1px solid var(--portal-edge); padding: 12px var(--wizard-gutter) 16px; }
+.user-wizard-footer .dialog-actions { margin: 0; }
+.user-wizard-footer button:first-child { margin-inline-end: auto; }
+.user-wizard-footer #newUserError { margin: 0 0 12px; }
+@media (max-width: 590px) {
+  .user-wizard-steps li { flex-direction: column; justify-content: start; align-items: center; gap: 5px; text-align: center; padding-inline: 3px; }
+  .user-wizard-steps li > span { width: 25px; height: 25px; flex-basis: 25px; }
+  .user-wizard-steps li > small { font-size: 10px; }
+}
+@media (max-width: 450px) {
+  .user-wizard { width: calc(100% - 18px); border-radius: 15px; }
+  .user-wizard-fields { grid-template-columns: minmax(0, 1fr); }
+  .user-wizard-footer .button { padding-inline: 10px; font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .user-wizard-step:not([hidden]) { animation: none; }
+}

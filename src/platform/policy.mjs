@@ -1,8 +1,21 @@
-const WORK_ITEM_ACTIONS = Object.freeze({
+const MODULE_ACTIONS = Object.freeze({
   workItemRead: 'view',
   workItemCreate: 'edit',
-  workItemUpdate: 'edit'
+  workItemUpdate: 'edit',
+  sectorTalkRead: 'view',
+  sectorTalkSend: 'view',
+  whatsappRead: 'view',
+  whatsappReply: 'edit',
+  whatsappTicketUpdate: 'edit'
 });
+const FISCAL_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, fiscalDocumentsRead: 'view' });
+const ACTION_PREREQUISITES = new Map([
+  ['workItemCreate', 'workItemRead'],
+  ['workItemUpdate', 'workItemRead'],
+  ['sectorTalkSend', 'sectorTalkRead'],
+  ['whatsappReply', 'whatsappRead'],
+  ['whatsappTicketUpdate', 'whatsappRead']
+]);
 
 export const MODULES = Object.freeze([
   { id: 'dp', label: 'Departamento Pessoal', description: 'Rotinas trabalhistas e acompanhamento das empresas' },
@@ -19,7 +32,7 @@ export const MODULES = Object.freeze([
 export const LEVELS = Object.freeze(['view', 'edit', 'manage']);
 
 function actionLevels(module) {
-  return module === 'fiscal' ? { ...WORK_ITEM_ACTIONS, fiscalDocumentsRead: 'view' } : WORK_ITEM_ACTIONS;
+  return module === 'fiscal' ? FISCAL_ACTIONS : MODULE_ACTIONS;
 }
 
 export function grantLevel(grant) {
@@ -44,8 +57,7 @@ export function canPerform(user, module, action) {
   if (user.role === 'admin') return true;
   const blocked = user.moduleGrants[module]?.blockedActions;
   if (!Array.isArray(blocked)) return true;
-  if (blocked.includes(action)) return false;
-  return !['workItemCreate', 'workItemUpdate'].includes(action) || !blocked.includes('workItemRead');
+  return !blocked.includes(action) && !blocked.includes(ACTION_PREREQUISITES.get(action));
 }
 
 export function capabilitiesFor(user) {
@@ -64,6 +76,6 @@ export function canAccessWorkItemCompany(user, module, cnpj) {
 
 export function publicUser(user) {
   if (!user) return null;
-  const { _id, name, email, role, active, companyCnpjs, moduleGrants, createdAt } = user;
-  return { id: _id, name, email, role, active, companyCnpjs: companyCnpjs || [], moduleGrants: moduleGrants || {}, createdAt };
+  const { _id, name, username, email, role, active, companyCnpjs, moduleGrants, createdAt } = user;
+  return { id: _id, name, ...(username ? { username } : {}), email, role, active, companyCnpjs: companyCnpjs || [], moduleGrants: moduleGrants || {}, createdAt };
 }

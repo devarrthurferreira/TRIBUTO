@@ -15,11 +15,18 @@ const sqlDate = (value) => {
   return String(value).replace(' ', 'T') + 'Z';
 };
 const sqlMoney = (value) => value === null || value === undefined ? null : String(value);
+const userConflict = (code) => Object.assign(new Error(code), { code });
+
+function duplicateKey(error, key) {
+  if (error?.code !== 'ER_DUP_ENTRY') return false;
+  const keyName = /['`]([^'`]+)['`]$/.exec(error.sqlMessage || error.message)?.[1];
+  return keyName?.split('.').at(-1) === key;
+}
 
 function user(row) {
   if (!row) return null;
   return {
-    _id: row.id, name: row.name, email: row.email,
+    _id: row.id, name: row.name, username: row.username ?? null, email: row.email,
     passwordHash: row.password_hash, role: row.role, active: bool(row.active),
     companyCnpjs: parse(row.company_cnpjs, []), moduleGrants: parse(row.module_grants, {}),
     createdAt: sqlDate(row.created_at), updatedAt: sqlDate(row.updated_at), passwordChangedAt: sqlDate(row.password_changed_at)
@@ -70,6 +77,14 @@ const TABLES = [
     created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NULL,
     password_changed_at DATETIME(3) NULL,
     UNIQUE KEY uniq_platform_user_email (email)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_user_profiles (
+    user_id CHAR(36) NOT NULL PRIMARY KEY,
+    username VARCHAR(74) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    cpf CHAR(11) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    profile_json LONGTEXT NOT NULL,
+    UNIQUE KEY uniq_platform_profile_username (username),
+    UNIQUE KEY uniq_platform_profile_cpf (cpf)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS platform_companies (
     cnpj CHAR(14) NOT NULL PRIMARY KEY, id CHAR(36) NOT NULL,
@@ -179,14 +194,50 @@ export class PlatformMySqlStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [record._id, record.name, record.email, record.passwordHash, record.role, Number(record.active), json(record.companyCnpjs), json(record.moduleGrants), record.createdAt]);
   }
-  async findUserByEmail(email) { return user(await this.one('SELECT * FROM platform_users WHERE email = ?', [email])); }
-  async findUserById(id) { return user(await this.one('SELECT * FROM platform_users WHERE id = ?', [id])); }
-  async listUsers() { return (await this.rows('SELECT * FROM platform_users ORDER BY name')).map((row) => { const result = user(row); delete result.passwordHash; return result; }); }
-  async createUser(record, actorId) {
-    await this.transaction(async (connection) => {
-      await this.insertUser(connection, record);
-      await this.insertAudit(connection, 'user.create', actorId, record._id, { role: record.role });
+  async findUserByEmail(email) {
+    return user(await this.one(`SELECT u.*, p.username FROM platform_users u
+      LEFT JOIN platform_user_profiles p ON p.user_id = u.id WHERE u.email = ?`, [email]));
+  }
+  async findUserByUsername(username) {
+    return user(await this.one(`SELECT u.*, p.username FROM platform_user_profiles p
+      INNER JOIN platform_users u ON u.id = p.user_id WHERE p.username = ?`, [username]));
+  }
+  async findUserById(id) {
+    return user(await this.one(`SELECT u.*, p.username FROM platform_users u
+      LEFT JOIN platform_user_profiles p ON p.user_id = u.id WHERE u.id = ?`, [id]));
+  }
+  async getUserProfile(id) {
+    const row = await this.one('SELECT cpf, profile_json FROM platform_user_profiles WHERE user_id = ?', [id]);
+    return row ? { ...parse(row.profile_json, {}), cpf: row.cpf } : null;
+  }
+  async listUsers() {
+    return (await this.rows(`SELECT u.id, u.name, u.email, u.role, u.active, u.company_cnpjs, u.module_grants,
+      u.created_at, u.updated_at, u.password_changed_at, p.username FROM platform_users u
+      LEFT JOIN platform_user_profiles p ON p.user_id = u.id ORDER BY u.name`)).map((row) => {
+      const result = user(row);
+      delete result.passwordHash;
+      return result;
     });
+  }
+  async createUser(record, actorId) {
+    const { cpf, ...profile } = record.profile || {};
+    for (let attempt = 1; attempt <= 999; attempt += 1) {
+      const username = attempt === 1 ? record.username : `${record.username}${attempt}`;
+      try {
+        await this.transaction(async (connection) => {
+          await this.insertUser(connection, record);
+          if (record.profile) await connection.execute('INSERT INTO platform_user_profiles (user_id, username, cpf, profile_json) VALUES (?, ?, ?, ?)',
+            [record._id, username, cpf, json(profile)]);
+          await this.insertAudit(connection, 'user.create', actorId, record._id, { role: record.role });
+        });
+        return username;
+      } catch (error) {
+        if (duplicateKey(error, 'uniq_platform_user_email')) throw userConflict('DUPLICATE_USER_EMAIL');
+        if (duplicateKey(error, 'uniq_platform_profile_cpf')) throw userConflict('DUPLICATE_USER_CPF');
+        if (!duplicateKey(error, 'uniq_platform_profile_username')) throw new Error('Falha ao gravar cadastro de usuário', { cause: error });
+      }
+    }
+    throw userConflict('USERNAME_UNAVAILABLE');
   }
   async updateUser(id, changes) {
     const fields = { name: 'name', active: 'active', role: 'role', companyCnpjs: 'company_cnpjs', moduleGrants: 'module_grants' };
@@ -228,12 +279,40 @@ export class PlatformMySqlStore {
     const params = [];
     return (await this.rows(`SELECT * FROM platform_companies WHERE ${scope('cnpj', allowed, params)} ORDER BY name`, params)).map(company);
   }
+  async getCompany(cnpj) { return company(await this.one('SELECT * FROM platform_companies WHERE cnpj = ?', [cnpj])); }
   async companyExists(cnpj) { return bool(await this.one('SELECT 1 FROM platform_companies WHERE cnpj = ? LIMIT 1', [cnpj])); }
   async createCompany(record, actorId) {
     await this.transaction(async (connection) => {
       await connection.execute('INSERT INTO platform_companies (cnpj, id, name, active, created_at) VALUES (?, ?, ?, ?, ?)',
         [record.cnpj, record._id, record.name, Number(record.active), record.createdAt]);
       await this.insertAudit(connection, 'company.create', actorId, record.cnpj);
+    });
+  }
+
+  async updateCompany(cnpj, changes, actorId) {
+    return this.transaction(async connection => {
+      const [[row]] = await connection.execute('SELECT * FROM platform_companies WHERE cnpj = ? FOR UPDATE', [cnpj]);
+      if (!row) return null;
+      const updated = { ...company(row), ...changes };
+      await connection.execute('UPDATE platform_companies SET name = ?, active = ? WHERE cnpj = ?', [updated.name, Number(updated.active), cnpj]);
+      await this.insertAudit(connection, 'company.update', actorId, cnpj, { fields: Object.keys(changes) });
+      return updated;
+    });
+  }
+
+  async setCompanyAccess(cnpj, userId, hasAccess, actorId) {
+    return this.transaction(async connection => {
+      const [[row]] = await connection.execute('SELECT role, active, company_cnpjs FROM platform_users WHERE id = ? FOR UPDATE', [userId]);
+      if (!row) return 'not_found';
+      if (row.role === 'admin') return 'admin';
+      if (hasAccess && !row.active) return 'inactive';
+      const portfolio = parse(row.company_cnpjs, []);
+      if (portfolio.includes(cnpj) === hasAccess) return hasAccess;
+      if (hasAccess && portfolio.length >= 1000) return 'limit';
+      const updated = hasAccess ? [...portfolio, cnpj] : portfolio.filter(key => key !== cnpj);
+      await connection.execute('UPDATE platform_users SET company_cnpjs = ?, updated_at = ? WHERE id = ?', [json(updated), new Date(), userId]);
+      await this.insertAudit(connection, hasAccess ? 'company.access.grant' : 'company.access.revoke', actorId, cnpj, { userId });
+      return hasAccess;
     });
   }
 

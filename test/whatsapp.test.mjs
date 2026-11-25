@@ -7,6 +7,7 @@ import { sha256 } from '../src/api/validation.mjs';
 import { createPlatformRouter } from '../src/platform/routes.mjs';
 import { replyWindowOpen } from '../src/whatsapp/mysql-store.mjs';
 import { createWhatsAppService, readWhatsAppConfig } from '../src/whatsapp/service.mjs';
+import { createWhatsAppWorkspace } from '../src/whatsapp/workspace.mjs';
 
 const environment = {
   WHATSAPP_PHONE_NUMBER_ID: '12345678901234',
@@ -156,6 +157,28 @@ test('WhatsApp routes verify webhook and connect authorized inbox, read state an
     assert.equal((await req('/reply', view, reply)).status, 403);
     assert.equal((await req('/reply', edit, reply, false)).status, 403);
     assert.equal(graphCalls.length, 0);
+
+    edit.moduleGrants.tecnologia = { level: 'edit', blockedActions: ['whatsappRead'] };
+    assert.equal((await req('?sector=tecnologia', edit)).status, 403);
+    assert.equal((await req(history, edit)).status, 403);
+    assert.equal((await req('/reply', edit, reply)).status, 403);
+
+    edit.moduleGrants.tecnologia = { level: 'edit', blockedActions: ['whatsappReply'] };
+    const replyRestricted = await (await req('?sector=tecnologia', edit)).json();
+    assert.equal(replyRestricted.conversations[0].canReply, false);
+    assert.equal(replyRestricted.canManageTickets, true);
+    assert.equal((await req('/reply', edit, reply)).status, 403);
+
+    edit.moduleGrants.tecnologia = { level: 'edit', blockedActions: ['whatsappTicketUpdate'] };
+    const ticketRestricted = await (await req('?sector=tecnologia', edit)).json();
+    assert.equal(ticketRestricted.conversations[0].canReply, true);
+    assert.equal(ticketRestricted.canManageTickets, false);
+    const workspace = createWhatsAppWorkspace({ pool: { async execute() { return [[]]; } } });
+    const context = { user: edit, sector: 'tecnologia', input: { conversation: inbox.id, status: 'closed' } };
+    assert.equal((await workspace.handle({ ...context, method: 'GET', route: '/whatsapp/tags' })).canAssign, false);
+    await assert.rejects(workspace.handle({ ...context, method: 'PATCH', route: '/whatsapp/tags' }), { status: 403 });
+    await assert.rejects(workspace.handle({ ...context, method: 'POST', route: '/whatsapp/ticket' }), { status: 403 });
+    edit.moduleGrants.tecnologia = 'edit';
 
     const read = { sector: 'tecnologia', conversation: inbox.id, through: '1' };
     assert.equal((await req('/read', edit, { ...read, through: '999' })).status, 404);

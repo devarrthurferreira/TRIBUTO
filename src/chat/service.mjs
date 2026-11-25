@@ -51,13 +51,13 @@ export function createChat({ store, chatStore, logger = console }) {
 
   function canReadRoom(user, key) {
     const [kind, first, second] = key.split(':');
-    return kind === 'sector' ? canAccess(user, first) : kind === 'direct' && [first, second].includes(user._id);
+    return kind === 'sector' ? canPerform(user, first, 'sectorTalkRead') : kind === 'direct' && [first, second].includes(user._id);
   }
 
-  async function roomKey(user, input, { sending = false } = {}) {
+  async function roomKey(user, input, { sending = false, revising = false } = {}) {
     const [kind, id, trailing] = typeof input === 'string' && input.length <= 60 ? input.split(':') : [];
     if (!id || trailing !== undefined) throw new ApiError(400, 'CHAT_ROOM', 'Selecione uma conversa válida.');
-    if (kind === 'sector' && byModule.has(id) && canAccess(user, id)) return sectorKey(id);
+    if (kind === 'sector' && canPerform(user, id, sending || revising ? 'sectorTalkSend' : 'sectorTalkRead')) return sectorKey(id);
     if (kind === 'direct' && validId(id) && id !== user._id) {
       const other = await store.findUserById(id);
       if (other && (!sending || other.active)) return directKey(user._id, id);
@@ -93,7 +93,9 @@ export function createChat({ store, chatStore, logger = console }) {
     const contacts = (await store.listUsers()).filter(person => person._id !== user._id);
     const modules = modulesFor(user);
     const rooms = [
-      ...modules.map(({ id, label }) => ({ id: sectorKey(id), key: sectorKey(id), kind: 'sector', name: label })),
+      ...modules.filter(({ id }) => canPerform(user, id, 'sectorTalkRead')).map(({ id, label }) => ({
+        id: sectorKey(id), key: sectorKey(id), kind: 'sector', name: label, readOnly: !canPerform(user, id, 'sectorTalkSend')
+      })),
       ...contacts.map(person => ({ id: `direct:${person._id}`, key: directKey(user._id, person._id), kind: 'direct', name: person.name, readOnly: !person.active }))
     ];
     const result = new Map((await chatStore.listRoomActivity(user._id, rooms.map(room => room.key))).map(entry => [entry.roomKey, entry]));
@@ -187,7 +189,7 @@ export function createChat({ store, chatStore, logger = console }) {
 
   async function reviseMessage(auth, input, deleting) {
     const { user } = auth;
-    const key = await roomKey(user, input?.room);
+    const key = await roomKey(user, input?.room, { revising: true });
     if (!validSequence(input.id)) throw new ApiError(400, 'CHAT_MESSAGE', 'Mensagem inválida.');
     const text = deleting ? null : messageText(input.text);
     const { message, changed, empty } = await chatStore.reviseMessage({ id: input.id, roomKey: key, senderId: user._id, text });

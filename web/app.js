@@ -1,6 +1,7 @@
 import { destroyChat, initChat, openChat } from './chat.js';
 import { mountPortal, setChatNotification } from './portal.js';
 import { mountSectorNavigation } from './sectors.js';
+import { mountUserWizard } from './user-wizard.js';
 
 const API = '/v1/platform';
 const DASHBOARD_PATH = '/home';
@@ -22,16 +23,28 @@ const legacyModules = [
   { id: 'gestao', label: 'Gestão' },
 ];
 const allModules = [...modules, ...legacyModules];
+const adminViews = new Set(['companies', 'users', 'agents']);
 const viewLabels = {
   overview: 'Início', ...Object.fromEntries(allModules.map(({ id, label }) => [id, label])),
-  companies: 'Empresas', 'company-detail': 'Ficha da empresa', users: 'Equipe e acessos', agents: 'Agentes de coleta',
+  companies: 'Empresas/Clientes', 'company-detail': 'Ficha fiscal da empresa', 'client-detail': 'Cadastro do cliente',
+  club: 'Clube de Benefícios', users: 'Equipe e acessos', agents: 'Agentes de coleta',
 };
 const actionLabels = {
   workItemRead: 'Consultar atividades',
   workItemCreate: 'Criar atividades',
   workItemUpdate: 'Alterar atividades',
   fiscalDocumentsRead: 'Consultar documentos fiscais',
+  sectorTalkRead: 'Consultar o Talk do setor',
+  sectorTalkSend: 'Conversar no Talk do setor',
+  whatsappRead: 'Consultar o WhatsApp do setor',
+  whatsappReply: 'Responder no WhatsApp',
+  whatsappTicketUpdate: 'Alterar chamados do WhatsApp',
 };
+const actionDependencies = {
+  workItemCreate: 'workItemRead', workItemUpdate: 'workItemRead',
+  sectorTalkSend: 'sectorTalkRead', whatsappReply: 'whatsappRead', whatsappTicketUpdate: 'whatsappRead',
+};
+const writeActions = new Set(['workItemCreate', 'workItemUpdate', 'whatsappReply', 'whatsappTicketUpdate']);
 const taskStatusLabels = { open: 'Aberta', in_progress: 'Em andamento', done: 'Concluída' };
 const state = { session: null, view: 'overview', companies: [], users: [], agents: [], selectedCompanyCnpj: null, nfsePage: 1, nfseHasMore: false, nfseRequest: 0 };
 
@@ -178,6 +191,7 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   sectorNavigation.setTalkUnread(0);
   state.session = null;
   state.selectedCompanyCnpj = null;
+  state.selectedClientCnpj = null;
   if (location.pathname !== '/' || (!preserveRoute && location.hash)) {
     const fragment = preserveRoute && !location.pathname.startsWith(SECTOR_PREFIX) ? location.hash : '';
     history.replaceState(null, '', `/${fragment}`);
@@ -191,6 +205,9 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   $('setupToken').required = setupRequired;
   $('setupName').required = setupRequired;
   $('confirmPassword').required = setupRequired;
+  $('authEmailLabel').textContent = setupRequired ? 'E-mail' : 'Usuário ou e-mail';
+  $('authEmail').type = setupRequired ? 'email' : 'text';
+  $('authEmail').placeholder = setupRequired ? 'voce@maximumcontabil.com.br' : 'nome.sobrenome ou seu e-mail';
   $('authPassword').autocomplete = setupRequired ? 'new-password' : 'current-password';
   $('authPassword').minLength = setupRequired ? 10 : 0;
   $('authTitle').textContent = setupRequired ? 'Configure o primeiro acesso' : 'Entrar na Central Maximum';
@@ -223,7 +240,7 @@ function applySession(session) {
     if (legacyModules.some((module) => module.id === view)) {
       button.hidden = !session.user.moduleGrants?.[view] || !canView(view);
     } else {
-      button.hidden = modules.some((module) => module.id === view) ? !canView(view) : (['users', 'agents'].includes(view) && !isAdmin());
+      button.hidden = modules.some((module) => module.id === view) ? !canView(view) : (adminViews.has(view) && !isAdmin());
     }
   }
   const canReadFiscalDocuments = canUse('fiscal', 'fiscalDocumentsRead');
@@ -233,6 +250,9 @@ function applySession(session) {
   $('newUserButton').hidden = !isAdmin();
   $('portalUsers').hidden = !isAdmin();
   $('portalAgents').hidden = !isAdmin();
+  $('portalCompanies').hidden = !isAdmin();
+  $('portalCompanySettings').hidden = !isAdmin();
+  $('fiscalAllCompanies').hidden = !isAdmin();
   $('newAgentButton').hidden = !isAdmin();
   $('storageOverview').hidden = !isAdmin();
   $('homeAgentHealthCard').hidden = !isAdmin();
@@ -268,13 +288,13 @@ async function initialLoad() {
 async function handleAuth(event) {
   event.preventDefault();
   const setup = $('authForm').dataset.setup === 'true';
-  const email = $('authEmail').value.trim().toLowerCase();
+  const identifier = $('authEmail').value.trim().toLowerCase();
   const password = $('authPassword').value;
   formError('authError', '');
   if (setup && password !== $('confirmPassword').value) return formError('authError', 'As senhas não coincidem.');
   const body = setup
-    ? { setupToken: $('setupToken').value.trim(), name: $('setupName').value.trim(), email, password }
-    : { email, password };
+    ? { setupToken: $('setupToken').value.trim(), name: $('setupName').value.trim(), email: identifier, password }
+    : { identifier, password };
   withBusy($('authSubmit'), true);
   try {
     const session = await request(setup ? '/setup' : '/login', { method: 'POST', body });
@@ -298,8 +318,10 @@ async function logout() {
 
 function navigate(view, { replace = false } = {}) {
   const companyRoute = /^company-(\d{14})$/.exec(view);
+  const clientRoute = /^client-(\d{14})$/.exec(view);
   const detail = !!companyRoute && canUse('fiscal', 'fiscalDocumentsRead');
-  const valid = detail || (Object.hasOwn(viewLabels, view) && (view === 'overview' || view === 'companies' || (['users', 'agents'].includes(view) ? isAdmin() : canView(view))));
+  const clientDetail = !!clientRoute && isAdmin();
+  const valid = detail || clientDetail || view === 'overview' || view === 'club' || (adminViews.has(view) ? isAdmin() : allModules.some(({ id }) => id === view && canView(id)));
   const route = valid ? view : 'overview';
   const targetUrl = viewUrl(route);
   if (location.pathname !== targetUrl.split('#')[0]) {
@@ -307,7 +329,7 @@ function navigate(view, { replace = false } = {}) {
     else location.assign(targetUrl);
     return false;
   }
-  state.view = detail ? 'company-detail' : route;
+  state.view = detail ? 'company-detail' : clientDetail ? 'client-detail' : route;
   document.title = state.view === 'overview'
     ? 'Central Maximum | Maximum Contábil'
     : `${viewLabels[state.view]} | Central Maximum`;
@@ -323,13 +345,20 @@ function navigate(view, { replace = false } = {}) {
     state.selectedCompanyCnpj = companyRoute[1];
     updateCompanyHeading();
   }
+  state.selectedClientCnpj = clientDetail ? clientRoute[1] : null;
   for (const section of document.querySelectorAll('.view')) section.hidden = section.id !== `view-${state.view}`;
+  const activeView = state.view === 'client-detail' || (state.view === 'company-detail' && isAdmin()) ? 'companies'
+    : state.view === 'company-detail' ? 'fiscal' : state.view;
   for (const button of document.querySelectorAll('.nav-link')) {
-    const current = button.dataset.view === (state.view === 'company-detail' ? 'companies' : state.view);
+    const current = button.dataset.view === activeView;
     button.classList.toggle('active', current);
     if (current) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
   setPortalContext(state.view);
+  for (const [id, active] of [['portalClub', state.view === 'club'], ['portalCompanies', ['companies', 'client-detail'].includes(state.view)]]) {
+    if (active) $(id).setAttribute('aria-current', 'page');
+    else $(id).removeAttribute('aria-current');
+  }
   if (`${location.pathname}${location.hash}` !== targetUrl) history.replaceState(null, '', targetUrl);
   closeMenu();
   const sector = allModules.find(({ id }) => id === state.view);
@@ -337,11 +366,13 @@ function navigate(view, { replace = false } = {}) {
     id: sector.id, label: sector.label, session: state.session, admin: isAdmin(),
     content: $(`view-${sector.id}`), activities: canUse(sector.id, 'workItemRead'),
     fiscalDocuments: sector.id === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead'),
+    talk: canUse(sector.id, 'sectorTalkRead'), whatsapp: canUse(sector.id, 'whatsappRead'),
   } : null, { home: state.view === 'overview' });
   $('conteudo').focus({ preventScroll: true });
   if (state.view === 'users') void loadUsers().catch(displayError);
   if (state.view === 'agents') void loadAgents().catch(displayError);
   if (state.view === 'companies') void loadCompanies().catch(displayError);
+  if (state.view === 'client-detail') void loadClientDetail(state.selectedClientCnpj).catch(displayError);
   if (state.view === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead')) void loadFiscalDocuments().catch(displayError);
   if (state.view === 'company-detail') void loadCompanyDetail().catch(displayError);
   if (canUse(state.view, 'workItemRead')) void loadWorkItems(state.view).catch(displayError);
@@ -403,16 +434,17 @@ function fillCompanySelect(select, allOption) {
   for (const company of state.companies) select.append(new Option(`${company.name} · ${cnpjLabel(company.cnpj)}`, company.cnpj));
   if (old && state.companies.some((company) => company.cnpj === old)) select.value = old;
 }
-function fillUserCompanyOptions() {
-  const target = $('userCompanyOptions');
+function fillUserCompanyOptions(target = $('userCompanyOptions'), showEmpty = true) {
+  const checked = new Set([...target.querySelectorAll('input:checked')].map(input => input.value));
   target.replaceChildren();
-  if (!state.companies.length) return target.append(node('small', '', 'Cadastre empresas antes de atribuir a carteira.'));
+  if (!state.companies.length && showEmpty) return target.append(node('small', '', 'Cadastre empresas antes de atribuir a carteira.'));
   for (const company of state.companies) {
     const label = node('label');
     const input = node('input');
     input.type = 'checkbox';
     input.name = 'companyCnpjs';
     input.value = company.cnpj;
+    input.checked = checked.has(company.cnpj);
     label.append(input, node('span', '', `${company.name} · ${cnpjLabel(company.cnpj)}`));
     target.append(label);
   }
@@ -448,11 +480,16 @@ async function loadCompanies() {
   renderCompanies();
   renderFiscalCompanyQuickList();
   if (state.view === 'company-detail') {
-    if (!state.companies.some((company) => company.cnpj === state.selectedCompanyCnpj)) navigate('companies');
+    if (!state.companies.some((company) => company.cnpj === state.selectedCompanyCnpj)) navigate(isAdmin() ? 'companies' : 'fiscal');
     else updateCompanyHeading();
   }
   for (const id of ['workItemCompany', 'fiscalCompanyFilter']) fillCompanySelect($(id), id === 'fiscalCompanyFilter');
   fillUserCompanyOptions();
+  if ($('userWizardDialog').open) {
+    const options = $('newUserCompanyOptions');
+    fillUserCompanyOptions(options, false);
+    options.dispatchEvent(new Event('change'));
+  }
   fillAgentCompanyOptions();
   for (const select of document.querySelectorAll('.work-company-filter')) fillCompanySelect(select, true);
 }
@@ -474,10 +511,9 @@ function renderCompanies() {
     const aside = node('span', 'status-pill ' + (company.active === false ? 'status-warning' : 'status-ok'), company.active === false ? 'Inativa' : 'Ativa');
     const actions = node('div', 'company-row-actions');
     actions.append(aside);
-    if (canUse('fiscal', 'fiscalDocumentsRead')) {
-      const open = node('button', 'button button-quiet company-open', 'Abrir empresa ↗');
-      open.type = 'button';
-      open.addEventListener('click', () => navigate(`company-${company.cnpj}`));
+    if (isAdmin()) {
+      const open = node('a', 'button button-quiet company-open', 'Abrir ficha ↗');
+      open.href = viewUrl(`client-${company.cnpj}`);
       actions.append(open);
     }
     row.append(main, actions);
@@ -488,7 +524,12 @@ function renderFiscalCompanyQuickList() {
   const target = $('fiscalCompanyQuickList');
   target.replaceChildren();
   if (!state.companies.length) return appendEmpty(target, 'Nenhuma empresa na carteira', 'Cadastre uma empresa ou peça acesso ao administrador para acompanhar suas NFS-e.', '▥');
-  for (const company of state.companies.slice(0, 12)) {
+  const query = $('fiscalCompanyLookup').value.trim().normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+  const digits = query.replace(/\D/g, '');
+  const companies = state.companies.filter(({ name, cnpj }) => name.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().includes(query)
+    || (digits && /^[\d.\s/-]+$/.test(query) && cnpj.includes(digits)));
+  if (!companies.length) return appendEmpty(target, 'Nenhuma empresa encontrada', 'Busque por outro nome ou CNPJ.', '▥');
+  for (const company of companies.slice(0, 12)) {
     const row = node('div', 'list-row');
     const main = node('div', 'list-row-main');
     const info = node('div');
@@ -500,22 +541,172 @@ function renderFiscalCompanyQuickList() {
     row.append(main, button);
     target.append(row);
   }
-  if (state.companies.length > 12) target.append(node('p', 'pagination-note', `Exibindo 12 de ${state.companies.length} empresas. Use a aba Empresas para buscar toda a carteira.`));
+  if (companies.length > 12) target.append(node('p', 'pagination-note', `Exibindo 12 de ${companies.length} empresas. Refine a busca para localizar uma empresa.`));
 }
+function openCompanyDialog(company) {
+  if (!isAdmin()) return;
+  const form = $('companyForm');
+  form.reset();
+  form.dataset.company = company?.cnpj || '';
+  $('companyDialogTitle').textContent = company ? 'Editar empresa' : 'Nova empresa';
+  $('companyName').value = company?.name || '';
+  $('companyCnpj').value = company ? cnpjLabel(company.cnpj) : '';
+  $('companyCnpj').readOnly = Boolean(company);
+  $('companyStatusField').hidden = !company;
+  $('companyStatus').value = String(company?.active !== false);
+  formError('companyError', '');
+  $('companyDialog').showModal();
+}
+
 async function createCompany(event) {
   event.preventDefault();
+  if (!isAdmin()) return;
   formError('companyError', '');
+  const editCnpj = $('companyForm').dataset.company;
   const button = event.submitter || $('companyForm').querySelector('[type="submit"]');
   withBusy(button, true);
   try {
-    await request('/companies', { method: 'POST', body: { name: $('companyName').value.trim(), cnpj: $('companyCnpj').value.replace(/\D/g, '') } });
-    $('companyDialog').close();
-    $('companyForm').reset();
-    await loadCompanies();
-    await loadDashboard();
-    notice('Empresa cadastrada.');
-  } catch (error) { formError('companyError', error.message); }
-  finally { withBusy(button, false); }
+    const name = $('companyName').value.trim();
+    const companyResult = await request(editCnpj ? `/companies/${editCnpj}` : '/companies', editCnpj
+      ? { method: 'PATCH', body: { name, active: $('companyStatus').value === 'true' } }
+      : { method: 'POST', body: { name, cnpj: $('companyCnpj').value.replace(/\D/g, '') } });
+    if (editCnpj && activeClient?.company.cnpj === editCnpj) {
+      activeClient.company = companyResult.company;
+      renderClientHeading(activeClient.company);
+    }
+  } catch (error) {
+    formError('companyError', error.message);
+    return;
+  } finally { withBusy(button, false); }
+  $('companyDialog').close();
+  notice(editCnpj ? 'Cadastro atualizado.' : 'Empresa cadastrada.');
+  void Promise.all([loadCompanies(), loadDashboard()]).catch(displayError);
+}
+
+let activeClient;
+let clientRequest = 0;
+const clientIsVisible = (cnpj) => isAdmin() && state.view === 'client-detail' && state.selectedClientCnpj === cnpj;
+
+function renderClientHeading(company) {
+  $('clientDetailTitle').textContent = company?.name || 'Ficha da empresa';
+  $('clientDetailCnpj').textContent = company ? `CNPJ ${cnpjLabel(company.cnpj)}` : '';
+  $('clientDetailCnpj').hidden = !company;
+  $('clientDetailActions').hidden = !company;
+  $('clientDetailContent').hidden = !company;
+  if (!company) return;
+  $('clientRecordCnpj').textContent = cnpjLabel(company.cnpj);
+  $('clientRecordSince').textContent = company.createdAt ? dateLabel(company.createdAt) : 'Não informada';
+  $('clientDetailStatus').className = `status-pill ${company.active === false ? 'status-warning' : 'status-ok'}`;
+  $('clientDetailStatus').textContent = company.active === false ? 'Inativa' : 'Ativa';
+  $('clientFiscalLink').href = viewUrl(`company-${company.cnpj}`);
+}
+
+function renderClientAccessCount() {
+  const count = activeClient.members.filter(member => member.active && member.hasAccess).length;
+  $('clientAccessCount').textContent = count === 1 ? '1 membro com acesso' : `${count} membros com acesso`;
+}
+
+function renderClientAccess() {
+  const target = $('clientAccessList');
+  target.replaceChildren();
+  const empty = $('clientAccessEmpty');
+  if (!activeClient) { empty.hidden = true; return; }
+  const { company, members } = activeClient;
+  const filter = $('clientAccessSearch').value.trim().toLocaleLowerCase('pt-BR');
+  const eligible = members.filter(member => member.active || member.hasAccess);
+  const visible = eligible.filter(member => `${member.name} ${member.email}`.toLocaleLowerCase('pt-BR').includes(filter));
+  empty.textContent = eligible.length ? 'Nenhuma pessoa encontrada.' : 'Nenhum membro disponível para vincular à carteira.';
+  empty.hidden = visible.length > 0;
+  renderClientAccessCount();
+  for (const member of visible) {
+    const row = node('li', 'list-row client-access-row');
+    const main = node('div', 'list-row-main');
+    const info = node('div', 'client-access-info');
+    info.append(node('strong', '', member.name), node('small', '', member.email));
+    if (!member.active) info.append(node('small', '', 'Usuário inativo'));
+    main.append(node('span', 'row-avatar', initials(member.name)), info);
+    const action = node('button', 'button button-quiet');
+    action.type = 'button';
+    const updateActionLabel = () => {
+      action.textContent = member.hasAccess ? 'Revogar acesso' : 'Conceder acesso';
+      action.setAttribute('aria-label', `${action.textContent} ${member.hasAccess ? 'de' : 'para'} ${member.name}`);
+    };
+    updateActionLabel();
+    action.addEventListener('click', async () => {
+      const entry = activeClient;
+      if (!clientIsVisible(company.cnpj) || !entry?.members.includes(member) || member.busy) return;
+      member.busy = true;
+      withBusy(action, true, 'Salvando…');
+      try {
+        const data = await request(`/companies/${company.cnpj}/access/${member.id}`, { method: 'PATCH', body: { hasAccess: !member.hasAccess } });
+        member.hasAccess = data.hasAccess;
+        if (clientIsVisible(company.cnpj) && activeClient === entry) {
+          $('clientAccessFeedback').textContent = `${member.hasAccess ? 'Acesso concedido a' : 'Acesso revogado de'} ${member.name}.`;
+        }
+      } catch (error) { displayError(error); }
+      finally {
+        member.busy = false;
+        withBusy(action, false);
+        updateActionLabel();
+        if (clientIsVisible(company.cnpj) && activeClient === entry) {
+          if (!action.isConnected || !member.active) renderClientAccess();
+          else renderClientAccessCount();
+        }
+      }
+    });
+    action.disabled = Boolean(member.busy);
+    row.append(main, action);
+    target.append(row);
+  }
+}
+
+async function loadClientDetail(cnpj) {
+  const serial = ++clientRequest;
+  activeClient = undefined;
+  $('clientAccessSearch').value = '';
+  $('clientLinkPanel').hidden = true;
+  $('clientLinkValue').value = '';
+  $('clientLinkButton').setAttribute('aria-expanded', 'false');
+  $('clientAccessFeedback').textContent = '';
+  formError('clientDetailError', '');
+  renderClientHeading();
+  try {
+    const data = await request(`/companies/${cnpj}`);
+    if (serial !== clientRequest || !clientIsVisible(cnpj)) return;
+    activeClient = { company: data.company, members: data.members };
+    renderClientHeading(activeClient.company);
+    renderClientAccess();
+  } catch (error) {
+    if (serial === clientRequest && clientIsVisible(cnpj)) {
+      if (error.status === 401) displayError(error);
+      else formError('clientDetailError', error.message);
+    }
+  }
+}
+
+function showClientLink() {
+  const cnpj = activeClient?.company.cnpj;
+  if (!cnpj || !clientIsVisible(cnpj)) return;
+  const panel = $('clientLinkPanel');
+  panel.hidden = !panel.hidden;
+  $('clientLinkButton').setAttribute('aria-expanded', String(!panel.hidden));
+  if (!panel.hidden) {
+    $('clientLinkValue').value = new URL(viewUrl(`client-${cnpj}`), location.origin).href;
+    $('clientLinkValue').focus();
+    $('clientLinkValue').select();
+  }
+}
+
+async function copyClientLink() {
+  const input = $('clientLinkValue');
+  try {
+    await navigator.clipboard.writeText(input.value);
+    notice('Link da empresa copiado.');
+  } catch {
+    input.focus();
+    input.select();
+    notice('Use o comando de copiar para salvar o link selecionado.', 'error');
+  }
 }
 async function loadUsers() {
   const data = await request('/users');
@@ -530,6 +721,7 @@ async function loadUsers() {
     const avatar = node('span', 'row-avatar teal', initials(user.name));
     const info = node('div');
     info.append(node('strong', '', user.name), node('small', '', user.email));
+    if (user.username) info.append(node('small', '', user.username));
     main.append(avatar, info);
     const side = node('div', 'row-aside');
     side.append(node('strong', '', user.role === 'admin' ? 'Administrador' : 'Membro'));
@@ -543,25 +735,28 @@ async function loadUsers() {
     target.append(row);
   }
 }
-function renderUserGrants(user) {
-  const target = $('userGrantOptions');
+function renderUserGrants(user, target = $('userGrantOptions')) {
   target.replaceChildren();
   const editable = [...modules, ...legacyModules.filter(({ id }) => user?.moduleGrants?.[id])];
   for (const { id, label } of editable) {
     const currentGrant = user?.moduleGrants?.[id];
     const row = node('div', 'grant-module');
     row.dataset.module = id;
-    const permissionLabel = node('label', 'grant-level', label);
+    const permission = node('div', 'grant-level');
+    const permissionLabel = node('label', '', label);
     const level = node('select');
+    level.id = `${target.id}-${id}`;
+    permissionLabel.htmlFor = level.id;
     level.name = `grant-${id}`;
     level.append(new Option('Sem acesso', ''), new Option('Visualizar', 'view'), new Option('Editar', 'edit'), new Option('Gerenciar', 'manage'));
     level.value = typeof currentGrant === 'string' ? currentGrant : currentGrant?.level || '';
-    permissionLabel.append(level);
+    permission.append(permissionLabel, level);
     const actions = node('div', 'grant-actions');
     actions.setAttribute('role', 'group');
     actions.setAttribute('aria-label', `Ações de ${label}`);
     for (const [action, actionLabel] of Object.entries(actionLabels)) {
       if (action === 'fiscalDocumentsRead' && id !== 'fiscal') continue;
+      if (legacyModules.some(module => module.id === id) && /^(sectorTalk|whatsapp)/.test(action)) continue;
       const input = node('input');
       input.type = 'checkbox';
       input.value = action;
@@ -571,17 +766,17 @@ function renderUserGrants(user) {
       actions.append(entry);
     }
     const updateActions = () => {
-      const workReadAllowed = actions.querySelector('input[value="workItemRead"]').checked;
       actions.hidden = !level.value;
       for (const action of actions.querySelectorAll('input')) {
-        const isWriteAction = ['workItemCreate', 'workItemUpdate'].includes(action.value);
-        action.disabled = isWriteAction && (level.value === 'view' || !workReadAllowed);
+        const dependsOn = actionDependencies[action.value];
+        action.disabled = (writeActions.has(action.value) && level.value === 'view')
+          || Boolean(dependsOn && !actions.querySelector(`input[value="${dependsOn}"]`).checked);
       }
     };
     level.addEventListener('change', updateActions);
     actions.addEventListener('change', updateActions);
     updateActions();
-    row.append(permissionLabel, actions);
+    row.append(permission, actions);
     target.append(row);
   }
 }
@@ -591,54 +786,49 @@ function updateGrantEditorRole() {
   $('userModuleGrants').hidden = fullAccess;
   $('userCompanyGrants').hidden = fullAccess;
 }
-function openUserDialog(user = null) {
+function openUserDialog(user) {
   const form = $('userForm');
   form.reset();
   fillUserCompanyOptions();
-  form.dataset.editId = user?.id || '';
-  $('userDialogTitle').textContent = user ? 'Editar acesso' : 'Novo usuário';
-  form.querySelector('[type="submit"]').textContent = user ? 'Salvar alterações' : 'Criar acesso';
-  $('userPasswordRow').hidden = !!user;
-  $('userPassword').required = !user;
-  $('userEmail').disabled = !!user;
-  $('userActiveRow').hidden = !user;
-  $('userActive').checked = user?.active !== false;
+  form.dataset.editId = user.id;
+  $('userActive').checked = user.active !== false;
   formError('userError', '');
-  if (user) {
-    $('userName').value = user.name || '';
-    $('userEmail').value = user.email || '';
-    $('userRole').value = user.role === 'admin' ? 'admin' : 'member';
-    for (const input of form.querySelectorAll('input[name="companyCnpjs"]')) input.checked = user.companyCnpjs?.includes(input.value) || false;
-  }
+  $('userName').value = user.name || '';
+  $('userEmail').value = user.email || '';
+  $('userRole').value = user.role === 'admin' ? 'admin' : 'member';
+  for (const input of form.querySelectorAll('input[name="companyCnpjs"]')) input.checked = user.companyCnpjs?.includes(input.value) || false;
   renderUserGrants(user);
   updateGrantEditorRole();
   $('userDialog').showModal();
 }
-async function createUser(event) {
-  event.preventDefault();
-  formError('userError', '');
-  const form = event.currentTarget;
+function readUserGrants(target) {
   const grants = {};
-  for (const row of form.querySelectorAll('.grant-module')) {
+  for (const row of target.querySelectorAll('.grant-module')) {
     const level = row.querySelector('select').value;
     if (!level) continue;
     const blockedActions = [...row.querySelectorAll('.grant-actions input:not(:checked)')].map((input) => input.value);
     grants[row.dataset.module] = blockedActions.length ? { level, blockedActions } : level;
   }
+  return grants;
+}
+async function saveUserAccess(event) {
+  event.preventDefault();
+  formError('userError', '');
+  const form = event.currentTarget;
+  const editId = form.dataset.editId;
+  if (!editId) return;
+  const moduleGrants = readUserGrants(form);
   const companyCnpjs = [...form.querySelectorAll('input[name="companyCnpjs"]:checked')].map((input) => input.value);
   const button = event.submitter || form.querySelector('[type="submit"]');
   withBusy(button, true);
   try {
-    const editId = form.dataset.editId;
-    const body = { name: $('userName').value.trim(), role: $('userRole').value, companyCnpjs, moduleGrants: grants };
-    if (editId) body.active = $('userActive').checked;
-    else { body.email = $('userEmail').value.trim().toLowerCase(); body.password = $('userPassword').value; }
-    await request(editId ? `/users/${encodeURIComponent(editId)}` : '/users', { method: editId ? 'PATCH' : 'POST', body });
+    const body = { name: $('userName').value.trim(), role: $('userRole').value, active: $('userActive').checked, companyCnpjs, moduleGrants };
+    await request(`/users/${encodeURIComponent(editId)}`, { method: 'PATCH', body });
     $('userDialog').close();
     form.reset();
     form.dataset.editId = '';
     await loadUsers();
-    notice(editId ? 'Permissões atualizadas.' : 'Acesso criado. Entregue a senha inicial por um canal seguro.');
+    notice('Permissões atualizadas.');
   } catch (error) { formError('userError', error.message); }
   finally { withBusy(button, false); }
 }
@@ -884,6 +1074,7 @@ async function createWorkItem(event) {
 }
 function updateCompanyHeading() {
   const company = state.companies.find((item) => item.cnpj === state.selectedCompanyCnpj);
+  $('backToCompanies').textContent = isAdmin() ? '← Voltar à ficha administrativa' : '← Voltar ao Fiscal';
   $('companyDetailTitle').textContent = company?.name || cnpjLabel(state.selectedCompanyCnpj);
   $('companyDetailCnpj').textContent = `CNPJ ${cnpjLabel(state.selectedCompanyCnpj)} · Consulta fiscal da carteira`;
 }
@@ -1073,8 +1264,9 @@ function setupEvents() {
   for (const button of document.querySelectorAll('button.nav-link')) button.addEventListener('click', () => navigate(button.dataset.view));
   for (const button of document.querySelectorAll('button[data-go]')) button.addEventListener('click', () => navigate(button.dataset.go));
   $('companySearch').addEventListener('input', renderCompanies);
+  $('fiscalCompanyLookup').addEventListener('input', renderFiscalCompanyQuickList);
   $('fiscalCompanyFilter').addEventListener('change', () => void loadFiscalDocuments().catch(displayError));
-  $('backToCompanies').addEventListener('click', () => navigate('companies'));
+  $('backToCompanies').addEventListener('click', () => navigate(isAdmin() ? `client-${state.selectedCompanyCnpj}` : 'fiscal'));
   $('nfseCompareButton').addEventListener('click', () => void loadCompanySummary(state.selectedCompanyCnpj).catch(displayError));
   for (const id of ['nfseMonthFilter', 'nfseRoleFilter', 'nfseStatusFilter']) $(id).addEventListener('change', () => {
     state.nfsePage = 1;
@@ -1095,11 +1287,26 @@ function setupEvents() {
     state.nfsePage += 1;
     void loadCompanyDocuments(state.selectedCompanyCnpj).catch(displayError);
   });
-  $('newCompanyButton').addEventListener('click', () => $('companyDialog').showModal());
-  $('newUserButton').addEventListener('click', () => openUserDialog());
+  $('newCompanyButton').addEventListener('click', () => openCompanyDialog());
+  $('clientEditButton').addEventListener('click', () => { if (activeClient) openCompanyDialog(activeClient.company); });
+  $('clientAccessSearch').addEventListener('input', renderClientAccess);
+  $('clientLinkButton').addEventListener('click', showClientLink);
+  $('clientCopyLink').addEventListener('click', () => void copyClientLink());
+  const openUserWizard = mountUserWizard({
+    request,
+    renderGrants: target => renderUserGrants(null, target),
+    readGrants: readUserGrants,
+    renderCompanies: target => fillUserCompanyOptions(target, false),
+    onCreated: user => {
+      const username = user?.username;
+      notice(username ? `Acesso de ${username} criado.` : 'Acesso criado.');
+      void loadUsers().catch(displayError);
+    },
+  });
+  $('newUserButton').addEventListener('click', openUserWizard);
   $('newAgentButton').addEventListener('click', () => $('agentDialog').showModal());
   $('companyForm').addEventListener('submit', createCompany);
-  $('userForm').addEventListener('submit', createUser);
+  $('userForm').addEventListener('submit', saveUserAccess);
   $('userRole').addEventListener('change', updateGrantEditorRole);
   $('agentForm').addEventListener('submit', createAgent);
   $('workItemForm').addEventListener('submit', createWorkItem);

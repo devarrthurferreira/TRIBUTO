@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '../api/validation.mjs';
-import { canAccess, MODULES } from '../platform/policy.mjs';
+import { canPerform, MODULES } from '../platform/policy.mjs';
 
 const TAGS = `CREATE TABLE IF NOT EXISTS platform_wa_tags (
   id CHAR(36) NOT NULL PRIMARY KEY, sector VARCHAR(32) NOT NULL, name VARCHAR(60) NOT NULL,
@@ -75,7 +75,7 @@ export function createWhatsAppWorkspace({ pool, whatsAppStore, platformStore }) 
   }
   async function handle({ route, method, user, sector, input, scope, provider, connectionState }) {
     const canManage = user.role === 'admin';
-    const canManageTickets = canAccess(user, sector, 'edit');
+    const canManageTickets = canPerform(user, sector, 'whatsappTicketUpdate');
     if (route === '/whatsapp/overview' && method === 'GET') return overview(scope, user._id);
     if (route === '/whatsapp/tags') {
       if (method === 'GET') return { tags: await tags(sector), canManage, canAssign: canManageTickets };
@@ -126,12 +126,12 @@ export function createWhatsAppWorkspace({ pool, whatsAppStore, platformStore }) 
       return { status };
     }
     if (route === '/whatsapp/settings' && method === 'GET') {
-      const users = canManage ? (await platformStore.listUsers()).filter(item => item.active && canAccess(item, sector))
+      const users = canManage ? (await platformStore.listUsers()).filter(item => canPerform(item, sector, 'whatsappRead'))
         .map(({ name, email, role }) => ({ name, email, role })) : [];
       return { canManage, users, roles: [
         { name: 'Administrador', description: 'Configura conexões, tags e controle de ausência.' },
-        { name: 'Equipe do setor', description: 'Consulta as conversas. O nível Editar permite responder e atualizar chamados.' },
-      ], departments: MODULES.filter(({ id, legacy }) => !legacy && canAccess(user, id)).map(({ id, label }) => ({ id, label })),
+        { name: 'Equipe do setor', description: 'Consulta, resposta e gestão de chamados dependem das permissões do setor.' },
+      ], departments: MODULES.filter(({ id, legacy }) => !legacy && canPerform(user, id, 'whatsappRead')).map(({ id, label }) => ({ id, label })),
       integrations: [{ name: provider, status: connectionState === 'connected' ? 'Conectado' : 'Sem conexão ativa' }],
       robots: [], absence: await absence(sector) };
     }
