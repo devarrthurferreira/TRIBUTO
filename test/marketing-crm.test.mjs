@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createMarketingCrmRouter } from '../src/marketing/crm-routes.mjs';
 import { campaignFields, campaignReport, subscriberFields } from '../src/marketing/crm-rules.mjs';
+import { automationFields, campaignGrowth, landingFields, segmentFields } from '../src/marketing/crm-growth-fields.mjs';
 
 test('CRM exige consentimento registrado, mantém descadastros e normaliza o e-mail', () => {
   const input = { name: ' Pessoa ', email: ' MAIL@Example.COM ', status: 'subscribed', source: ' Formulário ' };
@@ -54,4 +55,41 @@ test('CRM usa permissões próprias e protege as operações de contatos e expor
   await assert.rejects(request(editor, 'GET', campaignRoute), { status: 404 });
   assert.equal((await request(editor, 'POST', campaignRoute)).result.recipients[0].email, data.email);
   assert.deepEqual(await request(editor, 'POST', '/subscribers'), { status: 201, result: { input: data, actorId: member._id } });
+});
+
+test('CRM valida segmentos, páginas de captura e a ordem dos e-mails de automação', () => {
+  const landingId = '00000000-0000-4000-8000-000000000000';
+  assert.deepEqual(segmentFields({ name: 'Interesses', tags: [' Cursos ', 'CURSOS', 'Saúde'] }).tags, ['cursos', 'saúde']);
+  assert.throws(() => segmentFields({ name: 'Interesses', tags: [] }), { status: 400 });
+  assert.equal(landingFields({ title: 'Um lançamento', slug: 'Curso-Fiscal' }).slug, 'curso-fiscal');
+  assert.throws(() => landingFields({ title: 'Outro', slug: '../campanha' }), { status: 400 });
+  const flow = { name: 'Boas-vindas', landingId, status: 'active', steps: [
+    { delayDays: 0, subject: 'Primeiro contato', content: 'Olá' },
+    { delayDays: 3, subject: 'Conteúdo', content: 'Detalhes' },
+  ] };
+  assert.deepEqual(automationFields(flow).steps.map(step => step.delayDays), [0, 3]);
+  assert.throws(() => automationFields({ ...flow, steps: [{ ...flow.steps[0], delayDays: -1 }] }), { status: 400 });
+  assert.throws(() => automationFields({ ...flow, steps: [{ ...flow.steps[0], subject: 'Olá\nNovo assunto' }] }), { status: 400 });
+  assert.deepEqual(campaignGrowth({ type: 'newsletter', landingId }), { type: 'newsletter', segmentId: null, landingId });
+  assert.throws(() => campaignGrowth({ type: 'outro' }), { status: 400 });
+});
+
+test('CRM limita publicação, automação e fila de e-mail a perfis gestores', async () => {
+  const recordId = '00000000-0000-4000-8000-000000000001';
+  const manager = { _id: 'manager', active: true, role: 'member', moduleGrants: { marketing: 'edit' } };
+  const reader = { ...manager, moduleGrants: { marketing: { level: 'edit', blockedActions: ['marketingCrmManage'] } } };
+  const calls = [];
+  const router = createMarketingCrmRouter({
+    putGrowthRecord: async (...args) => { calls.push(args); return { id: recordId }; },
+    queueCampaign: async (...args) => { calls.push(args); return { id: recordId, status: 'queued' }; },
+  });
+  const fields = { status: 'published' };
+  const request = (user, method, path) => router.handleHttp({ req: { method }, res: {}, route: `/marketing/crm${path}`, user,
+    send: (_, status, result) => ({ status, result }), readBody: async () => fields });
+  await assert.rejects(request(reader, 'PATCH', `/landings/${recordId}`), { status: 403 });
+  await assert.rejects(request(reader, 'POST', `/campaigns/${recordId}/queue`), { status: 403 });
+  assert.equal((await request(manager, 'POST', '/segments')).status, 201);
+  assert.equal((await request(manager, 'PATCH', `/landings/${recordId}`)).status, 200);
+  assert.equal((await request(manager, 'POST', `/campaigns/${recordId}/queue`)).result.status, 'queued');
+  assert.deepEqual(calls, [['segments', undefined, fields, manager._id], ['landings', recordId, fields, manager._id], [recordId, manager._id]]);
 });

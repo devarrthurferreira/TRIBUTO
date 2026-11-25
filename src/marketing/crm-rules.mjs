@@ -48,7 +48,7 @@ export function subscriberFields(input, current) {
     if (!STATUSES.has(input.status)) invalid('Selecione a situação do contato.');
     values.status = input.status;
   }
-  requireChange(values, current);
+  if (!Object.hasOwn(input, 'tags')) requireChange(values, current);
   if (current && values.email && current.email !== values.email) {
     invalid('O e-mail de um contato é fixo. Cadastre um novo contato para outro endereço.');
   }
@@ -72,7 +72,7 @@ export function campaignFields(input, current) {
   ]) {
     if (!current || Object.hasOwn(input, field)) values[field] = text(input[field], label, max, required);
   }
-  requireChange(values, current);
+  if (!['type', 'segmentId', 'landingId'].some(key => Object.hasOwn(input, key))) requireChange(values, current);
   if (values.subject && /[\u0000-\u001f\u007f]/.test(values.subject)) invalid('Use uma única linha no assunto.');
   return { ...current, ...values };
 }

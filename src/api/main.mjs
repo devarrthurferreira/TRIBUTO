@@ -12,6 +12,10 @@ import { ClubMySqlStore } from '../club/mysql-store.mjs';
 import { createClubRouter } from '../club/routes.mjs';
 import { MarketingCrmStore } from '../marketing/crm-store.mjs';
 import { createMarketingCrmRouter } from '../marketing/crm-routes.mjs';
+import { readCrmMailConfig, startCrmDelivery } from '../marketing/delivery.mjs';
+import { createPublicCrmRouter } from '../marketing/public-crm.mjs';
+import { PeopleMySqlStore } from '../people/mysql-store.mjs';
+import { createPeopleRouter } from '../people/routes.mjs';
 
 for (const key of ['MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE']) {
   if (!process.env[key]) throw new Error(`${key} obrigatória`);
@@ -33,8 +37,13 @@ await platformStore.initialize();
 if (await platformStore.countUsers() === 0 && !bootstrapTokenSha256) throw new Error('Configure BOOTSTRAP_ADMIN_TOKEN_SHA256 para o primeiro administrador');
 const clubStore = new ClubMySqlStore(platformStore);
 await clubStore.initialize();
-const marketingCrmStore = new MarketingCrmStore(platformStore);
+const crmMail = readCrmMailConfig();
+const marketingCrmStore = new MarketingCrmStore(platformStore, {
+  deliveryConfigured: Boolean(crmMail), analyticsConfigured: Boolean(crmMail?.webhookKey?.length),
+});
 await marketingCrmStore.initialize();
+const peopleStore = new PeopleMySqlStore(platformStore);
+await peopleStore.initialize();
 const chatStore = new ChatMySqlStore(store.pool);
 await chatStore.initialize();
 const chat = createChat({ store: platformStore, chatStore });
@@ -48,15 +57,18 @@ const bridge = baileysConfig ? createBaileysBridge({ config: baileysConfig, stor
 if (bridge) await bridge.initialize();
 const whatsapp = createWhatsAppService({ config: whatsappConfig, store: whatsappStore, bridge, workspace: whatsappWorkspace });
 const platformRouter = createPlatformRouter({ store: platformStore, chat, whatsapp, club: createClubRouter(clubStore),
-  crm: createMarketingCrmRouter(marketingCrmStore), bootstrapTokenSha256, secureCookies: process.env.COOKIE_SECURE !== 'false' });
-const server = createApiServer({ store, agentRegistry: platformStore, platformRouter, whatsapp });
+  crm: createMarketingCrmRouter(marketingCrmStore), people: createPeopleRouter(peopleStore),
+  bootstrapTokenSha256, secureCookies: process.env.COOKIE_SECURE !== 'false' });
+const server = createApiServer({ store, agentRegistry: platformStore, platformRouter, whatsapp, publicCrm: createPublicCrmRouter(marketingCrmStore, crmMail) });
 const io = chat.attach(server);
+const stopCrmDelivery = startCrmDelivery(marketingCrmStore, crmMail);
 server.listen(port, host, () => console.log(`TRIBUTO API ouvindo em ${host}:${port}`));
 let stopping = false;
 async function stop() {
   if (stopping) return;
   stopping = true;
   try {
+    await stopCrmDelivery();
     await bridge?.close();
     await io.close();
     await store.close();

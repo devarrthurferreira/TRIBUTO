@@ -363,7 +363,7 @@ test('Tecnologia aceita demandas internas e aplica bloqueios por ação', async 
   const path = '/v1/platform';
   const listed = await request(url, `${path}/modules`, admin);
   assert.deepEqual(listed.body.modules.filter(module => !module.legacy).map(module => module.id),
-    ['dp', 'rh', 'tecnologia', 'marketing', 'societario', 'contabil', 'fiscal', 'diretoria']);
+    ['dp', 'rh', 'tecnologia', 'marketing', 'sucesso-do-cliente', 'societario', 'contabil', 'fiscal', 'diretoria']);
 
   const password = 'senha-tecnologia-longa';
   const credentials = { email: 'tecnologia@example.test', password };

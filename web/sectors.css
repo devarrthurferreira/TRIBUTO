@@ -18,6 +18,8 @@
   align-items: center;
   flex: 0 0 var(--sector-rail-width);
   width: var(--sector-rail-width);
+  max-height: calc(100dvh - var(--portal-header-size));
+  overflow-y: auto;
   gap: 9px;
   padding: 15px 8px 11px;
   background: var(--portal-floor);
@@ -42,7 +44,7 @@
   color: var(--blue);
 }
 .sector-rail-button:is([aria-pressed="true"], [aria-current="page"]) { border-color: var(--portal-edge); }
-.sector-rail-home { margin-top: auto; }
+.sector-rail-bottom { display: flex; flex: none; flex-direction: column; gap: inherit; margin-top: auto; }
 .sector-unread {
   position: absolute;
   inset: 5px 5px auto auto;

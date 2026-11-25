@@ -1,4 +1,4 @@
-import { MARKETING_CHANNELS, marketingChannelBadge } from './marketing-tasks.js';
+import { MARKETING_CHANNELS, marketingChannelBadge, mountMarketingChannelSelect } from './marketing-tasks.js';
 
 const PATH = '/marketing/metrics';
 const STATUSES = { open: 'A fazer', in_progress: 'Em andamento', done: 'Concluída' };
@@ -154,7 +154,7 @@ function wizardMarkup() {
     <fieldset class="mm-step" data-mm-step="1" hidden>
       <legend>Dados de métricas</legend>
       <div class="mm-fields">
-        <label class="mm-field mm-stretch">Rede social ou canal<span class="mm-channel-field"><select name="socialChannel"></select><span data-mm="channelIcons" aria-hidden="true" hidden></span></span></label>
+        <div class="mm-field mm-stretch"><label for="marketingMetricSocialChannel">Rede social ou canal</label><span class="mt-channel-picker"><select id="marketingMetricSocialChannel" name="socialChannel"></select></span></div>
         <label class="mm-field">Alcance desejado<input type="number" name="desiredReach" min="0" max="${MAX_REACH}" step="1" inputmode="numeric"></label>
         <label class="mm-field">Alcance estimado<input type="number" name="estimatedReach" min="0" max="${MAX_REACH}" step="1" inputmode="numeric"></label>
       </div>
@@ -183,7 +183,7 @@ export function mountMarketingMetrics(root, { request, canCreate = false, canUpd
       <div class="mm-results-head"><h2 id="marketingMetricsListTitle">Acompanhamentos</h2><span data-mm="count" aria-live="polite"></span></div>
       <div class="mm-filters">
         <label class="mm-field">Buscar<input type="search" data-mm="search" placeholder="Título ou canal"></label>
-        <label class="mm-field">Canal<select data-mm="filterChannel"></select></label>
+        <div class="mm-field"><label for="marketingMetricFilterChannel">Canal</label><span class="mt-channel-picker"><select id="marketingMetricFilterChannel" data-mm="filterChannel"></select></span></div>
         <label class="mm-field">Ordenar por<select data-mm="sort"><option value="recent">Atualização mais recente</option><option value="due">Prazo mais próximo</option><option value="priority">Maior prioridade</option><option value="reach">Maior alcance real</option></select></label>
       </div>
       <p class="mm-error" data-mm="error" role="alert" hidden></p>
@@ -218,6 +218,7 @@ export function mountMarketingMetrics(root, { request, canCreate = false, canUpd
   const steps = [...root.querySelectorAll('[data-mm-step]')];
   const field = (name) => ui.form.elements.namedItem(name);
   const channelNames = Object.fromEntries(Object.entries(MARKETING_CHANNELS).map(([key, channel]) => [key, channel.title]));
+  const setChannelOptions = mountMarketingChannelSelect(field('socialChannel'), 'Selecione um canal');
   const items = new Map();
   const tasks = new Map();
   let opened = false;
@@ -238,8 +239,7 @@ export function mountMarketingMetrics(root, { request, canCreate = false, canUpd
   let tasksMore = false;
   let loadingTasks = false;
 
-  optionList(ui.filterChannel, channelNames, 'Todos os canais');
-  optionList(field('socialChannel'), channelNames, 'Selecione um canal');
+  mountMarketingChannelSelect(ui.filterChannel, 'Todos os canais', { showLegacy: true })();
   optionList(field('status'), STATUSES);
   optionList(field('priority'), PRIORITIES);
   for (const [index, title] of STEPS.entries()) {
@@ -321,12 +321,6 @@ export function mountMarketingMetrics(root, { request, canCreate = false, canUpd
     }
   }
 
-  function updateChannelIcons() {
-    const badge = marketingChannelBadge(field('socialChannel').value, { label: false });
-    ui.channelIcons.hidden = !badge;
-    ui.channelIcons.replaceChildren(...(badge ? [badge] : []));
-  }
-
   function renderChecklist() {
     ui.checks.replaceChildren(...checklist.map((entry, index) => {
       const row = node('div', 'mm-check-row');
@@ -398,13 +392,13 @@ export function mountMarketingMetrics(root, { request, canCreate = false, canUpd
     editingVersion = item?.updatedAt || '';
     ui.form.reset();
     ui.editorTitle.textContent = item ? 'Editar acompanhamento' : 'Novo acompanhamento';
-    for (const name of ['title', 'description', 'dueAt', 'socialChannel', 'desiredReach', 'estimatedReach', 'referenceUrl']) {
+    for (const name of ['title', 'description', 'dueAt', 'desiredReach', 'estimatedReach', 'referenceUrl']) {
       field(name).value = item?.[name] ?? '';
     }
+    setChannelOptions(item?.socialChannel);
     field('status').value = item?.status || 'open';
     field('priority').value = item?.priority || 'normal';
     checklist = (item?.checklist || []).map(entry => ({ ...entry }));
-    updateChannelIcons();
     renderChecklist();
     ui.back.textContent = item ? 'Cancelar' : 'Voltar';
     ui.editor.showModal();
@@ -668,7 +662,6 @@ export function mountMarketingMetrics(root, { request, canCreate = false, canUpd
   ui.sort.addEventListener('change', renderList);
   ui.addCheck.addEventListener('click', addChecklistItem);
   ui.checkTitle.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); addChecklistItem(); } });
-  field('socialChannel').addEventListener('change', updateChannelIcons);
 
   return {
     open() {

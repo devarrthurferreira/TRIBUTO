@@ -6,7 +6,10 @@ const ITEM_ROUTE = /^\/marketing\/metrics\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0
 const TASK_ID = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i;
 const PAGE_SIZE = 100;
 const MAX_REACH = 999_999_999;
-const CHANNELS = new Set(['', 'linkedin', 'somos-maximum', 'maximum-contabil', 'youtube', 'maximum-informa', 'newsletter']);
+const CHANNELS = new Set([
+  '', 'linkedin', 'somos-maximum-instagram', 'somos-maximum-tiktok', 'maximum-contabil-instagram',
+  'maximum-contabil-tiktok', 'youtube', 'maximum-informa', 'newsletter', 'somos-maximum', 'maximum-contabil',
+]);
 const LOCAL_DATE = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
 
 function invalid(field) {

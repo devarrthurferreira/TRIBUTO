@@ -122,7 +122,9 @@
 
 .app-shell .sidebar { top: var(--portal-header-size); height: calc(100dvh - var(--portal-header-size)); }
 .app-shell[data-view="overview"] .sidebar:not(.open) { display: none; }
-.app-shell[data-view="club"] .main-content { padding-inline: clamp(12px, 2.7vw, 44px); }
+.app-shell:is([data-view="club"], [data-view="desempenho"], [data-view="engajamento"]) :is(.sidebar, .portal-menu) { display: none; }
+.app-shell[data-view="club"] .main-content { padding: 14px clamp(10px, 2vw, 24px) 48px; }
+.app-shell:is([data-view="desempenho"], [data-view="engajamento"]) .main-content { padding-inline: clamp(12px, 2.7vw, 44px); }
 .app-shell[data-view="overview"] .main-content {
   width: 100%;
   min-height: calc(100dvh - var(--portal-header-size));
@@ -296,7 +298,6 @@
   .portal-content-layout .sidebar { inset: var(--portal-header-size) auto 0 0; }
   .portal-menu { display: grid; }
   .app-shell[data-view="overview"] .sidebar.open { display: flex; }
-  .app-shell[data-view="club"] .sidebar:not(.open) { visibility: hidden; }
   .portal-news { margin-top: 8px; }
   .portal-modules { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

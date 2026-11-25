@@ -2,7 +2,8 @@ import { ApiError } from '../api/validation.mjs';
 import { canPerform } from '../platform/policy.mjs';
 
 const BASE = '/marketing/crm';
-const ITEM = /^\/(subscribers|campaigns)\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})(?:\/(prepare|reopen|audience|record))?$/;
+const ITEM = /^\/(subscribers|campaigns)\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})(?:\/(prepare|reopen|audience|record|queue))?$/;
+const GROWTH = /^\/(segments|landings|automations)(?:\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}))?$/;
 
 export function createMarketingCrmRouter(store) {
   return {
@@ -24,6 +25,13 @@ export function createMarketingCrmRouter(store) {
         if (req.method === 'POST' && path === '/campaigns') {
           return send(res, 201, await store.createCampaign(await readBody(req), actor));
         }
+        const growth = GROWTH.exec(path);
+        if (growth) {
+          const [, collection, id] = growth;
+          if ((!id && req.method === 'POST') || (id && req.method === 'PATCH')) {
+            return send(res, id ? 200 : 201, await store.putGrowthRecord(collection, id, await readBody(req), actor));
+          }
+        }
         const match = ITEM.exec(path);
         if (match) {
           const [, resource, id, operation] = match;
@@ -39,6 +47,7 @@ export function createMarketingCrmRouter(store) {
             if (operation === 'reopen') return send(res, 200, await store.reopenCampaign(id, actor));
             if (operation === 'audience') return send(res, 200, await store.audience(id, actor));
             if (operation === 'record') return send(res, 200, await store.recordCampaign(id, await readBody(req), actor));
+            if (operation === 'queue') return send(res, 200, await store.queueCampaign(id, actor));
           }
         }
         throw new ApiError(404, 'CRM_NOT_FOUND', 'Operação do CRM não encontrada.');

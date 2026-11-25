@@ -72,8 +72,6 @@
 .mm-field { display: grid; min-width: 0; gap: 6px; align-content: start; color: var(--ink-soft); font-size: 12px; font-weight: 650; }
 .mm-field :is(input, textarea, select) { width: 100%; min-width: 0; min-height: 39px; padding: 8px 10px; border: 1px solid var(--mm-outline); border-radius: 8px; background: var(--mm-surface); color: var(--ink); font: inherit; font-size: 13px; font-weight: 400; }
 .mm-field textarea { resize: vertical; }
-.mm-channel-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.mm-channel-field > select { flex: 1 1 auto; }
 .mm-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
 .mm-card { display: flex; flex-direction: column; gap: 13px; min-width: 0; padding: 16px; border: 1px solid var(--mm-outline); border-radius: 13px; background: var(--mm-surface); }
 .mm-card-title { padding: 1px 0; border: 0; background: none; color: var(--ink); font-size: 14px; line-height: 1.4; font-weight: 750; text-align: left; overflow-wrap: anywhere; }

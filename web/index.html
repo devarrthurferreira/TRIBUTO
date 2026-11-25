@@ -18,6 +18,7 @@
   <link rel="stylesheet" href="/marketing-metrics.css">
   <link rel="stylesheet" href="/marketing-crm.css">
   <link rel="stylesheet" href="/club.css">
+  <link rel="stylesheet" href="/people.css">
   <script defer src="/socket.io/socket.io.js"></script>
   <script type="module" src="/app.js"></script>
 </head>
@@ -127,9 +128,17 @@
         <a id="railCompanies" class="sector-rail-button" href="/home#companies" title="Empresas/Clientes" aria-label="Empresas/Clientes" hidden>
           <i class="bi bi-buildings" aria-hidden="true"></i>
         </a>
-        <a id="railHome" class="sector-rail-button sector-rail-home" href="/home" title="Voltar ao Início" aria-label="Voltar ao Início">
-          <i class="bi bi-house-door" aria-hidden="true"></i>
-        </a>
+        <div class="sector-rail-bottom">
+          <a id="railDevelopment" class="sector-rail-button" href="/home#desempenho" title="Desempenho e Desenvolvimento" aria-label="Desempenho e Desenvolvimento">
+            <i class="bi bi-graph-up" aria-hidden="true"></i>
+          </a>
+          <a id="railEngagement" class="sector-rail-button" href="/home#engajamento" title="Clima e Engajamento" aria-label="Clima e Engajamento">
+            <i class="bi bi-people" aria-hidden="true"></i>
+          </a>
+          <a id="railHome" class="sector-rail-button" href="/home" title="Voltar ao Início" aria-label="Voltar ao Início">
+            <i class="bi bi-house-door" aria-hidden="true"></i>
+          </a>
+        </div>
       </nav>
       <nav id="sectorSubnav" class="sector-subnav" aria-labelledby="sectorSubnavTitle" hidden>
         <h2 id="sectorSubnavTitle">Setor</h2>
@@ -148,6 +157,7 @@
         <a class="nav-link" data-view="rh" href="/setor/rh"><span class="nav-icon" aria-hidden="true">♙</span> Recursos Humanos</a>
         <a class="nav-link" data-view="tecnologia" href="/setor/tecnologia"><span class="nav-icon" aria-hidden="true">⌘</span> Tecnologia</a>
         <a class="nav-link" data-view="marketing" href="/setor/marketing"><span class="nav-icon" aria-hidden="true">◉</span> Marketing</a>
+        <a class="nav-link" data-view="sucesso-do-cliente" href="/setor/sucesso-do-cliente"><span class="nav-icon" aria-hidden="true"><i class="bi bi-person-badge"></i></span> Sucesso do Cliente</a>
         <a class="nav-link" data-view="societario" href="/setor/societario"><span class="nav-icon" aria-hidden="true">⬡</span> Societário</a>
         <a class="nav-link" data-view="contabil" href="/setor/contabil"><span class="nav-icon" aria-hidden="true">◈</span> Contábil</a>
         <a class="nav-link" data-view="fiscal" href="/setor/fiscal"><span class="nav-icon" aria-hidden="true">▤</span> Fiscal</a>
@@ -248,12 +258,6 @@
         </section>
 
         <section class="view" id="view-marketing" aria-label="Marketing" hidden>
-          <nav id="marketingNavigation" class="marketing-navigation" aria-label="Áreas de Marketing">
-            <button type="button" data-marketing-go="overview"><i class="bi bi-grid" aria-hidden="true"></i> Visão geral</button>
-            <button type="button" data-marketing-go="tasks"><i class="bi bi-list-task" aria-hidden="true"></i> Tarefas</button>
-            <button type="button" data-marketing-go="metrics"><i class="bi bi-graph-up" aria-hidden="true"></i> Métricas</button>
-            <button type="button" data-marketing-go="crm"><i class="bi bi-envelope" aria-hidden="true"></i> CRM</button>
-          </nav>
           <div id="marketingOverview">
             <header class="marketing-overview-heading">
               <h1>Marketing</h1>
@@ -289,11 +293,25 @@
           <div id="marketingCrm" hidden></div>
         </section>
 
+        <section class="view" id="view-sucesso-do-cliente" aria-labelledby="customerSuccessTitle" hidden>
+          <div class="page-heading"><div><h1 id="customerSuccessTitle">Sucesso do Cliente</h1><p>Acompanhe a integração, os retornos e as demandas de cada cliente.</p></div></div>
+          <div id="customerSuccessOverview" class="feature-grid" hidden>
+            <article class="feature-card">
+              <span class="feature-icon blue"><i class="bi bi-person-badge" aria-hidden="true"></i></span>
+              <h2>Acompanhamento da carteira</h2>
+              <p>Registre contatos e pendências, vincule a empresa e acompanhe a situação até a conclusão.</p>
+              <button type="button" id="openCustomerSuccessActivities" class="button button-quiet">Abrir atividades</button>
+            </article>
+          </div>
+          <div id="customerSuccessRestricted" class="module-message" hidden><div><strong>Atividades com acesso restrito</strong><p>A consulta da carteira depende da permissão do setor.</p></div></div>
+        </section>
+
         <section class="view" id="view-diretoria" aria-labelledby="diretoriaTitle" hidden>
           <div class="page-heading"><div><h1 id="diretoriaTitle">Diretoria</h1><p>Espaço de acompanhamento da Diretoria.</p></div><span class="status-pill status-planned">Em preparação</span></div>
         </section>
 
         <section class="view" id="view-club" aria-labelledby="clubTitle" hidden><div id="clubRoot"></div></section>
+        <section class="view" id="view-people" aria-label="Pessoas" hidden><div id="peopleRoot"></div></section>
 
         <section class="view" id="view-fiscal" aria-labelledby="fiscalTitle" hidden>
           <div class="page-heading"><div><p class="eyebrow">MÓDULO FISCAL</p><h1 id="fiscalTitle">Fiscal</h1><p>Documentos, eventos e solicitações em uma visão consultiva.</p></div><span class="status-pill status-planned">Conectores em preparação</span></div>

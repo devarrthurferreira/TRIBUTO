@@ -141,6 +141,8 @@
 }
 .mcrm-provider .bi { flex: none; margin-top: 2px; color: var(--mcrm-accent); }
 .mcrm-provider p { margin: 0; line-height: 1.55; font-size: 12px; }
+.mcrm-provider p { flex: 1 1 230px; min-width: 0; }
+.mcrm-provider .mcrm-action { flex: none; }
 .mcrm-provider strong { display: block; }
 .mcrm-provider span { color: var(--muted); }
 
@@ -164,6 +166,7 @@
 
 .mcrm-tabs {
   display: flex;
+  flex-wrap: wrap;
   max-width: 100%;
   gap: 4px;
   padding: 3px;
@@ -272,15 +275,15 @@
   font-weight: 700;
   overflow-wrap: anywhere;
 }
-.mcrm-pill:is([data-status="subscribed"], [data-status="sent"]) {
+.mcrm-pill:is([data-status="subscribed"], [data-status="sent"], [data-status="published"], [data-status="active"]) {
   color: var(--mcrm-green);
   background: var(--mcrm-green-bg);
 }
-.mcrm-pill:is([data-status="pending"], [data-status="prepared"]) {
+.mcrm-pill:is([data-status="pending"], [data-status="prepared"], [data-status="queued"], [data-status="paused"]) {
   color: var(--mcrm-amber);
   background: var(--mcrm-amber-bg);
 }
-.mcrm-pill[data-status="unsubscribed"] { color: var(--mcrm-red); background: var(--mcrm-red-bg); }
+.mcrm-pill:is([data-status="unsubscribed"], [data-status="failed"]) { color: var(--mcrm-red); background: var(--mcrm-red-bg); }
 
 .mcrm-campaign-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .mcrm-campaign {
@@ -322,6 +325,17 @@
 .mcrm-campaign-stats dt, .mcrm-sent-at { color: var(--muted); font-size: 10px; }
 .mcrm-campaign-stats dd { margin: 2px 0 0; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .mcrm-sent-at { margin: 8px 0 0; }
+.mcrm-resource-meta, .mcrm-campaign-head p.mcrm-resource-meta { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.mcrm-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-block: 7px; }
+.mcrm-tag { border-radius: 5px; padding: 3px 6px; background: var(--mcrm-soft); color: var(--mcrm-accent); font-size: 11px; line-height: 1.3; font-weight: 600; overflow-wrap: anywhere; }
+.mcrm-campaign-actions a { text-decoration: none; }
+.mcrm-sequence-preview { margin: 11px 0; padding-left: 22px; font-size: 12px; }
+.mcrm-sequence-preview li { padding: 4px 0; overflow-wrap: anywhere; }
+.mcrm-sequence-preview small { display: block; color: var(--muted); }
+.mcrm-report h2 { margin: 0 0 12px; font-size: 19px; }
+.mcrm-report > .mcrm-campaign-stats { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); padding: 14px; }
+.mcrm-report > .mcrm-campaign-list { margin-top: 15px; }
+.mcrm-report .mcrm-campaign-head h3 { font-size: 14px; margin: 0; overflow-wrap: anywhere; }
 
 .mcrm-dialog {
   width: min(580px, calc(100vw - 22px));
@@ -356,6 +370,15 @@
 .mcrm-field input[readonly] { color: var(--muted); background: var(--mcrm-floor); }
 .mcrm-field small { color: var(--muted); font-size: 11px; }
 .mcrm-field-wide, .mcrm-form-note { grid-column: 1 / -1; }
+.mcrm-sequence-editor { grid-column: 1 / -1; min-width: 0; }
+.mcrm-sequence-editor h3 { font-size: 15px; margin: 0 0 6px; }
+.mcrm-steps { display: grid; gap: 11px; margin: 10px 0; }
+.mcrm-step { min-width: 0; margin: 0; padding: 9px 12px 12px; border: 1px solid var(--mcrm-edge); border-radius: 10px; }
+.mcrm-step legend { padding: 0 4px; font-size: 12px; font-weight: 700; }
+.mcrm-step textarea { min-height: 70px; }
+.mcrm-step-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.mcrm-step-actions .mcrm-action { min-height: 31px; padding: 4px 8px; }
+.mcrm-message { overflow-wrap: anywhere; }
 .mcrm-form-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.52; }
 .mcrm-form-explanation p { margin: 0 0 8px; color: var(--ink); line-height: 1.53; }
 .mcrm-form-explanation p:last-child { margin-bottom: 0; color: var(--muted); }
@@ -378,6 +401,7 @@
   .mcrm-campaign-list { grid-template-columns: 1fr; }
 }
 @container (max-width: 585px) {
+  .mcrm-provider { flex-wrap: wrap; }
   .mcrm-board-tools, .mcrm-panel { padding-inline: 10px; }
   .mcrm-contact-list { overflow: visible; }
   .mcrm-table { display: block; border: 0; }
@@ -402,6 +426,8 @@
   }
 }
 @container (max-width: 410px) {
+  .mcrm-tabs { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mcrm-tabs [role="tab"] { padding-inline: 6px; }
   .mcrm-kpi { flex-direction: column; align-items: flex-start; gap: 6px; }
   .mcrm-kpi-icon { flex-basis: 28px; width: 29px; height: 29px; font-size: 14px; }
   .mcrm-filters, .mcrm-filter, .mcrm-search { width: 100%; }

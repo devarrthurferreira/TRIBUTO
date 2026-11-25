@@ -5,11 +5,15 @@ const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
 const WIZARD_STEPS = ['Dados da tarefa', 'Dados de métricas', 'Checklist e link do post'];
 export const MARKETING_CHANNELS = {
   linkedin: { title: 'LinkedIn', icons: ['linkedin'] },
-  'somos-maximum': { title: 'Somos Maximum', icons: ['instagram', 'tiktok'] },
-  'maximum-contabil': { title: 'Maximum Contábil', icons: ['instagram', 'tiktok'] },
+  'somos-maximum-instagram': { title: 'Somos Maximum — Instagram', icons: ['instagram'] },
+  'somos-maximum-tiktok': { title: 'Somos Maximum — TikTok', icons: ['tiktok'] },
+  'maximum-contabil-instagram': { title: 'Maximum Contábil — Instagram', icons: ['instagram'] },
+  'maximum-contabil-tiktok': { title: 'Maximum Contábil — TikTok', icons: ['tiktok'] },
   youtube: { title: 'YouTube', icons: ['youtube'] },
   'maximum-informa': { title: 'Maximum Informa', icons: ['megaphone'] },
   newsletter: { title: 'Newsletter', icons: ['newspaper'] },
+  'somos-maximum': { title: 'Somos Maximum — Plataforma não informada', icons: ['tag'], legacy: true },
+  'maximum-contabil': { title: 'Maximum Contábil — Plataforma não informada', icons: ['tag'], legacy: true },
 };
 const HISTORY_FIELDS = {
   title: 'título', description: 'descrição', status: 'situação', dueAt: 'prazo', assigneeId: 'responsável',
@@ -48,6 +52,46 @@ export function marketingChannelBadge(channel, { label = true } = {}) {
   if (label) badge.append(document.createTextNode(title));
   else badge.setAttribute('aria-hidden', 'true');
   return badge;
+}
+
+export function mountMarketingChannelSelect(select, placeholder, { showLegacy = false } = {}) {
+  const customizable = CSS.supports('appearance: base-select') && 'HTMLSelectedContentElement' in window;
+  const preview = customizable ? null : node('span', 'mt-channel-fallback');
+  if (customizable) select.classList.add('mt-channel-select');
+  else {
+    select.before(preview);
+    select.addEventListener('change', showSelectedIcon);
+  }
+
+  function showSelectedIcon() {
+    if (!preview) return;
+    const badge = marketingChannelBadge(select.value, { label: false });
+    preview.replaceChildren(...(badge ? [badge] : []));
+    preview.hidden = !badge;
+  }
+
+  return function setChannelOptions(value = '') {
+    const options = Object.entries(MARKETING_CHANNELS).filter(([key, channel]) => !channel.legacy || showLegacy || value === key);
+    const children = [new Option(placeholder, '')];
+    if (customizable) {
+      const button = node('button');
+      button.type = 'button';
+      button.append(node('selectedcontent'));
+      children.unshift(button);
+    }
+    for (const [key, channel] of options) {
+      const option = new Option(channel.title, key);
+      if (customizable) {
+        const content = node('span', 'mt-channel-option');
+        content.append(...channel.icons.map(icon), node('span', '', channel.title));
+        option.replaceChildren(content);
+      }
+      children.push(option);
+    }
+    select.replaceChildren(...children);
+    select.value = options.some(([key]) => key === value) ? value : '';
+    showSelectedIcon();
+  };
 }
 
 function normalize(value) {
@@ -209,8 +253,7 @@ function buildShell(root) {
               <div class="mt-form-grid">
                 <div class="mt-field mt-wide">
                   <label for="marketingTaskSocialChannel">Rede social</label>
-                  <div class="mt-channel-picker"><select id="marketingTaskSocialChannel" name="socialChannel" aria-describedby="marketingTaskChannelPlatforms"></select><span class="mt-channel-preview" data-mt="channelPreview" hidden></span></div>
-                  <span id="marketingTaskChannelPlatforms" class="sr-only" data-mt="channelPlatforms"></span>
+                  <span class="mt-channel-picker"><select id="marketingTaskSocialChannel" name="socialChannel"></select></span>
                 </div>
                 <label class="mt-field">Alcance desejado<input name="desiredReach" type="number" inputmode="numeric" min="0" max="999999999" step="1" placeholder="Ex. 20000"></label>
                 <label class="mt-field">Alcance estimado<input name="estimatedReach" type="number" inputmode="numeric" min="0" max="999999999" step="1" placeholder="Ex. 15000"></label>
@@ -258,6 +301,7 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
   const field = name => ui.form.elements.namedItem(name);
   const stepButtons = [...ui.steps.querySelectorAll('button')];
   const stepPanels = [...ui.fieldSet.querySelectorAll('.mt-dialog-step')];
+  const setChannelOptions = mountMarketingChannelSelect(field('socialChannel'), 'Selecione uma rede');
   const listCompanies = () => typeof companies === 'function' ? companies() || [] : companies;
   const items = new Map();
   let teammates = [];
@@ -432,15 +476,7 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
     const companyOptions = listCompanies().map(company => [company.cnpj, companyLabel(company)]);
     if (item?.companyCnpj && !companyOptions.some(([cnpj]) => cnpj === item.companyCnpj)) companyOptions.push([item.companyCnpj, 'Empresa vinculada']);
     options(field('companyCnpj'), 'Atividade interna', companyOptions);
-    options(field('socialChannel'), 'Selecione uma rede', Object.entries(MARKETING_CHANNELS).map(([id, channel]) => [id, channel.title]), item?.socialChannel);
-  }
-
-  function renderChannel() {
-    const channel = field('socialChannel').value;
-    const badge = marketingChannelBadge(channel, { label: false });
-    ui.channelPreview.replaceChildren(...(badge ? [badge] : []));
-    ui.channelPreview.hidden = !badge;
-    ui.channelPlatforms.textContent = ['somos-maximum', 'maximum-contabil'].includes(channel) ? 'Instagram e TikTok' : '';
+    setChannelOptions(item?.socialChannel);
   }
 
   function renderStep(index, focus = false) {
@@ -527,7 +563,6 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
     field('companyCnpj').disabled = !editing || Boolean(item && !canReassignCompany);
     field('tags').value = item?.tags?.join(', ') || '';
     ui.organization.open = Boolean(item?.assigneeId || item?.companyCnpj || item?.campaign || item?.tags?.length);
-    renderChannel();
     checklist = (item?.checklist || []).map(entry => ({ ...entry }));
     ui.checkInput.value = '';
     ui.checkAddBox.hidden = !editing;
@@ -656,7 +691,6 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
   ui.back.addEventListener('click', () => moveStep(step - 1));
   ui.next.addEventListener('click', () => moveStep(step + 1));
   for (const [index, control] of stepButtons.entries()) control.addEventListener('click', () => moveStep(index));
-  field('socialChannel').addEventListener('change', renderChannel);
   ui.checkAdd.addEventListener('click', addChecklistItem);
   ui.copyLink.addEventListener('click', () => void copyTaskLink());
   ui.checkInput.addEventListener('keydown', event => {

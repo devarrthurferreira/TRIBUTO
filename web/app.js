@@ -6,6 +6,7 @@ import { mountMarketingTasks } from './marketing-tasks.js';
 import { mountMarketingMetrics } from './marketing-metrics.js';
 import { mountMarketingCrm } from './marketing-crm.js';
 import { mountClub } from './club.js';
+import { mountPeople } from './people.js';
 
 const API = '/v1/platform';
 const DASHBOARD_PATH = '/home';
@@ -17,6 +18,7 @@ const modules = [
   { id: 'rh', label: 'Recursos Humanos', icon: 'people' },
   { id: 'tecnologia', label: 'Tecnologia', icon: 'laptop' },
   { id: 'marketing', label: 'Marketing', icon: 'megaphone' },
+  { id: 'sucesso-do-cliente', label: 'Sucesso do Cliente', icon: 'person-badge' },
   { id: 'societario', label: 'Societário', icon: 'buildings' },
   { id: 'contabil', label: 'Contábil', icon: 'calculator' },
   { id: 'fiscal', label: 'Fiscal', icon: 'receipt' },
@@ -28,10 +30,13 @@ const legacyModules = [
 ];
 const allModules = [...modules, ...legacyModules];
 const adminViews = new Set(['companies', 'users', 'agents']);
+const internalActivityModules = new Set(['tecnologia', 'sucesso-do-cliente']);
+const peopleViews = new Map([['desempenho', 'development'], ['engajamento', 'engagement']]);
 const viewLabels = {
   overview: 'Início', ...Object.fromEntries(allModules.map(({ id, label }) => [id, label])),
   companies: 'Empresas/Clientes', 'company-detail': 'Ficha fiscal da empresa', 'client-detail': 'Cadastro do cliente',
   club: 'Clube de Benefícios', users: 'Equipe e acessos', agents: 'Agentes de coleta',
+  desempenho: 'Desempenho e Desenvolvimento', engajamento: 'Clima e Engajamento',
 };
 const actionLabels = {
   workItemRead: 'Consultar atividades',
@@ -227,6 +232,7 @@ function updateChatBadges(notification = { unread: 0 }) {
 
 function showAuth(setupRequired, message = '', preserveRoute = false) {
   club.close();
+  people.close();
   destroyChat();
   sectorNavigation.leave();
   updateChatBadges();
@@ -311,10 +317,8 @@ function applySession(session) {
   $('marketingMetricsSummary').hidden = !marketingTasksAllowed;
   $('marketingRecent').hidden = !marketingTasksAllowed;
   $('marketingCrmSummary').hidden = !canUse('marketing', 'marketingCrmRead');
-  for (const control of $('marketingNavigation').querySelectorAll('[data-marketing-go]')) {
-    control.hidden = control.dataset.marketingGo === 'crm' ? !canUse('marketing', 'marketingCrmRead')
-      : control.dataset.marketingGo !== 'overview' && !marketingTasksAllowed;
-  }
+  $('customerSuccessOverview').hidden = !canUse('sucesso-do-cliente', 'workItemRead');
+  $('customerSuccessRestricted').hidden = canUse('sucesso-do-cliente', 'workItemRead');
   document.querySelector('[data-go="tecnologia"]').hidden = !canView('tecnologia');
   renderModuleCards();
   void initialLoad();
@@ -366,11 +370,13 @@ async function logout() {
 }
 
 function navigate(view, { replace = false } = {}) {
+  const previousView = state.view;
   const companyRoute = /^company-(\d{14})$/.exec(view);
   const clientRoute = /^client-(\d{14})$/.exec(view);
   const detail = !!companyRoute && canUse('fiscal', 'fiscalDocumentsRead');
   const clientDetail = !!clientRoute && isAdmin();
-  const valid = detail || clientDetail || view === 'overview' || view === 'club' || (adminViews.has(view) ? isAdmin() : allModules.some(({ id }) => id === view && canView(id)));
+  const valid = detail || clientDetail || view === 'overview' || view === 'club' || peopleViews.has(view)
+    || (adminViews.has(view) ? isAdmin() : allModules.some(({ id }) => id === view && canView(id)));
   const route = valid ? view : 'overview';
   const targetUrl = viewUrl(route);
   if (location.pathname !== targetUrl.split('#')[0]) {
@@ -395,7 +401,9 @@ function navigate(view, { replace = false } = {}) {
     updateCompanyHeading();
   }
   state.selectedClientCnpj = clientDetail ? clientRoute[1] : null;
-  for (const section of document.querySelectorAll('.view')) section.hidden = section.id !== `view-${state.view}`;
+  const peopleArea = peopleViews.get(state.view);
+  const viewId = peopleArea ? 'view-people' : `view-${state.view}`;
+  for (const section of document.querySelectorAll('.view')) section.hidden = section.id !== viewId;
   const activeView = state.view === 'client-detail' || (state.view === 'company-detail' && isAdmin()) ? 'companies'
     : state.view === 'company-detail' ? 'fiscal' : state.view;
   for (const button of document.querySelectorAll('.nav-link')) {
@@ -404,7 +412,9 @@ function navigate(view, { replace = false } = {}) {
     if (current) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
   setPortalContext(state.view);
-  for (const [id, active] of [['railHome', state.view === 'overview'], ['railClub', state.view === 'club'], ['railCompanies', activeView === 'companies']]) {
+  const railLinks = { railHome: 'overview', railClub: 'club', railCompanies: 'companies', railDevelopment: 'desempenho', railEngagement: 'engajamento' };
+  for (const [id, destination] of Object.entries(railLinks)) {
+    const active = destination === activeView;
     if (active) $(id).setAttribute('aria-current', 'page');
     else $(id).removeAttribute('aria-current');
   }
@@ -420,8 +430,11 @@ function navigate(view, { replace = false } = {}) {
     onPanelChange: sector.id === 'marketing' ? showMarketingPanel : undefined,
   } : null, { home: state.view === 'overview' });
   $('conteudo').focus({ preventScroll: true });
+  if (previousView !== state.view && (peopleArea || state.view === 'club')) window.scrollTo({ top: 0, behavior: 'instant' });
   if (state.view === 'club') void club.open({ isAdmin: isAdmin() });
   else club.close();
+  if (peopleArea) void people.open({ area: peopleArea, isAdmin: isAdmin() });
+  else people.close();
   if (state.view === 'users') void loadUsers().catch(displayError);
   if (state.view === 'agents') void loadAgents().catch(displayError);
   if (state.view === 'companies') void loadCompanies().catch(displayError);
@@ -446,10 +459,6 @@ function showMarketingPanel(panel) {
   activeMarketingPanel = panel;
   marketingLinkedItem = linkedItemId;
   for (const [key, id] of Object.entries(containers)) $(id).hidden = key !== panel;
-  for (const control of $('marketingNavigation').querySelectorAll('[data-marketing-go]')) {
-    if (control.dataset.marketingGo === panel) control.setAttribute('aria-current', 'page');
-    else control.removeAttribute('aria-current');
-  }
   recentMarketingRequest += 1;
   const canCreate = canUse('marketing', 'workItemCreate');
   const canUpdate = canUse('marketing', 'workItemUpdate');
@@ -544,7 +553,7 @@ function fillCompanySelect(select, allOption) {
   const old = select.value;
   select.replaceChildren();
   if (allOption) select.append(new Option('Todas as empresas', ''));
-  else select.append(new Option(select === $('workItemCompany') && $('workItemForm').dataset.module === 'tecnologia' ? 'Atividade interna' : 'Selecione a empresa', ''));
+  else select.append(new Option(select === $('workItemCompany') && internalActivityModules.has($('workItemForm').dataset.module) ? 'Atividade interna' : 'Selecione a empresa', ''));
   for (const company of state.companies) select.append(new Option(`${company.name} · ${cnpjLabel(company.cnpj)}`, company.cnpj));
   if (old && state.companies.some((company) => company.cnpj === old)) select.value = old;
 }
@@ -1055,14 +1064,14 @@ async function changePassword(event) {
 }
 function openWorkItemDialog(module) {
   const form = $('workItemForm');
-  const technology = module === 'tecnologia';
+  const allowInternal = internalActivityModules.has(module);
   form.reset();
   form.dataset.module = module;
   formError('workItemError', '');
-  $('workItemCompany').required = !technology;
-  $('workItemCompanyLabel').textContent = technology ? 'Empresa (opcional)' : 'Empresa';
-  $('workItemDialogDescription').textContent = technology
-    ? 'Registre uma atividade interna de Tecnologia ou associe a uma empresa.'
+  $('workItemCompany').required = !allowInternal;
+  $('workItemCompanyLabel').textContent = allowInternal ? 'Empresa (opcional)' : 'Empresa';
+  $('workItemDialogDescription').textContent = allowInternal
+    ? 'Registre uma atividade interna do setor ou associe a uma empresa.'
     : 'Registre uma atividade de acompanhamento para a empresa e o módulo.';
   fillCompanySelect($('workItemCompany'), false);
   $('workItemDialog').showModal();
@@ -1082,7 +1091,7 @@ function ensureWorkSection(module) {
   filter.addEventListener('change', () => void loadWorkItems(module).catch(displayError));
   fillCompanySelect(filter, true);
   controls.append(filter);
-  if (module === 'tecnologia') {
+  if (internalActivityModules.has(module)) {
     const status = node('select', 'work-status-filter');
     status.setAttribute('aria-label', 'Filtrar atividades por situação');
     status.append(new Option('Todas as situações', ''), ...Object.entries(taskStatusLabels).map(([value, label]) => new Option(label, value)));
@@ -1397,6 +1406,7 @@ function setupEvents() {
   for (const control of $('view-marketing').querySelectorAll('[data-marketing-go]')) {
     control.addEventListener('click', () => sectorNavigation.selectPanel(control.dataset.marketingGo));
   }
+  $('openCustomerSuccessActivities').addEventListener('click', () => sectorNavigation.selectPanel('activities'));
   $('fiscalCompanyLookup').addEventListener('input', renderFiscalCompanyQuickList);
   $('fiscalCompanyFilter').addEventListener('change', () => void loadFiscalDocuments().catch(displayError));
   $('backToCompanies').addEventListener('click', () => navigate(isAdmin() ? `client-${state.selectedCompanyCnpj}` : 'fiscal'));
@@ -1468,6 +1478,7 @@ function setupEvents() {
 setupEvents();
 const sectorNavigation = mountSectorNavigation();
 const club = mountClub($('clubRoot'), { request, onAuthError: displayError });
+const people = mountPeople($('peopleRoot'), { request, onAuthError: displayError });
 mountPortal(() => {
   if (sectorNavigation.open('talk')) return;
   if (state.view === 'overview') openChat();

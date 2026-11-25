@@ -66,6 +66,7 @@ test('métricas de Marketing reutilizam a sessão, validam registros e protegem 
   assert.equal((await request('', editor, { method: 'POST', body: { title: 'Visita ao site' }, csrf: false })).payload.error, 'CSRF');
   assert.equal((await request('?page=0', reader)).status, 400);
   assert.equal((await post(editor, { title: 'Visita ao site', desiredReach: -1 })).status, 400);
+  assert.equal((await post(editor, { title: 'Visita ao site', socialChannel: 'somos-maximum-youtube' })).status, 400);
   assert.equal((await post(editor, { taskId: 'tarefa-ausente' })).status, 400);
   assert.equal((await measure(editor, { date: '2025-02-30', actualReach: 8 })).status, 400);
   assert.equal((await measure(editor, { date: '2025-01-01', actualReach: 10.5 })).status, 400);
@@ -88,6 +89,14 @@ test('métricas de Marketing reutilizam a sessão, validam registros e protegem 
   assert.equal(metadata.socialChannel, 'newsletter');
   assert.equal(metadata.estimatedReach, 0);
   assert.equal(metadata.checklist[0].title, 'Revisar texto');
+
+  for (const brand of ['somos-maximum', 'maximum-contabil']) {
+    for (const socialChannel of [brand, `${brand}-instagram`, `${brand}-tiktok`]) {
+      const created = await post(editor, { title: 'Alcance por perfil', socialChannel });
+      assert.equal(created.status, 201);
+      assert.equal(calls.pop().metadata.socialChannel, socialChannel);
+    }
+  }
 
   const expectedUpdatedAt = '2025-01-02T16:01:02.012Z';
   assert.equal((await request(`/${metricId}`, editor, { method: 'PATCH', body: { estimatedReach: null, expectedUpdatedAt } })).status, 200);

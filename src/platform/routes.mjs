@@ -248,7 +248,7 @@ async function validateTaskAssignee(store, assigneeId, module, companyCnpj) {
   }
 }
 
-export function createPlatformRouter({ store, chat, whatsapp, club, crm, bootstrapTokenSha256, secureCookies = true, logger = console }) {
+export function createPlatformRouter({ store, chat, whatsapp, club, crm, people, bootstrapTokenSha256, secureCookies = true, logger = console }) {
   function loginKey(req, address) { return sha256(`${req.socket.remoteAddress || 'unknown'}:${address}`); }
   async function startSession(res, user) {
     const token = newSecret();
@@ -309,6 +309,9 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, bootstr
       }
       if (club && (route === '/club' || route.startsWith('/club/'))) {
         return await club.handleHttp({ req, res, route, user, send, readBody: body, requireAdmin, logger });
+      }
+      if (people && (route === '/people' || route.startsWith('/people/'))) {
+        return await people.handleHttp({ req, res, route, user, send, readBody: body, requireAdmin, logger });
       }
       if (route === '/marketing/metrics' || route.startsWith('/marketing/metrics/')) {
         return await handleMarketingMetrics({ req, res, route, user, send, readBody: body, store: store.marketingMetrics,

@@ -46,6 +46,14 @@ Guarde `$setupToken` até concluir o primeiro acesso. Não inclua esse valor, a 
 
 `MONGODB_URI`, `MONGODB_DB` e `XML_ENCRYPTION_KEY` pertenciam à versão anterior e **não são usadas** nesta instalação. A troca para MySQL não migra automaticamente dados de um MongoDB usado antes; se houver dados reais lá, planeje uma migração explícita antes de desligá-lo. Nunca copie um banco de produção sem testar restauração e permissões.
 
+## Envio e acompanhamento do CRM
+
+1. Verifique um domínio remetente no Resend e configure `CRM_EMAIL_FROM`, `CRM_RESEND_API_KEY` e `CRM_PUBLIC_URL` no hPanel, usando a origem HTTPS da Central em `CRM_PUBLIC_URL`.
+2. Configure no Resend o webhook `https://SEU-DOMINIO/v1/marketing/resend/webhook`. Use a chave de assinatura do webhook em `CRM_RESEND_WEBHOOK_SECRET` e selecione os eventos de envio, entrega, abertura, clique e falha de e-mail. Habilite o rastreamento de aberturas e cliques no domínio remetente para receber esses eventos.
+3. Defina `CRM_EMAIL_PROVIDER=resend` para ativar o processamento da fila. No CRM, prepare o público antes de enfileirar uma campanha. Páginas publicadas capturam inscrições com consentimento, e sequências de automação começam após a confirmação por e-mail.
+
+Os valores de `CRM_RESEND_API_KEY` e `CRM_RESEND_WEBHOOK_SECRET` são segredos do servidor. Exercite a fila com uma lista de teste antes de preparar campanhas para a base de assinantes.
+
 ## Agente Windows e coleta
 
 No painel, um administrador vincula um agente aos CNPJs/fontes permitidos. O token aparece uma vez e é digitado no instalador do Windows; consulte [WINDOWS-INSTALL.md](WINDOWS-INSTALL.md). Não é preciso abrir porta de entrada no servidor. O transporte e a ficha de NFS-e estão preparados para metadados. **A consulta automática ao ADN exige configurar e homologar separadamente o conector com certificado e autorização válidos**; ela não começa apenas por marcar NFS-e no painel. O A1 e sua senha ficam no Windows.

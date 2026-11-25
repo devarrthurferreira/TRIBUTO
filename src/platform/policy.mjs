@@ -24,6 +24,7 @@ export const MODULES = Object.freeze([
   { id: 'rh', label: 'Recursos Humanos', description: 'Pessoas, talentos e desenvolvimento da equipe' },
   { id: 'tecnologia', label: 'Tecnologia', description: 'Demandas internas, suporte e evolução dos sistemas' },
   { id: 'marketing', label: 'Marketing', description: 'Campanhas, comunicação e presença digital' },
+  { id: 'sucesso-do-cliente', label: 'Sucesso do Cliente', description: 'Acompanhamento da carteira, integração e relacionamento com clientes' },
   { id: 'societario', label: 'Societário', description: 'Aberturas, alterações e regularização de empresas' },
   { id: 'contabil', label: 'Contábil', description: 'Rotinas contábeis e acompanhamento das empresas' },
   { id: 'fiscal', label: 'Fiscal', description: 'Notas, eventos e acompanhamento tributário' },
@@ -71,7 +72,7 @@ export function canAccessCompany(user, cnpj) {
   return Boolean(user?.active && (user.role === 'admin' || user.companyCnpjs?.includes(cnpj)));
 }
 
-export const INTERNAL_WORK_ITEM_MODULES = Object.freeze(['tecnologia', 'marketing']);
+export const INTERNAL_WORK_ITEM_MODULES = Object.freeze(['tecnologia', 'marketing', 'sucesso-do-cliente']);
 
 export function canAccessWorkItemCompany(user, module, cnpj) {
   if (cnpj === null) return Boolean(user?.active && INTERNAL_WORK_ITEM_MODULES.includes(module));
