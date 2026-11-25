@@ -36,6 +36,11 @@ function phoneFromJid(jid) {
   return match?.[1] ?? null;
 }
 
+function hasLinkedCredentials(creds) {
+  // QR pairing emits a signed account and user identity before the socket reopens.
+  return Boolean(creds?.registered || (creds?.me?.id && creds.account));
+}
+
 async function peerPhone(socket, key) {
   const jid = key?.remoteJid;
   if (typeof jid !== 'string' || !/@(?:s\.whatsapp\.net|c\.us|lid)$/.test(jid)) return null;
@@ -134,7 +139,7 @@ function bounded(task, ms) {
 export function createBaileysBridge({ config, store, pool, logger = console,
   loadLibrary = () => import('@whiskeysockets/baileys'), renderQr = (value) => qrCode.toDataURL(value, { width: 280, margin: 3 }) }) {
   const transportLogger = pino({ level: 'silent' });
-  let library, authStore, lease, leaseTimer, socket, retry, pairingTimer, accountPhone, qr;
+  let library, authStore, lease, leaseTimer, socket, retry, pairingTimer, pairingCredentials, accountPhone, qr;
   let state = 'disconnected';
   let lifecycle = Promise.resolve();
   let authWrites = Promise.resolve();
@@ -167,7 +172,12 @@ export function createBaileysBridge({ config, store, pool, logger = console,
   function clearPairing() {
     qr = null;
     pairingUntil = 0;
+    pairingCredentials = null;
     clearTimeout(pairingTimer);
+  }
+
+  function isUnlinkedPairing() {
+    return pairingUntil !== 0 && !accountPhone && !hasLinkedCredentials(pairingCredentials);
   }
 
   async function releaseLease() {
@@ -251,7 +261,7 @@ export function createBaileysBridge({ config, store, pool, logger = console,
         return;
       }
       if ([library.DisconnectReason.connectionReplaced, library.DisconnectReason.forbidden,
-        library.DisconnectReason.multideviceMismatch].includes(reason) || !creds.registered && pairingUntil <= Date.now()) {
+        library.DisconnectReason.multideviceMismatch].includes(reason) || !hasLinkedCredentials(creds) && pairingUntil <= Date.now()) {
         await dormant('disconnected');
         return;
       }
@@ -289,11 +299,12 @@ export function createBaileysBridge({ config, store, pool, logger = console,
       }
       await authWrites;
       const saved = await authStore.credentials();
-      if (!saved?.registered && pairingUntil <= Date.now()) {
+      if (!hasLinkedCredentials(saved) && pairingUntil <= Date.now()) {
         await dormant('disconnected');
         return;
       }
       const creds = saved || library.initAuthCreds();
+      if (pairingUntil) pairingCredentials = creds;
       let current;
       const keys = {
         get: async (kind, ids) => { await authWrites; return authStore.keys.get(kind, ids); },
@@ -347,7 +358,7 @@ export function createBaileysBridge({ config, store, pool, logger = console,
     authStore = makeAuthStore(pool, config, library);
     try {
       const saved = await authStore.credentials();
-      if (saved?.registered) {
+      if (hasLinkedCredentials(saved)) {
         accountPhone = phoneFromJid(saved.me?.phoneNumber) || phoneFromJid(saved.me?.id);
         await queue(openSocket);
       }
@@ -369,11 +380,18 @@ export function createBaileysBridge({ config, store, pool, logger = console,
         clearTimeout(retry);
         clearTimeout(pairingTimer);
         pairingTimer = setTimeout(() => scheduleEvent(async () => {
-          if (state !== 'connected') await dormant('disconnected');
+          if (isUnlinkedPairing()) await dormant('disconnected');
         }), PAIRING_TIME_MS);
         pairingTimer.unref?.();
         await openSocket();
       }
+      return status({ includeQr: true });
+    });
+  }
+
+  async function cancel() {
+    return queue(async () => {
+      if (isUnlinkedPairing()) await dormant('disconnected');
       return status({ includeQr: true });
     });
   }
@@ -429,7 +447,7 @@ export function createBaileysBridge({ config, store, pool, logger = console,
     }
   }
 
-  return { sector: config.sector, initialize, connect, disconnect, status, scope, send, async close() {
+  return { sector: config.sector, initialize, connect, cancel, disconnect, status, scope, send, async close() {
     closing = true;
     await queue(() => dormant('disconnected'));
   } };

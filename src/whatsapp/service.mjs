@@ -188,6 +188,7 @@ export function createWhatsAppService({ config, store, bridge, workspace, fetche
         if (!canManage) throw new ApiError(403, 'WHATSAPP_FORBIDDEN', 'Somente administradores podem gerenciar conexões.');
         if (!sectorBridge) throw unavailable();
         if (input.action === 'connect') await sectorBridge.connect();
+        else if (input.action === 'cancel') await sectorBridge.cancel();
         else if (input.action === 'disconnect') {
           const wasLinked = Boolean(sectorBridge.scope());
           const result = await sectorBridge.disconnect();

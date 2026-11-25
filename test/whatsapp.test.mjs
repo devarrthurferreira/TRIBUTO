@@ -199,6 +199,7 @@ test('Baileys pairing is restricted to administrators in the configured sector',
     sector: 'tecnologia',
     scope: () => paired ? baileysScope : null,
     async connect() { paired = true; },
+    async cancel() { paired = false; },
     async disconnect() { paired = false; },
     async status({ includeQr } = {}) {
       return paired ? { state: 'qr', ...(includeQr ? { qrImage } : {}) } : { state: 'disconnected' };
@@ -214,5 +215,9 @@ test('Baileys pairing is restricted to administrators in the configured sector',
   await assert.rejects(get('/whatsapp/connections', observer, action), { status: 403 });
   assert.equal((await get('/whatsapp/connections', admin, action)).data.connection.qrImage, qrImage);
   assert.equal((await get('/whatsapp/connections', observer)).data.connection.qrImage, undefined);
+  const cancel = { ...action, action: 'cancel' };
+  await assert.rejects(get('/whatsapp/connections', observer, cancel), { status: 403 });
+  assert.equal((await get('/whatsapp/connections', admin, cancel)).data.connection.status, 'disconnected');
+  assert.equal((await get('/whatsapp/connections', admin, action)).data.connection.qrImage, qrImage);
   assert.equal((await get('/whatsapp/connections', admin, { ...action, action: 'disconnect' })).data.connection.status, 'disconnected');
 });

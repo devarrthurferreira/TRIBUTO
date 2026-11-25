@@ -124,7 +124,7 @@ export function mountSectorNavigation() {
     stopWhatsApp?.();
     stopWhatsApp = undefined;
     if (area === 'whatsapp') {
-      stopWhatsApp = mountSectorWhatsApp(whatsappMount, { sector: context.id, session: context.session, onUnread: setWhatsAppUnread });
+      stopWhatsApp = mountSectorWhatsApp(whatsappMount, { sector: context.id, sectorLabel: context.label, session: context.session, onUnread: setWhatsAppUnread });
     } else void pollWhatsAppBadge();
   }
 

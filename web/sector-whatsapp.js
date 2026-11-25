@@ -31,6 +31,7 @@ const CONNECTION_LABELS = {
   reconnecting: 'Reconectando', qr: 'Aguardando leitura do QR', connected: 'Conectada', error: 'Falha na conexão'
 };
 const PROVIDER_LABELS = { cloud: 'WhatsApp Business Cloud', baileys: 'WhatsApp Web' };
+const PAIRING_STATES = ['connecting', 'reconnecting', 'qr'];
 const TICKET_LABELS = { open: 'Aberto', closed: 'Encerrado' };
 const QR_IMAGE = /^data:image\/png;base64,[a-z\d+/=]+$/i;
 const TAG_COLORS = [
@@ -438,6 +439,7 @@ function openWorkspace(state, section, page) {
   if (state.active === section && state.activePage === child?.id) return;
   state.viewRequest?.abort();
   clearTimeout(state.connectionTimer);
+  state.autoPairOnOpen = section === 'connections';
   state.active = section;
   state.activePage = child?.id;
   for (const button of state.ui.navigation.querySelectorAll('[data-tab]')) {
@@ -612,69 +614,132 @@ async function updateTicket(state) {
   finally { state.ui.ticket.disabled = false; }
 }
 
-function connectionAction(state, action) {
-  return async (button) => {
-    button.disabled = true;
-    try {
-      const data = await workspaceRequest(state, '/connections', { body: { action } });
-      if (state.active === 'connections' && !state.signal.aborted) {
-        renderConnection(state, data);
-        if (action === 'disconnect' && data.unlinkConfirmed === false) {
-          setStatus(state, 'A conexão local foi interrompida. Confira o aparelho na lista de dispositivos do WhatsApp.');
-        }
-      }
-      await refreshSummary(state);
-    } catch (error) { showError(state, error); }
-    finally { button.disabled = false; }
-  };
+async function changeConnection(state, action, button) {
+  if (state.connectionBusy) return;
+  state.connectionBusy = true;
+  state.viewRequest?.abort();
+  clearTimeout(state.connectionTimer);
+  setStatus(state);
+  if (button) button.disabled = true;
+  const previous = state.connectionData;
+  let result, failure;
+  if (action === 'connect') renderConnection(state, { ...previous, connection: { ...previous?.connection, status: 'connecting' } });
+  try { result = await workspaceRequest(state, '/connections', { body: { action } }); }
+  catch (error) { failure = error; }
+  finally {
+    state.connectionBusy = false;
+    if (button) button.disabled = false;
+  }
+  if (state.signal.aborted) return;
+  if (state.active === 'connections') {
+    state.autoPairOnOpen = false;
+    renderConnection(state, result || previous);
+    if (failure) showError(state, failure);
+    else if (result.unlinkConfirmed === false) setStatus(state, 'A conexão local foi interrompida. Confira o aparelho na lista de dispositivos do WhatsApp.');
+  }
+  if (result) void refreshSummary(state).catch(() => {});
+}
+
+function connectionButton(state, label, action, options) {
+  const button = actionButton(label, (button) => changeConnection(state, action, button), options);
+  button.dataset.connectionAction = action;
+  button.disabled = Boolean(state.connectionBusy);
+  return button;
+}
+
+function renderPairing(state, connection, hasQr) {
+  const card = element('article', 'wa-workspace-card wa-pairing-card');
+  const heading = element('header', 'wa-pairing-heading');
+  heading.append(element('h4', '', 'Parear pelo QR Code'), element('p', '', 'Use o celular com o número deste setor.'));
+  const frame = element('div', 'wa-qr-frame');
+  if (hasQr) {
+    const qr = element('img', 'wa-qr');
+    qr.src = connection.qrImage;
+    qr.alt = 'Código QR de pareamento do WhatsApp deste setor';
+    qr.width = qr.height = 230;
+    frame.append(qr);
+  } else {
+    const loading = element('div', 'wa-qr-placeholder');
+    loading.setAttribute('role', 'status');
+    loading.append(icon('qr-code'), element('span', '', 'Preparando o QR Code…'));
+    frame.append(loading);
+  }
+  const steps = element('ol', 'wa-qr-steps');
+  for (const step of ['Abra o WhatsApp no celular.', 'Toque em Aparelhos conectados e em Conectar um aparelho.', 'Aponte a câmera para o código.']) steps.append(element('li', '', step));
+  const actions = element('div', 'wa-workspace-actions');
+  actions.append(connectionButton(state, 'Cancelar pareamento', 'cancel'));
+  card.append(heading, frame, steps, actions);
+  return card;
 }
 
 function renderConnection(state, data) {
   const { connection = {}, canManage } = data;
   if (connection.provider) state.provider = connection.provider;
-  const section = startPanel(state, 'Conexões', 'Acompanhe o número de WhatsApp vinculado a este setor.');
-  const status = CONNECTION_LABELS[connection.status] || CONNECTION_LABELS.disabled;
-  const card = element('article', 'wa-workspace-card wa-connection-card');
-  const line = element('header', 'wa-connection-header');
-  const title = element('div');
-  title.append(element('h4', '', PROVIDER_LABELS[connection.provider] || 'WhatsApp'), element('p', '', connection.phone || 'Número do setor'));
-  const pill = element('span', `wa-pill ${connection.status === 'connected' ? 'wa-pill-active' : ''}`, status);
-  line.append(title, pill);
-  card.append(line);
-
-  if (canManage && connection.status === 'qr' && typeof connection.qrImage === 'string'
-    && connection.qrImage.length < 500_000 && QR_IMAGE.test(connection.qrImage)) {
-    const pairing = element('div', 'wa-pairing');
-    const qr = element('img', 'wa-qr');
-    qr.src = connection.qrImage;
-    qr.alt = 'Código QR de pareamento do WhatsApp deste setor';
-    qr.width = qr.height = 230;
-    const instructions = element('div');
-    instructions.append(element('h4', '', 'Leia o código no telefone do setor'));
-    const steps = element('ol', 'wa-qr-steps');
-    for (const step of ['Abra o WhatsApp no telefone.', 'Em Aparelhos conectados, toque em Conectar um aparelho.', 'Aponte a câmera para o código ao lado.']) steps.append(element('li', '', step));
-    instructions.append(steps);
-    pairing.append(qr, instructions);
-    card.append(pairing);
-  } else if (connection.reason) {
-    card.append(element('p', 'wa-supporting-text', connection.reason));
-  } else if (!canManage) {
-    card.append(element('p', 'wa-supporting-text', 'O pareamento do número é administrado pela equipe responsável.'));
-  } else if (connection.status === 'disabled') {
-    card.append(element('p', 'wa-supporting-text', 'O servidor ainda precisa habilitar um provedor de WhatsApp para este setor.'));
-  }
-  const actions = element('div', 'wa-workspace-actions');
-  if (canManage && connection.provider === 'baileys') {
-    if (['disconnected', 'error'].includes(connection.status)) actions.append(actionButton('Conectar número', connectionAction(state, 'connect'), { symbol: 'link-45deg', primary: true }));
-    if (['qr', 'connecting', 'reconnecting', 'connected'].includes(connection.status)) actions.append(actionButton(connection.status === 'connected' ? 'Desconectar número' : 'Cancelar pareamento', connectionAction(state, 'disconnect')));
-  }
-  if (actions.childElementCount) card.append(actions);
-  section.append(card);
+  const pending = PAIRING_STATES.includes(connection.status);
+  const expiresAt = Date.parse(connection.qrExpiresAt);
+  const hasQr = canManage && connection.status === 'qr' && (Number.isNaN(expiresAt) || expiresAt > Date.now())
+    && typeof connection.qrImage === 'string' && connection.qrImage.length < 500_000 && QR_IMAGE.test(connection.qrImage);
   clearTimeout(state.connectionTimer);
-  if (['qr', 'connecting', 'reconnecting'].includes(connection.status)) {
+  if (pending && !state.connectionBusy) {
+    const interval = hasQr && Number.isFinite(expiresAt) ? Math.max(250, Math.min(4_000, expiresAt - Date.now())) : 4_000;
     state.connectionTimer = setTimeout(() => {
       if (!document.hidden && state.active === 'connections') void loadWorkspace(state, { preserve: true });
-    }, 4_000);
+    }, interval);
+  }
+  const previous = state.connectionData;
+  const busy = Boolean(state.connectionBusy);
+  state.connectionData = data;
+  if (state.ui.workspace.firstElementChild?.classList.contains('wa-connection-area')
+    && state.renderedConnectionBusy === busy
+    && previous?.canManage === canManage
+    && ['status', 'provider', 'phone', 'reason', 'qrImage', 'qrExpiresAt'].every(key => previous?.connection?.[key] === connection[key])
+    && Boolean(state.ui.workspace.querySelector('.wa-qr')) === hasQr) return;
+  state.renderedConnectionBusy = busy;
+
+  const focusedAction = state.ui.workspace.contains(document.activeElement) && document.activeElement.dataset.connectionAction;
+  const section = startPanel(state, 'Conexões');
+  section.classList.add('wa-connection-area');
+  const grid = element('div', 'wa-connections-grid');
+  const card = element('article', 'wa-workspace-card wa-connection-card');
+  const line = element('header', 'wa-connection-header');
+  const mark = element('span', 'wa-connection-icon');
+  mark.append(icon('whatsapp'));
+  const title = element('div', 'wa-connection-title');
+  title.append(element('h4', '', 'Maximum'), element('p', '', PROVIDER_LABELS[connection.provider] || 'WhatsApp'));
+  const pill = element('span', 'wa-pill', CONNECTION_LABELS[connection.status] || CONNECTION_LABELS.disabled);
+  pill.dataset.status = connection.status || 'disabled';
+  line.append(mark, title, pill);
+
+  const phone = connection.phone?.replace(/^(55)(\d{2})(\d{4,5})(\d{4})$/, '+$1 ($2) $3-$4');
+  const details = element('dl', 'wa-connection-details');
+  for (const [symbol, label, value] of [['person', 'Número do WhatsApp', phone || 'Sem número vinculado'], ['buildings', 'Setor', state.sectorLabel]]) {
+    if (!value) continue;
+    const row = element('div', 'wa-connection-detail');
+    const term = element('dt');
+    term.append(icon(symbol), document.createTextNode(label));
+    row.append(term, element('dd', '', value));
+    details.append(row);
+  }
+  card.append(line, details);
+  if (connection.reason) card.append(element('p', 'wa-supporting-text', connection.reason));
+  else if (connection.status === 'disabled') {
+    card.append(element('p', 'wa-supporting-text', 'O servidor ainda precisa habilitar um provedor de WhatsApp para este setor.'));
+  }
+  grid.append(card);
+  if (canManage && connection.provider === 'baileys' && connection.status !== 'disabled') {
+    if (pending && !connection.phone) grid.append(renderPairing(state, connection, hasQr));
+    else if (!pending) {
+      const actions = element('div', 'wa-workspace-actions');
+      actions.append(connection.status === 'connected'
+        ? connectionButton(state, 'Desconectar número', 'disconnect')
+        : connectionButton(state, 'Conectar número', 'connect', { symbol: 'link-45deg', primary: true }));
+      card.append(actions);
+    }
+  }
+  section.append(grid);
+  if (focusedAction) {
+    const next = grid.querySelector(`[data-connection-action="${focusedAction}"]`) || grid.querySelector('[data-connection-action]');
+    next?.focus({ preventScroll: true });
   }
 }
 
@@ -776,6 +841,7 @@ function renderSettings(state, data) {
 async function loadWorkspace(state, { preserve = false } = {}) {
   const { active, activePage } = state;
   if (active === 'chats' || state.signal.aborted) return;
+  if (active === 'connections' && state.connectionBusy) return;
   state.viewRequest?.abort();
   const controller = new AbortController();
   state.viewRequest = controller;
@@ -796,7 +862,14 @@ async function loadWorkspace(state, { preserve = false } = {}) {
       if (fromCurrentRequest()) renderTags(state);
     } else if (active === 'connections') {
       const data = await workspaceRequest(state, '/connections', { signal });
-      if (fromCurrentRequest()) renderConnection(state, data);
+      if (!fromCurrentRequest()) return;
+      renderConnection(state, data);
+      if (state.autoPairOnOpen && !document.hidden) {
+        state.autoPairOnOpen = false;
+        if (data.canManage && data.connection?.provider === 'baileys' && data.connection.status === 'disconnected' && !data.connection.phone) {
+          void changeConnection(state, 'connect');
+        }
+      }
     } else if (active === 'settings' || activePage === 'absence') {
       const data = await workspaceRequest(state, '/settings', { signal });
       if (fromCurrentRequest()) {
@@ -813,7 +886,10 @@ async function loadWorkspace(state, { preserve = false } = {}) {
         const section = startPanel(state, 'Impossível carregar a seção');
         section.append(emptyState('broadcast', 'Os dados não puderam ser consultados', error.message));
         section.append(actionButton('Tentar novamente', () => loadWorkspace(state), { symbol: 'arrow-clockwise' }));
-      } else showError(state, error);
+      } else {
+        if (active === 'connections' && state.connectionData) renderConnection(state, state.connectionData);
+        showError(state, error);
+      }
     }
   }
 }
@@ -930,10 +1006,10 @@ async function submitReply(state, event) {
   }
 }
 
-export function mountSectorWhatsApp(container, { sector, session, onUnread } = {}) {
+export function mountSectorWhatsApp(container, { sector, sectorLabel, session, onUnread } = {}) {
   const controller = new AbortController();
   const state = {
-    ...makeShell(container), sector, onUnread, token: session?.csrfToken, signal: controller.signal,
+    ...makeShell(container), sector, sectorLabel, onUnread, token: session?.csrfToken, signal: controller.signal,
     mobile: window.matchMedia('(max-width: 730px)'), reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)'),
     connected: false, selected: null, conversations: [], messages: [], sequence: 0, page: 1,
     drafts: new Map(), sending: new Set(), readThrough: new Map(), tags: [],

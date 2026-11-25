@@ -136,3 +136,33 @@ test('Baileys preserva escopo, registra somente chats diretos novos e envia text
   assert.equal(previous.status, 'failed');
   assert.equal(socket.sent.content.text, 'Mensagem de teste');
 });
+
+test('Baileys cancela o QR pendente sem desvincular, inclusive quando a leitura acaba de ser confirmada', async (t) => {
+  const { bridge, sockets, pool } = harness();
+  t.after(() => bridge.close());
+  await bridge.initialize();
+  await bridge.connect();
+  const [pending] = sockets;
+  pending.ev.emit('connection.update', { qr: 'test-pending-qr' });
+  assert.equal((await bridge.connect()).state, 'qr');
+  assert.deepEqual(await bridge.cancel(), { state: 'disconnected', phone: null });
+  assert.equal(pending.ended, true);
+  assert.equal(pending.loggedOut, undefined);
+
+  await bridge.connect();
+  const scanned = sockets[1];
+  const cancellation = bridge.cancel();
+  scanned.ev.emit('creds.update', { me: { id: self }, account: { details: Buffer.from('signed QR identity') } });
+  await cancellation;
+  assert.equal(scanned.ended, undefined);
+  scanned.ev.emit('connection.update', { connection: 'open' });
+  assert.deepEqual(await bridge.cancel(), { state: 'connected', phone: '5511000000001' });
+  assert.equal(scanned.loggedOut, undefined);
+  await bridge.close();
+
+  const restored = harness(pool);
+  t.after(() => restored.bridge.close());
+  await restored.bridge.initialize();
+  assert.equal(restored.sockets.length, 1);
+  assert.deepEqual(restored.bridge.scope(), { sector: 'tecnologia', phoneId: 'baileys:5511000000001' });
+});
