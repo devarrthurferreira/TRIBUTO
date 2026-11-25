@@ -156,7 +156,7 @@ export class PlatformMySqlStore {
       await this.transaction(async (connection) => {
         await connection.execute('INSERT INTO platform_setup (id, created_at) VALUES (?, ?)', ['initial', new Date()]);
         const [[row]] = await connection.execute('SELECT COUNT(*) AS n FROM platform_users');
-        if (row.n) throw new Error('SETUP_COMPLETE');
+        if (Number(row.n) !== 0) throw new Error('SETUP_COMPLETE');
         await this.insertUser(connection, record);
       });
     } catch (error) {
