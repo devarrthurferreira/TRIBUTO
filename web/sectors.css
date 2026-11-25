@@ -37,11 +37,11 @@
   font-size: 20px;
   text-decoration: none;
 }
-.sector-rail-button:is(:hover, [aria-pressed="true"]) {
+.sector-rail-button:is(:hover, [aria-pressed="true"], [aria-current="page"]) {
   background: var(--portal-hover);
   color: var(--blue);
 }
-.sector-rail-button[aria-pressed="true"] { border-color: var(--portal-edge); }
+.sector-rail-button:is([aria-pressed="true"], [aria-current="page"]) { border-color: var(--portal-edge); }
 .sector-rail-home { margin-top: auto; }
 .sector-unread {
   position: absolute;

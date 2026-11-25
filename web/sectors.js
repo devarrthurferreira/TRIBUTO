@@ -164,7 +164,12 @@ export function mountSectorNavigation() {
     context = activeArea = undefined;
     expanded = false;
     setWhatsAppUnread(0);
-    nav.hidden = talk.hidden = whatsapp.hidden = true;
+    nav.hidden = talk.hidden = whatsapp.hidden = subnav.hidden = true;
+    for (const button of Object.values(buttons)) {
+      button.hidden = true;
+      button.setAttribute('aria-pressed', 'false');
+    }
+    buttons.setor.setAttribute('aria-expanded', 'false');
     delete app.dataset.sectorActive;
     delete app.dataset.sectorArea;
     delete app.dataset.sectorPanel;
@@ -173,6 +178,7 @@ export function mountSectorNavigation() {
   function activate(sector, { home = false } = {}) {
     if (!sector) {
       leave();
+      nav.hidden = false;
       const surface = home ? {} : { mount: talkMount, show: false };
       setChatSurface(surface);
       return surface;
@@ -180,6 +186,7 @@ export function mountSectorNavigation() {
     if (context?.id !== sector.id) leave();
     context = sector;
     nav.hidden = false;
+    buttons.setor.hidden = false;
     buttons.talk.hidden = !sector.talk;
     buttons.whatsapp.hidden = !sector.whatsapp;
     app.dataset.sectorActive = 'true';

@@ -250,8 +250,7 @@ function applySession(session) {
   $('newUserButton').hidden = !isAdmin();
   $('portalUsers').hidden = !isAdmin();
   $('portalAgents').hidden = !isAdmin();
-  $('portalCompanies').hidden = !isAdmin();
-  $('portalCompanySettings').hidden = !isAdmin();
+  $('railCompanies').hidden = !isAdmin();
   $('fiscalAllCompanies').hidden = !isAdmin();
   $('newAgentButton').hidden = !isAdmin();
   $('storageOverview').hidden = !isAdmin();
@@ -355,7 +354,7 @@ function navigate(view, { replace = false } = {}) {
     if (current) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
   setPortalContext(state.view);
-  for (const [id, active] of [['portalClub', state.view === 'club'], ['portalCompanies', ['companies', 'client-detail'].includes(state.view)]]) {
+  for (const [id, active] of [['railHome', state.view === 'overview'], ['railClub', state.view === 'club'], ['railCompanies', activeView === 'companies']]) {
     if (active) $(id).setAttribute('aria-current', 'page');
     else $(id).removeAttribute('aria-current');
   }

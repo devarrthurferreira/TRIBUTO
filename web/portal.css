@@ -37,21 +37,6 @@
 .portal-header-divider { flex: none; height: 25px; width: 1px; background: var(--portal-edge); }
 .portal-sector { overflow: hidden; color: var(--ink-soft); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .portal-controls { gap: 9px; flex: none; }
-.portal-shortcut {
-  display: inline-flex;
-  min-height: 37px;
-  align-items: center;
-  gap: 7px;
-  padding: 0 10px;
-  border-radius: 10px;
-  color: var(--ink-soft);
-  font-size: 12px;
-  font-weight: 650;
-  text-decoration: none;
-  white-space: nowrap;
-}
-.portal-shortcut .bi { color: var(--blue); font-size: 16px; }
-.portal-shortcut:is(:hover, [aria-current]) { background: var(--portal-hover); color: var(--blue); }
 .portal-club-status { max-width: 620px; display: grid; justify-items: center; margin-inline: auto; padding: clamp(25px, 5vw, 56px); text-align: center; }
 .portal-club-status h2 { margin: 15px 0 7px; font-size: 19px; }
 .portal-club-status p { margin: 0; }
@@ -138,7 +123,7 @@
 .portal-profile .bi { font-size: 10px; }
 
 .app-shell .sidebar { top: var(--portal-header-size); height: calc(100dvh - var(--portal-header-size)); }
-.app-shell[data-view="overview"] .sidebar { display: none; }
+.app-shell:is([data-view="overview"], [data-view="club"]) .sidebar:not(.open) { display: none; }
 .app-shell[data-view="overview"] .main-content {
   width: 100%;
   min-height: calc(100dvh - var(--portal-header-size));
@@ -320,8 +305,6 @@
   .portal-header { padding: 7px 13px; gap: 6px; }
   .portal-brand { gap: 6px; }
   .portal-controls { gap: 2px; }
-  .portal-shortcut { justify-content: center; width: 30px; min-height: 34px; padding: 0; }
-  .portal-shortcut > span { display: none; }
   .portal-icon { width: 30px; height: 34px; font-size: 16px; }
   .portal-sector { font-size: 10px; }
   .portal-header-divider { height: 17px; }
