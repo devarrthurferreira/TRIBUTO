@@ -10,15 +10,15 @@ const DELIVERY_LABELS = {
 const NAVIGATION = [
   { id: 'chats', title: 'Chats', icon: 'chat-dots' },
   { id: 'contacts', title: 'Contatos', icon: 'people' },
-  { id: 'tags', title: 'Tags', icon: 'hash' },
+  { id: 'tags', title: 'Tags', icon: 'tag' },
   { id: 'connections', title: 'Conexões', icon: 'link-45deg' },
-  { id: 'overview', title: 'Visão geral', icon: 'grid', pages: [
+  { id: 'overview', title: 'Visão geral', icon: 'graph-up', pages: [
     { id: 'now', title: 'Agora' },
     { id: 'history', title: 'Histórico de chamados' },
     { id: 'statistics', title: 'Estatísticas de chamados' },
     { id: 'absence', title: 'Controle de ausência' }
   ] },
-  { id: 'settings', title: 'Mais opções', icon: 'sliders', pages: [
+  { id: 'settings', title: 'Mais opções', icon: 'grid', pages: [
     { id: 'users', title: 'Usuários' },
     { id: 'roles', title: 'Cargos' },
     { id: 'robots', title: 'Robôs' },
@@ -118,16 +118,9 @@ function makeShell(container) {
   const root = element('section', 'wa-inbox');
   root.setAttribute('aria-label', 'Caixa de entrada do WhatsApp');
   root.innerHTML = `
-    <header class="wa-header">
-      <span class="wa-header-icon"><i class="bi bi-whatsapp" aria-hidden="true"></i></span>
-      <div class="wa-heading">
-        <h2>Central de WhatsApp</h2>
-        <p data-wa="connection">Carregando a caixa de entrada…</p>
-      </div>
-      <button type="button" data-wa="refresh" class="wa-control" title="Atualizar WhatsApp"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i> Atualizar</button>
-    </header>
-    <nav data-wa="navigation" class="wa-navigation" aria-label="Seções do WhatsApp"></nav>
-    <nav data-wa="subnavigation" class="wa-subnavigation" aria-label="Opções da seção" hidden></nav>
+    <nav data-wa="navigation" class="wa-navigation" aria-label="Seções do WhatsApp">
+      <button type="button" data-wa="refresh" class="wa-nav-button wa-nav-refresh" aria-label="Atualizar WhatsApp" data-label="Atualizar WhatsApp"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i></button>
+    </nav>
     <div data-wa="status" class="wa-status" role="status" hidden></div>
     <div data-wa="workspace" class="wa-workspace" hidden></div>
     <div data-wa="offline" class="wa-unavailable" hidden></div>
@@ -285,7 +278,10 @@ function applySummary(state, data, page) {
   state.canManageConnection = Boolean(data.canManage ?? state.isAdmin);
   state.canManageTickets = Boolean(data.canManageTickets ?? data.canReply);
   state.unread = state.connected ? Math.max(0, Number(data.unread) || 0) : 0;
-  state.ui.connection.textContent = state.connected ? 'Atendimento do setor' : 'Número não conectado';
+  state.ui.navUnread.hidden = !state.unread;
+  state.ui.navUnread.textContent = state.unread > 99 ? '99+' : String(state.unread);
+  if (state.unread) state.ui.navChats.setAttribute('aria-description', `${state.unread} ${state.unread === 1 ? 'mensagem não lida' : 'mensagens não lidas'}`);
+  else state.ui.navChats.removeAttribute('aria-description');
   state.sectorCanReply = Boolean(data.canReply);
   state.onUnread?.(state.unread);
   if (!state.connected) {
@@ -337,7 +333,6 @@ function updateLayout(state) {
   state.ui.layout.hidden = !chats || !state.connected;
   state.ui.offline.hidden = !chats || state.connected;
   state.ui.workspace.hidden = chats;
-  state.ui.refresh.title = chats ? 'Atualizar WhatsApp' : 'Atualizar seção';
 }
 
 function workspaceRequest(state, path, options = {}) {
@@ -347,39 +342,118 @@ function workspaceRequest(state, path, options = {}) {
     : request(path + '?' + new URLSearchParams({ sector: state.sector }), { signal });
 }
 
-function chooseTab(target, pages, navigate, current) {
-  for (const page of pages) {
-    let button = target.querySelector(`[data-tab="${page.id}"]`);
-    if (!button) {
-      button = element('button', 'wa-tab');
-      button.type = 'button';
-      button.dataset.tab = page.id;
-      if (page.icon) button.append(icon(page.icon));
-      button.append(document.createTextNode(page.title));
-      button.addEventListener('click', () => navigate(page.id));
-      target.append(button);
+function closeNavPopover(state, restoreFocus = false) {
+  const open = state.navPopover;
+  if (!open) return;
+  state.navPopover = null;
+  open.button.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) open.button.focus({ preventScroll: true });
+  open.popover.hidden = true;
+}
+
+function configureNavigation(state) {
+  const { ui, signal } = state;
+  for (const group of NAVIGATION) {
+    const button = element('button', 'wa-nav-button');
+    button.type = 'button';
+    button.dataset.tab = group.id;
+    button.dataset.label = group.title;
+    button.setAttribute('aria-label', group.title);
+    button.append(icon(group.icon));
+
+    if (group.id === 'chats') {
+      ui.navChats = button;
+      ui.navUnread = element('span', 'wa-nav-badge');
+      ui.navUnread.hidden = true;
+      ui.navUnread.setAttribute('aria-hidden', 'true');
+      button.append(ui.navUnread);
     }
-    if (page.id === current) button.setAttribute('aria-current', 'true');
-    else button.removeAttribute('aria-current');
+    if (!group.pages) {
+      button.addEventListener('click', () => openWorkspace(state, group.id));
+      ui.refresh.before(button);
+      continue;
+    }
+
+    const anchor = element('div', 'wa-nav-group');
+    const popover = element('div', 'wa-nav-popover');
+    popover.id = `wa-nav-${group.id}`;
+    popover.hidden = true;
+    popover.setAttribute('role', 'group');
+    popover.setAttribute('aria-label', group.title);
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', popover.id);
+    const chevron = icon('chevron-down');
+    chevron.classList.add('wa-nav-chevron');
+    button.append(chevron);
+
+    for (const page of group.pages) {
+      const option = element('button', 'wa-nav-option', page.title);
+      option.type = 'button';
+      option.dataset.tab = page.id;
+      option.append(icon('check2'));
+      option.addEventListener('click', () => {
+        closeNavPopover(state, true);
+        openWorkspace(state, group.id, page.id);
+      });
+      popover.append(option);
+    }
+    const showPopover = () => {
+      closeNavPopover(state);
+      state.navPopover = { button, popover, anchor };
+      button.setAttribute('aria-expanded', 'true');
+      popover.hidden = false;
+    };
+    button.addEventListener('click', () => {
+      if (state.navPopover?.button === button) closeNavPopover(state);
+      else showPopover();
+    });
+    button.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowDown') return;
+      event.preventDefault();
+      if (popover.hidden) showPopover();
+      popover.firstElementChild?.focus();
+    });
+    anchor.append(button, popover);
+    ui.refresh.before(anchor);
   }
+
+  const closeOutside = ({ target }) => {
+    if (state.navPopover && !state.navPopover.anchor.contains(target)) closeNavPopover(state);
+  };
+  document.addEventListener('focusin', closeOutside, { signal });
+  document.addEventListener('click', closeOutside, { signal });
+  ui.navigation.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !state.navPopover) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeNavPopover(state, true);
+  });
 }
 
 function openWorkspace(state, section, page) {
   const group = NAVIGATION.find(({ id }) => id === section);
   if (!group) return;
   const child = group.pages?.find(({ id }) => id === page) || group.pages?.[0];
+  closeNavPopover(state);
   if (state.active === section && state.activePage === child?.id) return;
   state.viewRequest?.abort();
   clearTimeout(state.connectionTimer);
-  state.ui.subnavigation.replaceChildren();
   state.active = section;
   state.activePage = child?.id;
-  chooseTab(state.ui.navigation, NAVIGATION, (id) => openWorkspace(state, id), section);
-  if (group.pages) chooseTab(state.ui.subnavigation, group.pages, (id) => openWorkspace(state, section, id), child.id);
-  state.ui.subnavigation.hidden = !group.pages;
+  for (const button of state.ui.navigation.querySelectorAll('[data-tab]')) {
+    if (button.dataset.tab === section || button.dataset.tab === child?.id) button.setAttribute('aria-current', 'true');
+    else button.removeAttribute('aria-current');
+  }
   state.ui.threadTags.hidden = true;
   state.ui.tagThread.setAttribute('aria-expanded', 'false');
   updateLayout(state);
+  if (!state.reducedMotion.matches) {
+    const view = section === 'chats' ? (state.connected ? state.ui.layout : state.ui.offline) : state.ui.workspace;
+    state.viewAnimation?.cancel();
+    state.viewAnimation = view.animate([{ opacity: .70, transform: 'translateY(4px)' }, { opacity: 1, transform: 'translateY(0)' }], {
+      duration: 180, easing: 'ease-out'
+    });
+  }
   setStatus(state);
   if (section === 'chats') {
     void refresh(state, true);
@@ -860,11 +934,13 @@ export function mountSectorWhatsApp(container, { sector, session, onUnread } = {
   const controller = new AbortController();
   const state = {
     ...makeShell(container), sector, onUnread, token: session?.csrfToken, signal: controller.signal,
-    mobile: window.matchMedia('(max-width: 730px)'), connected: false, selected: null, conversations: [], messages: [], sequence: 0, page: 1,
+    mobile: window.matchMedia('(max-width: 730px)'), reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)'),
+    connected: false, selected: null, conversations: [], messages: [], sequence: 0, page: 1,
     drafts: new Map(), sending: new Set(), readThrough: new Map(), tags: [],
     isAdmin: session?.user?.role === 'admin'
   };
   const { ui } = state;
+  configureNavigation(state);
   setMobileThread(state, false);
   ui.refresh.addEventListener('click', () => {
     if (state.active === 'chats') void refresh(state, true);
