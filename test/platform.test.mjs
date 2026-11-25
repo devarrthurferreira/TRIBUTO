@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createPlatformRouter } from '../src/platform/routes.mjs';
+import { canPerform, canAccessWorkItemCompany } from '../src/platform/policy.mjs';
 import { sha256 } from '../src/api/validation.mjs';
 
 const CNPJ_A = '12345678000195';
@@ -29,13 +30,26 @@ class MemoryPlatformStore {
   async listCompanies(allowed) { return [...this.companies.values()].filter(x => allowed === null || allowed.includes(x.cnpj)); }
   async companyExists(key) { return this.companies.has(key); }
   async createCompany(company) { this.companies.set(company.cnpj, company); }
-  async dashboard(user) { return { companies: (await this.listCompanies(user.role === 'admin' ? null : user.companyCnpjs)).length, users: user.role === 'admin' ? this.users.size : null, documents: user.role === 'admin' || user.moduleGrants.fiscal ? [...this.documents.values()].filter(x => user.role === 'admin' || user.companyCnpjs.includes(x.companyCnpj)).length : null, workItemsOpen: [...this.items.values()].filter(x => x.status !== 'done' && (user.role === 'admin' || user.companyCnpjs.includes(x.companyCnpj) && user.moduleGrants[x.module])).length, agentsOnline: 0 }; }
+  async dashboard(user) {
+    const companyScope = user.role === 'admin' ? null : user.companyCnpjs;
+    const documents = canPerform(user, 'fiscal', 'fiscalDocumentsRead')
+      ? [...this.documents.values()].filter(x => companyScope === null || companyScope.includes(x.companyCnpj)).length
+      : null;
+    const workItemsOpen = [...this.items.values()].filter(item => item.status !== 'done' &&
+      canPerform(user, item.module, 'workItemRead') && canAccessWorkItemCompany(user, item.module, item.companyCnpj)).length;
+    return { companies: (await this.listCompanies(companyScope)).length, users: user.role === 'admin' ? this.users.size : null, documents, workItemsOpen, agentsOnline: 0 };
+  }
   async getStorageUsage() { return { bytes: 4096, tableCount: 2, approximate: true, tables: [] }; }
   async listAgents() { return [...this.agents.values()].map(x => ({ id: x._id, name: x.name, active: x.active, assignments: x.assignments })); }
   async createAgent(agent) { this.agents.set(agent._id, agent); }
   async revokeAgent(id) { const value = this.agents.get(id); if (value) value.active = false; return value; }
   async findAgentByTokenHash(hash) { return [...this.agents.values()].find(x => x.tokenSha256 === hash && x.active); }
-  async listWorkItems({ modules, companyCnpjs, module, companyCnpj }) { return [...this.items.values()].filter(x => (module ? x.module === module : modules.includes(x.module)) && (companyCnpjs === null || companyCnpjs.includes(x.companyCnpj)) && (!companyCnpj || x.companyCnpj === companyCnpj)); }
+  async listWorkItems({ modules, companyCnpjs, module, companyCnpj }) {
+    return [...this.items.values()].filter(item =>
+      (module ? item.module === module : modules.includes(item.module)) &&
+      (companyCnpjs === null || companyCnpjs.includes(item.companyCnpj) || item.module === 'tecnologia' && item.companyCnpj === null) &&
+      (!companyCnpj || item.companyCnpj === companyCnpj));
+  }
   async getWorkItem(id) { return this.items.get(id); }
   async createWorkItem(item) { this.items.set(item._id, item); }
   async updateWorkItem(id, changes) { const value = { ...this.items.get(id), ...changes }; this.items.set(id, value); return value; }
@@ -135,6 +149,57 @@ test('primeiro admin, CSRF, permissões por módulo e empresa, tarefas', async (
   assert.equal((await request(url, '/v1/platform/work-items?module=dp', member)).body.items.length, 1);
   assert.equal((await request(url, `/v1/platform/work-items/${created.body.item.id}`, { method: 'PATCH', ...member, data: { status: 'done' } })).status, 403);
   assert.ok(store.auditEntries.some(x => x.action === 'work_item.create'));
+}));
+
+test('Tecnologia aceita demandas internas e aplica bloqueios por ação', async () => fixture(async ({ url }) => {
+  const admin = await setup(url);
+  const path = '/v1/platform';
+  const listed = await request(url, `${path}/modules`, admin);
+  assert.deepEqual(listed.body.modules.filter(module => !module.legacy).map(module => module.id),
+    ['dp', 'rh', 'tecnologia', 'marketing', 'societario', 'contabil', 'fiscal', 'diretoria']);
+
+  const password = 'senha-tecnologia-longa';
+  const credentials = { email: 'tecnologia@example.test', password };
+  const createUser = { ...credentials, name: 'Tecnologia', role: 'member', companyCnpjs: [], moduleGrants: {
+    tecnologia: { level: 'edit', blockedActions: ['workItemUpdate'] },
+    fiscal: { level: 'view', blockedActions: ['fiscalDocumentsRead'] }
+  } };
+  const person = await request(url, `${path}/users`, { method: 'POST', ...admin, data: createUser });
+  assert.equal(person.status, 201);
+  const loggedIn = await request(url, `${path}/login`, { method: 'POST', data: credentials });
+  const member = { cookie: loggedIn.cookie, csrf: loggedIn.body.csrfToken };
+  assert.equal(loggedIn.body.permissions.tecnologia, 'edit');
+  assert.deepEqual(loggedIn.body.capabilities.tecnologia, {
+    workItemRead: true, workItemCreate: true, workItemUpdate: false
+  });
+
+  const requestItem = (access, item) => request(url, `${path}/work-items`, { method: 'POST', ...access, data: item });
+  const company = await request(url, `${path}/companies`, { method: 'POST', ...admin, data: { cnpj: CNPJ_A, name: 'Empresa A' } });
+  assert.equal(company.status, 201);
+  const otherItem = await requestItem(admin, { module: 'tecnologia', companyCnpj: CNPJ_A, title: 'Demanda da empresa' });
+  assert.equal(otherItem.status, 201);
+  const internal = await requestItem(member, { module: 'tecnologia', title: 'Atualizar estações', companyCnpj: null });
+  assert.equal(internal.status, 201);
+  assert.equal(internal.body.item.companyCnpj, null);
+  assert.equal((await requestItem(member, { module: 'tecnologia', title: 'Demanda sem acesso', companyCnpj: CNPJ_A })).status, 403);
+  const memberItems = await request(url, `${path}/work-items?module=tecnologia`, member);
+  assert.deepEqual(memberItems.body.items.map(item => item.id), [internal.body.item.id]);
+  const itemPath = `${path}/work-items/${internal.body.item.id}`;
+  const complete = { method: 'PATCH', data: { status: 'done' } };
+  assert.equal((await request(url, itemPath, { ...complete, ...member })).status, 403);
+  assert.equal((await request(url, itemPath, { ...complete, ...admin })).status, 200);
+  assert.equal((await request(url, `${path}/fiscal/documents`, member)).status, 403);
+  assert.equal((await request(url, `${path}/dashboard`, member)).body.metrics.documents, null);
+
+  const userPath = `${path}/users/${person.body.user.id}`;
+  const edited = await request(url, userPath, { method: 'PATCH', ...admin, data: { moduleGrants: { tecnologia: { level: 'manage', blockedActions: ['workItemRead'] } } } });
+  assert.equal(edited.status, 200);
+  assert.equal((await request(url, `${path}/work-items?module=tecnologia`, member)).status, 403);
+  assert.deepEqual((await request(url, `${path}/work-items`, member)).body.items, []);
+  assert.equal((await requestItem(member, { module: 'tecnologia', title: 'Bloqueada' })).status, 403);
+  assert.equal((await request(url, itemPath, { ...complete, ...member })).status, 403);
+  const invalid = await request(url, userPath, { method: 'PATCH', ...admin, data: { moduleGrants: { tecnologia: { level: 'edit', blockedActions: ['fiscalDocumentsRead'] } } } });
+  assert.equal(invalid.status, 400);
 }));
 
 test('token do agente é exibido uma vez e documentos não expõem XML', async () => fixture(async ({ store, url }) => {

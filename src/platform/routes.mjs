@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ApiError, sha256 } from '../api/validation.mjs';
 import { hashPassword, verifyPassword, newSecret, safeEqualHex } from './auth.mjs';
-import { MODULES, LEVELS, permissionsFor, canAccess, canAccessCompany, publicUser } from './policy.mjs';
+import { MODULES, LEVELS, capabilitiesFor, permissionsFor, canAccess, canAccessCompany, canAccessWorkItemCompany, canPerform, publicUser } from './policy.mjs';
 
 const COOKIE = 'tributo_session';
 const SESSION_MS = 12 * 60 * 60_000;
@@ -78,13 +78,22 @@ function requireCsrf(req, session) {
   if (!safeEqualHex(sha256(typeof value === 'string' ? value : ''), sha256(session.csrfToken))) fail(403, 'CSRF', 'Token de proteção inválido');
 }
 function sessionView(user, session, setupRequired = false) {
-  return { user: publicUser(user), permissions: permissionsFor(user), csrfToken: session?.csrfToken ?? null, setupRequired };
+  return { user: publicUser(user), permissions: permissionsFor(user), capabilities: capabilitiesFor(user), csrfToken: session?.csrfToken ?? null, setupRequired };
 }
 function validateAccess(input) {
   check(Array.isArray(input.companyCnpjs) && input.companyCnpjs.length <= 1000 && input.companyCnpjs.every(validCnpj) && new Set(input.companyCnpjs).size === input.companyCnpjs.length, 'companyCnpjs');
   check(input.moduleGrants && typeof input.moduleGrants === 'object' && !Array.isArray(input.moduleGrants), 'moduleGrants');
-  for (const [module, level] of Object.entries(input.moduleGrants)) check(MODULES.some(x => x.id === module) && LEVELS.includes(level), `moduleGrants.${module}`);
-  return { companyCnpjs: input.companyCnpjs, moduleGrants: input.moduleGrants };
+  const entries = Object.entries(input.moduleGrants).map(([id, grant]) => {
+    const module = MODULES.find(entry => entry.id === id);
+    const name = `moduleGrants.${id}`;
+    check(module, name);
+    if (LEVELS.includes(grant)) return [id, grant];
+    check(grant && typeof grant === 'object' && !Array.isArray(grant) && LEVELS.includes(grant.level), name);
+    const blocked = grant.blockedActions;
+    check(Array.isArray(blocked) && blocked.length <= module.actions.length && blocked.every(action => module.actions.includes(action)) && new Set(blocked).size === blocked.length, `${name}.blockedActions`);
+    return [id, blocked.length ? { level: grant.level, blockedActions: blocked } : grant.level];
+  });
+  return { companyCnpjs: input.companyCnpjs, moduleGrants: Object.fromEntries(entries) };
 }
 function publicWorkItem(item) {
   return { id: item._id, module: item.module, companyCnpj: item.companyCnpj, title: item.title, description: item.description || '', status: item.status, dueAt: item.dueAt || null, assigneeId: item.assigneeId || null, createdBy: item.createdBy, createdAt: item.createdAt, updatedAt: item.updatedAt };
@@ -177,7 +186,7 @@ export function createPlatformRouter({ store, bootstrapTokenSha256, secureCookie
       const nfsePath = /^\/companies\/(\d{14})\/nfse(?:\/(summary|coverage))?$/.exec(route);
       if (req.method === 'GET' && nfsePath) {
         const companyCnpj = cnpj(nfsePath[1]);
-        if (!canAccess(user, 'fiscal') || !canAccessCompany(user, companyCnpj)) fail(403, 'FORBIDDEN', 'Sem acesso ao Fiscal desta empresa');
+        if (!canPerform(user, 'fiscal', 'fiscalDocumentsRead') || !canAccessCompany(user, companyCnpj)) fail(403, 'FORBIDDEN', 'Sem acesso ao Fiscal desta empresa');
         if (!await store.companyExists(companyCnpj)) fail(404, 'NOT_FOUND', 'Empresa não encontrada');
         const query = new URL(req.url, 'http://localhost').searchParams;
         if (nfsePath[2] === 'coverage') return send(res, 200, await store.getCompanyNfseCoverage(companyCnpj));
@@ -197,7 +206,7 @@ export function createPlatformRouter({ store, bootstrapTokenSha256, secureCookie
         return send(res, 200, await store.listCompanyNfse(companyCnpj, { month: requestedMonth, role, status, page, limit }));
       }
       if (req.method === 'GET' && route === '/fiscal/documents') {
-        if (!canAccess(user, 'fiscal')) fail(403, 'FORBIDDEN', 'Sem acesso ao Fiscal');
+        if (!canPerform(user, 'fiscal', 'fiscalDocumentsRead')) fail(403, 'FORBIDDEN', 'Sem acesso aos documentos fiscais');
         const query = new URL(req.url, 'http://localhost').searchParams;
         const companyCnpj = query.get('companyCnpj');
         if (companyCnpj && !canAccessCompany(user, companyCnpj)) fail(403, 'FORBIDDEN', 'Sem acesso à empresa');
@@ -289,22 +298,23 @@ export function createPlatformRouter({ store, bootstrapTokenSha256, secureCookie
         const url = new URL(req.url, 'http://localhost');
         const module = url.searchParams.get('module');
         const companyCnpj = url.searchParams.get('companyCnpj');
-        if (module && !canAccess(user, module)) fail(403, 'FORBIDDEN', 'Sem acesso ao módulo');
+        if (module && !canPerform(user, module, 'workItemRead')) fail(403, 'FORBIDDEN', 'Sem acesso às tarefas do módulo');
         if (companyCnpj && !canAccessCompany(user, companyCnpj)) fail(403, 'FORBIDDEN', 'Sem acesso à empresa');
-        const modules = MODULES.filter(x => canAccess(user, x.id)).map(x => x.id);
+        const modules = MODULES.filter(x => canPerform(user, x.id, 'workItemRead')).map(x => x.id);
         const items = await store.listWorkItems({ modules, companyCnpjs: user.role === 'admin' ? null : user.companyCnpjs, module, companyCnpj });
         return send(res, 200, { items: items.map(publicWorkItem) });
       }
       if (req.method === 'POST' && route === '/work-items') {
         const input = await body(req);
         check(MODULES.some(x => x.id === input.module), 'module');
-        if (!canAccess(user, input.module, 'edit') || !canAccessCompany(user, input.companyCnpj)) fail(403, 'FORBIDDEN', 'Sem permissão para esta empresa e módulo');
-        if (!await store.companyExists(input.companyCnpj)) fail(400, 'UNKNOWN_COMPANY', 'Empresa não cadastrada');
+        const companyCnpj = input.module === 'tecnologia' && (input.companyCnpj == null || input.companyCnpj === '') ? null : cnpj(input.companyCnpj);
+        if (!canPerform(user, input.module, 'workItemCreate') || !canAccessWorkItemCompany(user, input.module, companyCnpj)) fail(403, 'FORBIDDEN', 'Sem permissão para criar tarefas nesta empresa e módulo');
+        if (companyCnpj && !await store.companyExists(companyCnpj)) fail(400, 'UNKNOWN_COMPANY', 'Empresa não cadastrada');
         const now = new Date();
-        const item = { _id: randomUUID(), module: input.module, companyCnpj: input.companyCnpj, title: field(input.title, 'title', 3, 200), description: input.description === undefined ? '' : field(input.description, 'description', 0, 2000), status: 'open', dueAt: input.dueAt === undefined ? null : dueAt(input.dueAt), assigneeId: input.assigneeId || null, createdBy: user._id, createdAt: now, updatedAt: now };
+        const item = { _id: randomUUID(), module: input.module, companyCnpj, title: field(input.title, 'title', 3, 200), description: input.description === undefined ? '' : field(input.description, 'description', 0, 2000), status: 'open', dueAt: input.dueAt === undefined ? null : dueAt(input.dueAt), assigneeId: input.assigneeId || null, createdBy: user._id, createdAt: now, updatedAt: now };
         if (item.assigneeId) {
           const assignee = await store.findUserById(item.assigneeId);
-          if (!assignee?.active || !canAccess(assignee, item.module) || !canAccessCompany(assignee, item.companyCnpj)) fail(400, 'UNKNOWN_ASSIGNEE', 'Responsável sem acesso à empresa e módulo');
+          if (!canPerform(assignee, item.module, 'workItemRead') || !canAccessWorkItemCompany(assignee, item.module, item.companyCnpj)) fail(400, 'UNKNOWN_ASSIGNEE', 'Responsável sem acesso à empresa e módulo');
         }
         await store.createWorkItem(item);
         await store.audit('work_item.create', user._id, item._id, { companyCnpj: item.companyCnpj, module: item.module });
@@ -314,7 +324,7 @@ export function createPlatformRouter({ store, bootstrapTokenSha256, secureCookie
       if (req.method === 'PATCH' && itemMatch) {
         const item = await store.getWorkItem(itemMatch[1]);
         if (!item) fail(404, 'NOT_FOUND', 'Tarefa não encontrada');
-        if (!canAccess(user, item.module, 'edit') || !canAccessCompany(user, item.companyCnpj)) fail(403, 'FORBIDDEN', 'Sem permissão para esta empresa e módulo');
+        if (!canPerform(user, item.module, 'workItemUpdate') || !canAccessWorkItemCompany(user, item.module, item.companyCnpj)) fail(403, 'FORBIDDEN', 'Sem permissão para editar tarefas nesta empresa e módulo');
         const input = await body(req);
         const changes = {};
         if (input.title !== undefined) changes.title = field(input.title, 'title', 3, 200);
@@ -324,7 +334,7 @@ export function createPlatformRouter({ store, bootstrapTokenSha256, secureCookie
         if (input.assigneeId !== undefined) {
           if (input.assigneeId !== null) {
             const assignee = await store.findUserById(input.assigneeId);
-            if (!assignee?.active || !canAccess(assignee, item.module) || !canAccessCompany(assignee, item.companyCnpj)) fail(400, 'UNKNOWN_ASSIGNEE', 'Responsável sem acesso à empresa e módulo');
+            if (!canPerform(assignee, item.module, 'workItemRead') || !canAccessWorkItemCompany(assignee, item.module, item.companyCnpj)) fail(400, 'UNKNOWN_ASSIGNEE', 'Responsável sem acesso à empresa e módulo');
           }
           changes.assigneeId = input.assigneeId;
         }

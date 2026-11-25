@@ -2,10 +2,16 @@ import { readFile } from 'node:fs/promises';
 
 const ALLOWED = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
+  ['/home', ['index.html', 'text/html; charset=utf-8']],
   ['/painel', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
-  ['/app.js', ['app.js', 'text/javascript; charset=utf-8']]
+  ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/maximum-logo.png', ['maximum-logo.png', 'image/png']],
+  ['/maximum-carreiras.webp', ['maximum-carreiras.webp', 'image/webp']],
+  ['/poppins-regular.woff2', ['poppins-regular.woff2', 'font/woff2']],
+  ['/poppins-semibold.woff2', ['poppins-semibold.woff2', 'font/woff2']],
+  ['/poppins-bold.woff2', ['poppins-bold.woff2', 'font/woff2']]
 ]);
 
 export async function serveStatic(req, res, pathname) {

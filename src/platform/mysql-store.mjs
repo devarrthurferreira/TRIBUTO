@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { permissionsFor } from './policy.mjs';
+import { MODULES, canPerform } from './policy.mjs';
 
 // All dates are UTC. Configure the mysql2 pool with timezone: 'Z'.
 const json = (value) => JSON.stringify(value);
@@ -36,7 +36,7 @@ function agent(row) {
 function workItem(row) {
   if (!row) return null;
   return {
-    _id: row.id, module: row.module, companyCnpj: row.company_cnpj,
+    _id: row.id, module: row.module, companyCnpj: row.company_cnpj || null,
     title: row.title, description: row.description, status: row.status,
     dueAt: row.due_at, assigneeId: row.assignee_id, createdBy: row.created_by,
     createdAt: sqlDate(row.created_at), updatedAt: sqlDate(row.updated_at)
@@ -48,6 +48,14 @@ function scope(column, allowed, parameters) {
   if (!allowed.length) return '1=0';
   parameters.push(...allowed);
   return `${column} IN (${allowed.map(() => '?').join(',')})`;
+}
+
+function workItemCompanyScope(allowed, modules, parameters) {
+  const companies = scope('company_cnpj', allowed, parameters);
+  // An empty company key is an internal Technology task in existing databases.
+  return allowed !== null && modules.includes('tecnologia')
+    ? `(${companies} OR (module = 'tecnologia' AND company_cnpj = ''))`
+    : companies;
 }
 
 const TABLES = [
@@ -236,14 +244,14 @@ export class PlatformMySqlStore {
     if (companyCnpj) {
       clauses.push('company_cnpj = ?'); params.push(companyCnpj);
       if (companyCnpjs !== null && !companyCnpjs.includes(companyCnpj)) return [];
-    } else clauses.push(scope('company_cnpj', companyCnpjs, params));
+    } else clauses.push(workItemCompanyScope(companyCnpjs, modules, params));
     return (await this.rows(`SELECT * FROM platform_work_items WHERE ${clauses.join(' AND ')} ORDER BY updated_at DESC LIMIT 500`, params)).map(workItem);
   }
   async getWorkItem(id) { return workItem(await this.one('SELECT * FROM platform_work_items WHERE id = ?', [id])); }
   async createWorkItem(item) {
     await this.pool.execute(`INSERT INTO platform_work_items (id, module, company_cnpj, title, description, status,
       due_at, assignee_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [item._id, item.module, item.companyCnpj, item.title, item.description, item.status, item.dueAt,
+    [item._id, item.module, item.companyCnpj ?? '', item.title, item.description, item.status, item.dueAt,
       item.assigneeId, item.createdBy, item.createdAt, item.updatedAt]);
   }
   async updateWorkItem(id, changes) {
@@ -256,15 +264,15 @@ export class PlatformMySqlStore {
 
   async dashboard(person) {
     const allowed = person.role === 'admin' ? null : person.companyCnpjs;
-    const modules = Object.keys(permissionsFor(person));
+    const workModules = MODULES.filter(({ id }) => canPerform(person, id, 'workItemRead')).map(({ id }) => id);
     const companyParams = [], docParams = [], workParams = [];
-    const fiscalAllowed = person.role === 'admin' || Boolean(person.moduleGrants?.fiscal);
+    const fiscalAllowed = canPerform(person, 'fiscal', 'fiscalDocumentsRead');
     const [companies, users, documents, workItemsOpen, agentsOnline] = await Promise.all([
       this.count(`SELECT COUNT(*) AS n FROM platform_companies WHERE ${scope('cnpj', allowed, companyParams)}`, companyParams),
       person.role === 'admin' ? this.count('SELECT COUNT(*) AS n FROM platform_users WHERE active = 1') : null,
       fiscalAllowed ? this.count(`SELECT COUNT(*) AS n FROM documents WHERE ${scope('company_cnpj', allowed, docParams)}
         AND issued_at IS NOT NULL`, docParams) : null,
-      this.count(`SELECT COUNT(*) AS n FROM platform_work_items WHERE ${scope('module', modules, workParams)} AND status <> 'done' AND ${scope('company_cnpj', allowed, workParams)}`, workParams),
+      this.count(`SELECT COUNT(*) AS n FROM platform_work_items WHERE ${scope('module', workModules, workParams)} AND status <> 'done' AND ${workItemCompanyScope(allowed, workModules, workParams)}`, workParams),
       person.role === 'admin' ? this.count(`SELECT COUNT(*) AS n FROM platform_agents a JOIN agents_health h ON a.id = h.agent_id
         WHERE a.active = 1 AND h.server_time >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 10 MINUTE)`) : null
     ]);

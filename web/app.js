@@ -1,20 +1,34 @@
 const API = '/v1/platform';
-const DASHBOARD_PATH = '/painel';
+const DASHBOARD_PATH = '/home';
+const LEGACY_DASHBOARD_PATH = '/painel';
 const $ = (id) => document.getElementById(id);
 
 const modules = [
-  { id: 'fiscal', label: 'Fiscal', icon: '▤', tone: 'blue', description: 'Notas, eventos e acompanhamento fiscal.' },
-  { id: 'dp', label: 'Departamento Pessoal', icon: '◫', tone: 'teal', description: 'Rotinas, prazos e indicadores do time.' },
+  { id: 'dp', label: 'Departamento Pessoal', icon: '◫', tone: 'teal', description: 'Rotinas trabalhistas, documentos e prazos.' },
+  { id: 'rh', label: 'Recursos Humanos', icon: '♙', tone: 'violet', description: 'Processos de pessoas e organização da equipe.' },
+  { id: 'tecnologia', label: 'Tecnologia', icon: '⌘', tone: 'blue', description: 'Atividades internas, prazos e andamento do setor.' },
+  { id: 'marketing', label: 'Marketing', icon: '◉', tone: 'amber', description: 'Campanhas, materiais e comunicação da Maximum.' },
+  { id: 'societario', label: 'Societário', icon: '⬡', tone: 'teal', description: 'Processos e histórico das empresas.' },
   { id: 'contabil', label: 'Contábil', icon: '◈', tone: 'violet', description: 'Documentos e fechamento por competência.' },
-  { id: 'societario', label: 'Societário', icon: '⬡', tone: 'amber', description: 'Processos e histórico das empresas.' },
-  { id: 'financeiro', label: 'Financeiro', icon: '◉', tone: 'teal', description: 'Visão financeira com acesso reservado.' },
-  { id: 'gestao', label: 'Gestão', icon: '▧', tone: 'blue', description: 'Acompanhamento consolidado da operação.' },
+  { id: 'fiscal', label: 'Fiscal', icon: '▤', tone: 'blue', description: 'Notas, eventos e acompanhamento fiscal.' },
+  { id: 'diretoria', label: 'Diretoria', icon: '▧', tone: 'amber', description: 'Acompanhamento dos setores e da operação.' },
 ];
+const legacyModules = [
+  { id: 'financeiro', label: 'Financeiro' },
+  { id: 'gestao', label: 'Gestão' },
+];
+const allModules = [...modules, ...legacyModules];
 const viewLabels = {
-  overview: 'Início', fiscal: 'Fiscal', dp: 'Departamento Pessoal', contabil: 'Contábil',
-  societario: 'Societário', financeiro: 'Financeiro', gestao: 'Gestão',
+  overview: 'Início', ...Object.fromEntries(allModules.map(({ id, label }) => [id, label])),
   companies: 'Empresas', 'company-detail': 'Ficha da empresa', users: 'Equipe e acessos', agents: 'Agentes de coleta',
 };
+const actionLabels = {
+  workItemRead: 'Consultar atividades',
+  workItemCreate: 'Criar atividades',
+  workItemUpdate: 'Alterar atividades',
+  fiscalDocumentsRead: 'Consultar documentos fiscais',
+};
+const taskStatusLabels = { open: 'Aberta', in_progress: 'Em andamento', done: 'Concluída' };
 const state = { session: null, view: 'overview', companies: [], users: [], agents: [], modules: [], selectedCompanyCnpj: null, nfsePage: 1, nfseHasMore: false, nfseRequest: 0 };
 
 function node(tag, className, value) {
@@ -83,8 +97,10 @@ function grantFor(module) {
   if (isAdmin()) return 'manage';
   return state.session?.permissions?.[module] || null;
 }
-function canEdit(module) { return ['edit', 'manage'].includes(grantFor(module)); }
 function canView(module) { return !!grantFor(module); }
+function canUse(module, action) {
+  return state.session?.capabilities?.[module]?.[action] === true;
+}
 function firstName(name) { return String(name || 'equipe').trim().split(/\s+/)[0]; }
 function initials(name) {
   return String(name || 'MC').trim().split(/\s+/).slice(0, 2).map((part) => part[0] || '').join('').toUpperCase();
@@ -131,7 +147,7 @@ function companyName(cnpj) { return state.companies.find((company) => company.cn
 function showAuth(setupRequired, message = '', preserveRoute = false) {
   state.session = null;
   state.selectedCompanyCnpj = null;
-  if (location.pathname === DASHBOARD_PATH || !preserveRoute && location.hash) {
+  if ([DASHBOARD_PATH, LEGACY_DASHBOARD_PATH].includes(location.pathname) || (!preserveRoute && location.hash)) {
     history.replaceState(null, '', `/${preserveRoute ? location.hash : ''}`);
   }
   $('appView').hidden = true;
@@ -144,7 +160,7 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   $('confirmPassword').required = setupRequired;
   $('authPassword').autocomplete = setupRequired ? 'new-password' : 'current-password';
   $('authPassword').minLength = setupRequired ? 10 : 0;
-  $('authTitle').textContent = setupRequired ? 'Configure o primeiro acesso' : 'Entrar no TRIBUTO';
+  $('authTitle').textContent = setupRequired ? 'Configure o primeiro acesso' : 'Entrar na Central Maximum';
   $('authDescription').textContent = setupRequired
     ? 'Crie a conta administradora usando o código definido na hospedagem.'
     : 'Use seu acesso da equipe para continuar.';
@@ -168,15 +184,29 @@ function applySession(session) {
   $('todayLabel').textContent = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Sao_Paulo' }).format(new Date());
   for (const button of document.querySelectorAll('.nav-link')) {
     const view = button.dataset.view;
-    button.hidden = modules.some((module) => module.id === view) ? !canView(view) : (['users', 'agents'].includes(view) && !isAdmin());
+    if (legacyModules.some((module) => module.id === view)) {
+      button.hidden = !session.user.moduleGrants?.[view] || !canView(view);
+    } else {
+      button.hidden = modules.some((module) => module.id === view) ? !canView(view) : (['users', 'agents'].includes(view) && !isAdmin());
+    }
   }
+  const canReadFiscalDocuments = canUse('fiscal', 'fiscalDocumentsRead');
+  const canReadWorkItems = allModules.some(({ id }) => canUse(id, 'workItemRead'));
+  $('moduleNavigationLabel').hidden = !modules.some(({ id }) => canView(id));
   $('newCompanyButton').hidden = !isAdmin();
   $('newUserButton').hidden = !isAdmin();
   $('newAgentButton').hidden = !isAdmin();
   $('storageOverview').hidden = !isAdmin();
-  const agentLink = document.querySelector('[data-go="agents"]');
-  if (agentLink) agentLink.hidden = !isAdmin();
-  if (!isAdmin()) appendEmpty($('overviewAgentHealth'), 'Acesso reservado', 'O monitoramento do servidor fica disponível aos administradores.', '⌁');
+  $('homeAgentHealthCard').hidden = !isAdmin();
+  $('dashboardAgentMetric').hidden = !isAdmin();
+  $('dashboardFiscalMetric').hidden = !canReadFiscalDocuments;
+  $('dashboardWorkMetric').hidden = !canReadWorkItems;
+  $('homeAlerts').hidden = !canReadWorkItems;
+  $('fiscalDocumentTools').hidden = !canReadFiscalDocuments;
+  $('technologyOverview').hidden = !canUse('tecnologia', 'workItemRead');
+  $('technologyRestricted').hidden = canUse('tecnologia', 'workItemRead');
+  $('technologyAdminActions').hidden = !isAdmin();
+  document.querySelector('[data-go="tecnologia"]').hidden = !canView('tecnologia');
   renderModuleCards();
   void initialLoad();
   navigate(location.hash.slice(1) || 'overview');
@@ -213,12 +243,14 @@ async function logout() {
   state.companies = [];
   state.users = [];
   state.agents = [];
+  state.modules = [];
+  for (const section of document.querySelectorAll('.work-section')) section.remove();
   showAuth(false);
 }
 
 function navigate(view) {
   const companyRoute = /^company-(\d{14})$/.exec(view);
-  const detail = !!companyRoute && canView('fiscal');
+  const detail = !!companyRoute && canUse('fiscal', 'fiscalDocumentsRead');
   const valid = detail || (Object.hasOwn(viewLabels, view) && (view === 'overview' || view === 'companies' || (['users', 'agents'].includes(view) ? isAdmin() : canView(view))));
   state.view = detail ? 'company-detail' : valid ? view : 'overview';
   if (detail) {
@@ -241,15 +273,16 @@ function navigate(view) {
   }
   $('breadcrumbCurrent').textContent = state.view === 'company-detail' ? companyName(state.selectedCompanyCnpj) : viewLabels[state.view];
   const route = state.view === 'company-detail' ? `company-${state.selectedCompanyCnpj}` : state.view;
-  if (location.hash.slice(1) !== route) history.replaceState(null, '', `#${route}`);
+  const hash = route === 'overview' ? '' : `#${route}`;
+  if (location.hash !== hash) history.replaceState(null, '', `${DASHBOARD_PATH}${hash}`);
   closeMenu();
   $('conteudo').focus({ preventScroll: true });
   if (state.view === 'users') void loadUsers().catch(displayError);
   if (state.view === 'agents') void loadAgents().catch(displayError);
   if (state.view === 'companies') void loadCompanies().catch(displayError);
-  if (state.view === 'fiscal') void loadFiscalDocuments().catch(displayError);
+  if (state.view === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead')) void loadFiscalDocuments().catch(displayError);
   if (state.view === 'company-detail') void loadCompanyDetail().catch(displayError);
-  if (modules.some((module) => module.id === state.view)) void loadWorkItems(state.view).catch(displayError);
+  if (canUse(state.view, 'workItemRead')) void loadWorkItems(state.view).catch(displayError);
 }
 function openMenu() { $('sidebar').classList.add('open'); $('menuBackdrop').hidden = false; $('openMenu').setAttribute('aria-expanded', 'true'); }
 function closeMenu() { $('sidebar').classList.remove('open'); $('menuBackdrop').hidden = true; $('openMenu').setAttribute('aria-expanded', 'false'); }
@@ -269,7 +302,7 @@ function renderModuleCards() {
     const description = node('p', '', module.description);
     const bottom = node('div', 'module-card-bottom');
     const backendModule = state.modules.find((item) => item.id === module.id);
-    bottom.append(node('span', '', backendModule?.available ? 'Acesso disponível' : 'Rotinas em preparação'), node('span', 'arrow', '↗'));
+    bottom.append(node('span', '', backendModule?.available === false ? 'Em preparação' : 'Abrir módulo'), node('span', 'arrow', '↗'));
     const button = node('button', 'module-open-button', `Abrir ${module.label}`);
     button.type = 'button';
     button.addEventListener('click', () => navigate(module.id));
@@ -286,6 +319,13 @@ async function loadDashboard() {
   $('statDocuments').textContent = Number.isFinite(metrics.documents) ? String(metrics.documents) : '—';
   $('statRequests').textContent = Number.isFinite(metrics.workItemsOpen) ? String(metrics.workItemsOpen) : '—';
   $('statAgents').textContent = Number.isFinite(metrics.agentsOnline) ? String(metrics.agentsOnline) : '—';
+  const openItems = Number.isFinite(metrics.workItemsOpen) ? metrics.workItemsOpen : null;
+  if (openItems !== null) {
+    $('homeWorkAlerts').textContent = openItems === 0 ? 'Sem atividades abertas' : `${openItems} ${openItems === 1 ? 'atividade aberta' : 'atividades abertas'}`;
+    $('homeWorkAlertDescription').textContent = 'Total dos módulos que você pode consultar.';
+  } else {
+    $('homeWorkAlerts').textContent = 'Atividades indisponíveis';
+  }
   $('dashboardFreshness').textContent = 'Atualizado agora';
 }
 async function loadStorage() {
@@ -302,7 +342,7 @@ function fillCompanySelect(select, allOption) {
   const old = select.value;
   select.replaceChildren();
   if (allOption) select.append(new Option('Todas as empresas', ''));
-  else select.append(new Option('Selecione a empresa', ''));
+  else select.append(new Option(select === $('workItemCompany') && $('workItemForm').dataset.module === 'tecnologia' ? 'Atividade interna' : 'Selecione a empresa', ''));
   for (const company of state.companies) select.append(new Option(`${company.name} · ${cnpjLabel(company.cnpj)}`, company.cnpj));
   if (old && state.companies.some((company) => company.cnpj === old)) select.value = old;
 }
@@ -377,7 +417,7 @@ function renderCompanies() {
     const aside = node('span', 'status-pill ' + (company.active === false ? 'status-warning' : 'status-ok'), company.active === false ? 'Inativa' : 'Ativa');
     const actions = node('div', 'company-row-actions');
     actions.append(aside);
-    if (canView('fiscal')) {
+    if (canUse('fiscal', 'fiscalDocumentsRead')) {
       const open = node('button', 'button button-quiet company-open', 'Abrir empresa ↗');
       open.type = 'button';
       open.addEventListener('click', () => navigate(`company-${company.cnpj}`));
@@ -436,7 +476,7 @@ async function loadUsers() {
     main.append(avatar, info);
     const side = node('div', 'row-aside');
     side.append(node('strong', '', user.role === 'admin' ? 'Administrador' : 'Membro'));
-    const grants = Object.entries(user.moduleGrants || {}).filter(([, value]) => value).map(([key]) => modules.find((module) => module.id === key)?.label || key);
+    const grants = Object.entries(user.moduleGrants || {}).filter(([, value]) => value).map(([key]) => allModules.find((module) => module.id === key)?.label || key);
     side.append(node('small', '', `${grants.length} módulos · ${user.companyCnpjs?.length || 0} empresas`));
     const edit = node('button', 'text-button', 'Editar acesso');
     edit.type = 'button';
@@ -445,6 +485,54 @@ async function loadUsers() {
     row.append(main, side);
     target.append(row);
   }
+}
+function renderUserGrants(user) {
+  const target = $('userGrantOptions');
+  target.replaceChildren();
+  const editable = [...modules, ...legacyModules.filter(({ id }) => user?.moduleGrants?.[id])];
+  for (const { id, label } of editable) {
+    const currentGrant = user?.moduleGrants?.[id];
+    const row = node('div', 'grant-module');
+    row.dataset.module = id;
+    const permissionLabel = node('label', 'grant-level', label);
+    const level = node('select');
+    level.name = `grant-${id}`;
+    level.append(new Option('Sem acesso', ''), new Option('Visualizar', 'view'), new Option('Editar', 'edit'), new Option('Gerenciar', 'manage'));
+    level.value = typeof currentGrant === 'string' ? currentGrant : currentGrant?.level || '';
+    permissionLabel.append(level);
+    const actions = node('div', 'grant-actions');
+    actions.setAttribute('role', 'group');
+    actions.setAttribute('aria-label', `Ações de ${label}`);
+    for (const [action, actionLabel] of Object.entries(actionLabels)) {
+      if (action === 'fiscalDocumentsRead' && id !== 'fiscal') continue;
+      const input = node('input');
+      input.type = 'checkbox';
+      input.value = action;
+      input.checked = !currentGrant?.blockedActions?.includes(action);
+      const entry = node('label', 'grant-action');
+      entry.append(input, node('span', '', actionLabel));
+      actions.append(entry);
+    }
+    const updateActions = () => {
+      const workReadAllowed = actions.querySelector('input[value="workItemRead"]').checked;
+      actions.hidden = !level.value;
+      for (const action of actions.querySelectorAll('input')) {
+        const isWriteAction = ['workItemCreate', 'workItemUpdate'].includes(action.value);
+        action.disabled = isWriteAction && (level.value === 'view' || !workReadAllowed);
+      }
+    };
+    level.addEventListener('change', updateActions);
+    actions.addEventListener('change', updateActions);
+    updateActions();
+    row.append(permissionLabel, actions);
+    target.append(row);
+  }
+}
+function updateGrantEditorRole() {
+  const fullAccess = $('userRole').value === 'admin';
+  $('userFullAccessNote').hidden = !fullAccess;
+  $('userModuleGrants').hidden = fullAccess;
+  $('userCompanyGrants').hidden = fullAccess;
 }
 function openUserDialog(user = null) {
   const form = $('userForm');
@@ -463,9 +551,10 @@ function openUserDialog(user = null) {
     $('userName').value = user.name || '';
     $('userEmail').value = user.email || '';
     $('userRole').value = user.role === 'admin' ? 'admin' : 'member';
-    for (const module of modules) form.elements[`grant-${module.id}`].value = user.moduleGrants?.[module.id] || '';
     for (const input of form.querySelectorAll('input[name="companyCnpjs"]')) input.checked = user.companyCnpjs?.includes(input.value) || false;
   }
+  renderUserGrants(user);
+  updateGrantEditorRole();
   $('userDialog').showModal();
 }
 async function createUser(event) {
@@ -473,9 +562,11 @@ async function createUser(event) {
   formError('userError', '');
   const form = event.currentTarget;
   const grants = {};
-  for (const module of modules) {
-    const value = form.elements[`grant-${module.id}`]?.value;
-    if (value) grants[module.id] = value;
+  for (const row of form.querySelectorAll('.grant-module')) {
+    const level = row.querySelector('select').value;
+    if (!level) continue;
+    const blockedActions = [...row.querySelectorAll('.grant-actions input:not(:checked)')].map((input) => input.value);
+    grants[row.dataset.module] = blockedActions.length ? { level, blockedActions } : level;
   }
   const companyCnpjs = [...form.querySelectorAll('input[name="companyCnpjs"]:checked')].map((input) => input.value);
   const button = event.submitter || form.querySelector('[type="submit"]');
@@ -585,6 +676,20 @@ async function changePassword(event) {
   } catch (error) { formError('passwordError', error.message); }
   finally { withBusy(button, false); }
 }
+function openWorkItemDialog(module) {
+  const form = $('workItemForm');
+  const technology = module === 'tecnologia';
+  form.reset();
+  form.dataset.module = module;
+  formError('workItemError', '');
+  $('workItemCompany').required = !technology;
+  $('workItemCompanyLabel').textContent = technology ? 'Empresa (opcional)' : 'Empresa';
+  $('workItemDialogDescription').textContent = technology
+    ? 'Registre uma atividade interna de Tecnologia ou associe a uma empresa.'
+    : 'Registre uma atividade de acompanhamento para a empresa e o módulo.';
+  fillCompanySelect($('workItemCompany'), false);
+  $('workItemDialog').showModal();
+}
 function ensureWorkSection(module) {
   const parent = $(`view-${module}`);
   let section = parent.querySelector('.work-section');
@@ -593,58 +698,89 @@ function ensureWorkSection(module) {
   section.dataset.module = module;
   const header = node('div', 'work-toolbar');
   const title = node('div');
-  title.append(node('p', 'eyebrow', 'ATIVIDADES'), node('h3', '', 'Acompanhamento da carteira'));
+  title.append(node('h2', '', module === 'tecnologia' ? 'Atividades do setor' : 'Acompanhamento da carteira'));
   const controls = node('div', 'work-filter');
   const filter = node('select', 'work-company-filter');
   filter.setAttribute('aria-label', 'Filtrar atividades por empresa');
   filter.addEventListener('change', () => void loadWorkItems(module).catch(displayError));
   fillCompanySelect(filter, true);
   controls.append(filter);
-  if (canEdit(module)) {
+  if (module === 'tecnologia') {
+    const status = node('select', 'work-status-filter');
+    status.setAttribute('aria-label', 'Filtrar atividades por situação');
+    status.append(new Option('Todas as situações', ''), ...Object.entries(taskStatusLabels).map(([value, label]) => new Option(label, value)));
+    status.addEventListener('change', () => void loadWorkItems(module).catch(displayError));
+    controls.append(status);
+  }
+  if (canUse(module, 'workItemCreate')) {
     const add = node('button', 'button button-primary', '+ Nova atividade');
     add.type = 'button';
-    add.addEventListener('click', () => { $('workItemForm').dataset.module = module; $('workItemDialog').showModal(); });
+    add.addEventListener('click', () => openWorkItemDialog(module));
     controls.append(add);
   }
   header.append(title, controls);
   const list = node('div', 'list-content work-items-list');
+  list.setAttribute('aria-live', 'polite');
   section.append(header, list);
   parent.append(section);
   return section;
 }
 async function loadWorkItems(module) {
   const section = ensureWorkSection(module);
+  const requestId = Number(section.dataset.requestId || 0) + 1;
+  section.dataset.requestId = requestId;
   const filter = section.querySelector('.work-company-filter').value;
   const qs = new URLSearchParams({ module });
   if (filter) qs.set('companyCnpj', filter);
   const data = await request(`/work-items?${qs.toString()}`);
+  if (!canUse(module, 'workItemRead') || !section.isConnected || Number(section.dataset.requestId) !== requestId) return;
   const target = section.querySelector('.work-items-list');
   target.replaceChildren();
   const items = Array.isArray(data.items) ? data.items : [];
-  if (!items.length) return appendEmpty(target, 'Nenhuma atividade registrada', 'Crie uma atividade para acompanhar esta carteira e este módulo.', '◷');
-  for (const item of items) {
+  const statusFilter = section.querySelector('.work-status-filter')?.value;
+  const visibleItems = statusFilter ? items.filter(({ status }) => status === statusFilter) : items;
+  if (module === 'tecnologia') {
+    for (const [status, id] of Object.entries({ open: 'technologyOpen', in_progress: 'technologyInProgress', done: 'technologyDone' })) {
+      $(id).textContent = items.filter((item) => item.status === status).length;
+    }
+  }
+  if (!visibleItems.length) {
+    const description = filter || statusFilter ? 'Nenhuma atividade corresponde aos filtros aplicados.'
+      : canUse(module, 'workItemCreate') ? 'Use “Nova atividade” para registrar uma pendência.' : 'As atividades registradas pela equipe aparecerão aqui.';
+    return appendEmpty(target, 'Nenhuma atividade encontrada', description, '◷');
+  }
+  const canUpdate = canUse(module, 'workItemUpdate');
+  for (const item of visibleItems) {
     const row = node('div', 'list-row');
     const main = node('div', 'list-row-main');
     const info = node('div');
     info.append(node('strong', '', item.title));
     const meta = node('div', 'task-meta');
-    meta.append(node('span', '', companyName(item.companyCnpj)), node('span', '', item.dueAt ? `Prazo ${dateLabel(item.dueAt)}` : 'Sem prazo'));
+    meta.append(node('span', '', item.companyCnpj ? companyName(item.companyCnpj) : 'Atividade interna'), node('span', '', item.dueAt ? `Prazo ${dateLabel(item.dueAt)}` : 'Sem prazo'));
     info.append(meta);
+    if (item.description) info.append(node('p', 'task-description', item.description));
     main.append(node('span', 'row-avatar', '◷'), info);
-    const label = { open: 'Aberta', in_progress: 'Em andamento', done: 'Concluída' };
-    const status = node('button', `task-status ${item.status || 'open'}`, label[item.status] || 'Aberta');
-    status.type = 'button';
-    status.disabled = !canEdit(module);
-    if (canEdit(module)) {
-      status.title = 'Clique para avançar o status';
-      status.addEventListener('click', async () => {
-        const next = item.status === 'open' ? 'in_progress' : item.status === 'in_progress' ? 'done' : 'open';
+    const label = taskStatusLabels[item.status] || 'Aberta';
+    if (canUpdate) {
+      const status = node('select', `task-status ${item.status || 'open'}`);
+      status.setAttribute('aria-label', `Situação de ${item.title}`);
+      status.append(...Object.entries(taskStatusLabels).map(([value, text]) => new Option(text, value)));
+      status.value = item.status || 'open';
+      status.addEventListener('change', async () => {
         status.disabled = true;
-        try { await request(`/work-items/${encodeURIComponent(item.id)}`, { method: 'PATCH', body: { status: next } }); await loadWorkItems(module); }
-        catch (error) { displayError(error); status.disabled = false; }
+        try {
+          await request(`/work-items/${encodeURIComponent(item.id)}`, { method: 'PATCH', body: { status: status.value } });
+          await Promise.all([loadWorkItems(module), loadDashboard()]);
+        } catch (error) {
+          status.value = item.status || 'open';
+          status.disabled = false;
+          displayError(error);
+        }
       });
+      row.append(main, status);
+    } else {
+      row.append(main, node('span', `task-status ${item.status || 'open'}`, label));
     }
-    row.append(main, status);
     target.append(row);
   }
 }
@@ -655,15 +791,15 @@ async function createWorkItem(event) {
   const button = event.submitter || $('workItemForm').querySelector('[type="submit"]');
   withBusy(button, true);
   try {
+    const companyCnpj = $('workItemCompany').value;
     await request('/work-items', { method: 'POST', body: {
-      module, companyCnpj: $('workItemCompany').value, title: $('workItemTitle').value.trim(),
+      module, companyCnpj: companyCnpj || null, title: $('workItemTitle').value.trim(),
       description: $('workItemDescription').value.trim(),
-      ...( $('workItemDue').value ? { dueAt: $('workItemDue').value } : {} ),
+      ...($('workItemDue').value ? { dueAt: $('workItemDue').value } : {}),
     } });
     $('workItemDialog').close();
     $('workItemForm').reset();
-    await loadWorkItems(module);
-    await loadDashboard();
+    await Promise.all([loadWorkItems(module), loadDashboard()]);
     notice('Atividade registrada.');
   } catch (error) { formError('workItemError', error.message); }
   finally { withBusy(button, false); }
@@ -835,7 +971,7 @@ async function loadFiscalDocuments() {
     main.append(node('span', 'row-avatar', '▤'), info);
     const side = node('div', 'row-aside');
     side.append(node('small', '', doc.receivedAt ? dateLabel(doc.receivedAt) : 'Data indisponível'));
-    if (doc.source === 'NFSE' && canView('fiscal')) {
+    if (doc.source === 'NFSE' && canUse('fiscal', 'fiscalDocumentsRead')) {
       const open = node('button', 'text-button', 'Abrir empresa ↗');
       open.type = 'button';
       open.addEventListener('click', () => navigate(`company-${doc.companyCnpj}`));
@@ -887,6 +1023,7 @@ function setupEvents() {
   $('newAgentButton').addEventListener('click', () => $('agentDialog').showModal());
   $('companyForm').addEventListener('submit', createCompany);
   $('userForm').addEventListener('submit', createUser);
+  $('userRole').addEventListener('change', updateGrantEditorRole);
   $('agentForm').addEventListener('submit', createAgent);
   $('workItemForm').addEventListener('submit', createWorkItem);
   $('passwordForm').addEventListener('submit', changePassword);
@@ -904,7 +1041,9 @@ function setupEvents() {
   $('closeTokenDialog').addEventListener('click', clearToken);
   $('tokenDialog').addEventListener('close', () => { $('agentTokenOnce').textContent = ''; });
   for (const button of document.querySelectorAll('.close-dialog')) button.addEventListener('click', () => button.closest('dialog').close());
-  window.addEventListener('hashchange', () => { if (state.session?.user) navigate(location.hash.slice(1)); });
+  window.addEventListener('hashchange', () => {
+    if (state.session?.user && location.hash !== '#conteudo') navigate(location.hash.slice(1));
+  });
 }
 
 setupEvents();

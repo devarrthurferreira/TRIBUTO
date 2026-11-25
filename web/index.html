@@ -3,88 +3,84 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#eef3f8">
-  <meta name="description" content="TRIBUTO — espaço de trabalho consultivo da Maximum Contábil.">
-  <title>TRIBUTO | Maximum Contábil</title>
+  <meta name="theme-color" content="#790e16">
+  <meta name="description" content="Central Maximum, o ambiente de trabalho da equipe Maximum Contábil.">
+  <title>Central Maximum | Maximum Contábil</title>
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
-
   <section id="authView" class="auth-screen" aria-labelledby="authTitle">
-    <div class="auth-background" aria-hidden="true">
-      <span class="auth-orb auth-orb-one"></span>
-      <span class="auth-orb auth-orb-two"></span>
-      <span class="auth-grid"></span>
-    </div>
+    <a class="skip-link" href="#authContent">Pular para o formulário</a>
     <div class="auth-layout">
       <div class="auth-intro">
-        <div class="brand brand-light"><span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i></span><span><strong>TRIBUTO</strong><small>MAXIMUM CONTÁBIL</small></span></div>
-        <span class="eyebrow eyebrow-light">ESPAÇO DE TRABALHO</span>
-        <h1>Uma visão clara de tudo o que move sua operação.</h1>
-        <p>Fiscal, Departamento Pessoal, Contábil e gestão em um único lugar. Cada pessoa vê as empresas e os módulos que precisa acompanhar.</p>
-        <div class="auth-intro-foot"><span class="signal-dot"></span> Ambiente protegido para a equipe Maximum</div>
+        <img class="auth-logo" src="/maximum-logo.png" width="512" height="107" alt="Maximum Assessoria Contábil">
+        <div class="auth-intro-copy">
+          <span class="eyebrow eyebrow-light">AMBIENTE INTERNO</span>
+          <h1>Central Maximum</h1>
+          <p>Seus módulos, tarefas e comunicados em um só lugar.</p>
+        </div>
       </div>
-      <div class="auth-card">
-        <span class="card-accent" aria-hidden="true"></span>
-        <span class="eyebrow">ACESSO À PLATAFORMA</span>
-        <h2 id="authTitle">Entrar no TRIBUTO</h2>
-        <p id="authDescription" class="muted">Use seu acesso da equipe para continuar.</p>
-        <form id="authForm" method="post" action="/v1/platform/login" autocomplete="on">
-          <div id="setupTokenRow" class="field" hidden>
-            <label for="setupToken">Código de configuração inicial</label>
-            <input id="setupToken" name="setupToken" type="password" autocomplete="off" minlength="16" placeholder="Código definido na hospedagem">
-            <small>Solicite o código ao responsável pela instalação.</small>
-          </div>
-          <div id="setupNameRow" class="field" hidden>
-            <label for="setupName">Seu nome</label>
-            <input id="setupName" name="name" autocomplete="name" maxlength="120" placeholder="Nome do administrador">
-          </div>
-          <div class="field">
-            <label for="authEmail">E-mail</label>
-            <input id="authEmail" name="email" type="email" required autocomplete="username" placeholder="voce@maximumcontabil.com.br">
-          </div>
-          <div class="field">
-            <label for="authPassword">Senha</label>
-            <input id="authPassword" name="password" type="password" required maxlength="128" autocomplete="current-password" placeholder="Sua senha">
-          </div>
-          <div id="confirmPasswordRow" class="field" hidden>
-            <label for="confirmPassword">Confirmar senha</label>
-            <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" placeholder="Repita sua senha">
-          </div>
-          <p id="authError" class="form-message" role="alert" hidden></p>
-          <button id="authSubmit" class="button button-primary button-full" type="submit">Entrar <span aria-hidden="true">↗</span></button>
-        </form>
-        <p class="auth-note">O primeiro acesso da organização é configurado uma única vez.</p>
+      <div id="authContent" class="auth-panel" tabindex="-1">
+        <div class="auth-card">
+          <h2 id="authTitle">Entrar na Central</h2>
+          <p id="authDescription" class="muted">Use seu e-mail corporativo para continuar.</p>
+          <form id="authForm" method="post" action="/v1/platform/login" autocomplete="on">
+            <div id="setupTokenRow" class="field" hidden>
+              <label for="setupToken">Código de configuração inicial</label>
+              <input id="setupToken" name="setupToken" type="password" autocomplete="off" minlength="16" placeholder="Código definido na hospedagem">
+              <small>Solicite o código ao responsável pela instalação.</small>
+            </div>
+            <div id="setupNameRow" class="field" hidden>
+              <label for="setupName">Seu nome</label>
+              <input id="setupName" name="name" autocomplete="name" maxlength="120" placeholder="Nome do administrador">
+            </div>
+            <div class="field">
+              <label for="authEmail">E-mail</label>
+              <input id="authEmail" name="email" type="email" required autocomplete="username" placeholder="voce@maximumcontabil.com.br">
+            </div>
+            <div class="field">
+              <label for="authPassword">Senha</label>
+              <input id="authPassword" name="password" type="password" required maxlength="128" autocomplete="current-password" placeholder="Sua senha">
+            </div>
+            <div id="confirmPasswordRow" class="field" hidden>
+              <label for="confirmPassword">Confirmar senha</label>
+              <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" placeholder="Repita sua senha">
+            </div>
+            <p id="authError" class="form-message" role="alert" hidden></p>
+            <button id="authSubmit" class="button button-primary button-full" type="submit">Entrar <span aria-hidden="true">→</span></button>
+          </form>
+        </div>
       </div>
     </div>
   </section>
 
   <div id="appView" class="app-shell" hidden>
+    <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
     <aside id="sidebar" class="sidebar" aria-label="Menu principal">
       <div class="sidebar-head">
-        <div class="brand"><span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i></span><span><strong>TRIBUTO</strong><small>MAXIMUM CONTÁBIL</small></span></div>
+        <img class="sidebar-logo" src="/maximum-logo.png" width="512" height="107" alt="Maximum Assessoria Contábil">
         <button id="closeMenu" class="icon-button sidebar-close" type="button" aria-label="Fechar menu">×</button>
       </div>
-      <div class="workspace-label"><span class="workspace-avatar">M</span><span><strong>Maximum</strong><small>Espaço de trabalho</small></span><span class="workspace-chevron" aria-hidden="true">⌄</span></div>
       <nav id="navigation" class="navigation" aria-label="Seções">
-        <p class="nav-caption">VISÃO GERAL</p>
-        <button class="nav-link" data-view="overview" type="button"><span class="nav-icon" aria-hidden="true">▦</span> Início</button>
-        <p class="nav-caption">MÓDULOS</p>
-        <button class="nav-link" data-view="fiscal" type="button"><span class="nav-icon" aria-hidden="true">▤</span> Fiscal <span class="nav-indicator"></span></button>
+        <button class="nav-link" data-view="overview" type="button"><span class="nav-icon" aria-hidden="true">⌂</span> Início</button>
+        <p id="moduleNavigationLabel" class="nav-caption">MÓDULOS</p>
         <button class="nav-link" data-view="dp" type="button"><span class="nav-icon" aria-hidden="true">◫</span> Departamento Pessoal</button>
-        <button class="nav-link" data-view="contabil" type="button"><span class="nav-icon" aria-hidden="true">◈</span> Contábil</button>
+        <button class="nav-link" data-view="rh" type="button"><span class="nav-icon" aria-hidden="true">♙</span> Recursos Humanos</button>
+        <button class="nav-link" data-view="tecnologia" type="button"><span class="nav-icon" aria-hidden="true">⌘</span> Tecnologia</button>
+        <button class="nav-link" data-view="marketing" type="button"><span class="nav-icon" aria-hidden="true">◉</span> Marketing</button>
         <button class="nav-link" data-view="societario" type="button"><span class="nav-icon" aria-hidden="true">⬡</span> Societário</button>
-        <button class="nav-link" data-view="financeiro" type="button"><span class="nav-icon" aria-hidden="true">◉</span> Financeiro</button>
-        <button class="nav-link" data-view="gestao" type="button"><span class="nav-icon" aria-hidden="true">▧</span> Gestão</button>
-        <p class="nav-caption">ADMINISTRAÇÃO</p>
+        <button class="nav-link" data-view="contabil" type="button"><span class="nav-icon" aria-hidden="true">◈</span> Contábil</button>
+        <button class="nav-link" data-view="fiscal" type="button"><span class="nav-icon" aria-hidden="true">▤</span> Fiscal</button>
+        <button class="nav-link" data-view="diretoria" type="button"><span class="nav-icon" aria-hidden="true">▧</span> Diretoria</button>
+        <p class="nav-caption">ORGANIZAÇÃO</p>
         <button class="nav-link" data-view="companies" type="button"><span class="nav-icon" aria-hidden="true">▥</span> Empresas</button>
-        <button class="nav-link" data-view="users" type="button"><span class="nav-icon" aria-hidden="true">♙</span> Equipe e acessos</button>
+        <button class="nav-link" data-view="users" type="button"><span class="nav-icon" aria-hidden="true">⚙</span> Equipe e acessos</button>
         <button class="nav-link" data-view="agents" type="button"><span class="nav-icon" aria-hidden="true">⌁</span> Agentes de coleta</button>
+        <button class="nav-link" data-view="financeiro" type="button" hidden><span class="nav-icon" aria-hidden="true">◉</span> Financeiro</button>
+        <button class="nav-link" data-view="gestao" type="button" hidden><span class="nav-icon" aria-hidden="true">▧</span> Gestão</button>
       </nav>
       <div class="sidebar-bottom">
-        <div class="sidebar-help"><span class="sidebar-help-icon">?</span><div><strong>Precisa de ajuda?</strong><small>Consulte a documentação do projeto.</small></div></div>
         <button id="changePasswordButton" class="logout-button" type="button">Alterar minha senha <span aria-hidden="true">↗</span></button>
         <button id="logoutButton" class="logout-button" type="button">Sair da plataforma <span aria-hidden="true">↗</span></button>
       </div>
@@ -95,7 +91,8 @@
       <header class="topbar">
         <div class="topbar-left">
           <button id="openMenu" class="icon-button mobile-menu" type="button" aria-label="Abrir menu" aria-expanded="false">☰</button>
-          <div class="breadcrumb"><span>Espaço de trabalho</span><span aria-hidden="true">/</span><strong id="breadcrumbCurrent">Início</strong></div>
+          <img class="sidebar-logo mobile-brand" src="/maximum-logo.png" width="512" height="107" alt="Maximum Assessoria Contábil">
+          <div class="breadcrumb"><span>Central Maximum</span><span aria-hidden="true">/</span><strong id="breadcrumbCurrent">Início</strong></div>
         </div>
         <div class="topbar-right">
           <span class="topbar-date" id="todayLabel"></span>
@@ -108,42 +105,93 @@
         <div id="notice" class="notice" role="status" hidden></div>
 
         <section class="view" id="view-overview" aria-labelledby="overviewTitle">
-          <div class="welcome-banner">
-            <div class="welcome-copy">
-              <span class="eyebrow eyebrow-light">SEU ESPAÇO DE TRABALHO</span>
-              <h1 id="overviewTitle">Olá, <span id="greetingName">equipe</span><span class="period">.</span></h1>
-              <p>Acompanhe sua operação em um só lugar, com acesso às empresas e aos módulos da sua carteira.</p>
+          <div class="home-grid">
+            <div class="home-primary">
+              <div class="welcome-banner home-welcome">
+                <div class="welcome-copy">
+                  <h1 id="overviewTitle">Olá, <span id="greetingName">equipe</span><span class="period">.</span></h1>
+                  <p>Acesse seus setores, acompanhe as pendências da operação e veja os comunicados da Maximum.</p>
+                </div>
+              </div>
+
+              <div class="section-title-row"><h2>Seus módulos</h2></div>
+              <div class="modules-grid" id="moduleCards"></div>
+
+              <div class="section-title-row section-spaced"><h2>Visão de hoje</h2><span class="freshness" id="dashboardFreshness">Carregando dados</span></div>
+              <div class="stats-grid">
+                <article class="stat-card"><div class="stat-top"><span class="stat-icon stat-icon-blue" aria-hidden="true">▥</span></div><strong id="statCompanies">—</strong><span>Empresas acessíveis</span></article>
+                <article id="dashboardFiscalMetric" class="stat-card"><div class="stat-top"><span class="stat-icon stat-icon-teal" aria-hidden="true">▤</span></div><strong id="statDocuments">—</strong><span>Documentos disponíveis</span></article>
+                <article id="dashboardWorkMetric" class="stat-card"><div class="stat-top"><span class="stat-icon stat-icon-amber" aria-hidden="true">◷</span></div><strong id="statRequests">—</strong><span>Atividades abertas</span></article>
+                <article id="dashboardAgentMetric" class="stat-card"><div class="stat-top"><span class="stat-icon stat-icon-violet" aria-hidden="true">⌁</span></div><strong id="statAgents">—</strong><span>Agentes em comunicação</span></article>
+              </div>
+
+              <article id="storageOverview" class="surface section-spaced" hidden><div class="surface-header"><div><h3>Uso do banco de dados</h3></div></div><div class="storage-summary"><strong id="storageUsage">—</strong><span id="storageDescription">Medindo tabelas e índices...</span></div><p class="small-muted">Estimativa das tabelas deste banco. Confira a cota e o espaço disponível no hPanel da Hostinger.</p></article>
             </div>
-            <div class="welcome-illustration" aria-hidden="true"><div class="illustration-pane pane-one"></div><div class="illustration-pane pane-two"></div><div class="illustration-line"></div><div class="illustration-circle"></div></div>
-          </div>
 
-          <div class="section-title-row"><div><p class="eyebrow">PANORAMA</p><h2>Visão de hoje</h2></div><span class="freshness" id="dashboardFreshness">Dados da plataforma</span></div>
-          <div class="stats-grid">
-            <article class="stat-card"><div class="stat-top"><span class="stat-icon stat-icon-blue">▥</span><span class="stat-caption">CARTEIRA</span></div><strong id="statCompanies">—</strong><span>Empresas acessíveis</span></article>
-            <article class="stat-card"><div class="stat-top"><span class="stat-icon stat-icon-teal">▤</span><span class="stat-caption">FISCAL</span></div><strong id="statDocuments">—</strong><span>Documentos disponíveis</span></article>
-            <article class="stat-card"><div class="stat-top"><span class="stat-icon stat-icon-amber">◷</span><span class="stat-caption">ACOMPANHAMENTO</span></div><strong id="statRequests">—</strong><span>Solicitações abertas</span></article>
-            <article class="stat-card"><div class="stat-top"><span class="stat-icon stat-icon-violet">⌁</span><span class="stat-caption">COLETA</span></div><strong id="statAgents">—</strong><span>Agentes em comunicação</span></article>
+            <aside class="home-updates" aria-label="Comunicados e alertas">
+              <article class="surface home-update-card">
+                <div class="surface-header"><h2>Avisos</h2></div>
+                <div class="home-update-list">
+                  <div class="home-update-item"><strong>Bem-vindo à Central Maximum</strong><p>Encontre os setores liberados para o seu perfil no menu lateral.</p></div>
+                </div>
+              </article>
+              <article id="homeAlerts" class="surface home-update-card">
+                <div class="surface-header"><h2>Alertas</h2></div>
+                <div class="home-update-list">
+                  <div class="home-update-item"><strong id="homeWorkAlerts">Carregando atividades</strong><p id="homeWorkAlertDescription">Acompanhe aqui as pendências dos seus setores.</p></div>
+                </div>
+              </article>
+              <article class="surface home-update-card">
+                <div class="surface-header"><h2>Novidades</h2></div>
+                <div class="home-update-list">
+                  <div class="home-update-item"><strong>Tecnologia na Central</strong><p>O setor já pode organizar atividades internas, acompanhar prazos e atualizar o andamento.</p><button type="button" class="text-button" data-go="tecnologia" hidden>Abrir Tecnologia <span aria-hidden="true">↗</span></button></div>
+                </div>
+              </article>
+              <article id="homeAgentHealthCard" class="surface home-update-card" hidden>
+                <div class="surface-header"><h2>Saúde da coleta</h2><button class="text-button" type="button" data-go="agents">Ver agentes <span aria-hidden="true">↗</span></button></div>
+                <div id="overviewAgentHealth" class="empty-panel compact"><strong>Nenhum agente vinculado</strong><p>O servidor Windows aparecerá aqui após o cadastro.</p></div>
+              </article>
+            </aside>
           </div>
+        </section>
 
-          <div class="section-title-row section-spaced"><div><p class="eyebrow">UM LUGAR, TODOS OS TIMES</p><h2>Seus módulos</h2></div></div>
-          <div class="modules-grid" id="moduleCards"></div>
-
-          <div class="dashboard-bottom">
-            <article class="surface"><div class="surface-header"><div><p class="eyebrow">ACOMPANHAMENTO</p><h3>Próximas atividades</h3></div></div><div class="empty-panel"><span class="empty-graphic" aria-hidden="true">◷</span><strong>Sem atividades para mostrar</strong><p>As rotinas aparecerão aqui à medida que cada módulo for conectado.</p></div></article>
-            <article class="surface"><div class="surface-header"><div><p class="eyebrow">INTEGRAÇÃO</p><h3>Saúde da coleta</h3></div><button class="text-button" type="button" data-go="agents">Ver agentes ↗</button></div><div id="overviewAgentHealth" class="empty-panel compact"><span class="empty-graphic" aria-hidden="true">⌁</span><strong>Nenhum agente vinculado</strong><p>O servidor Windows aparecerá aqui após o cadastro.</p></div></article>
+        <section class="view" id="view-tecnologia" aria-labelledby="technologyTitle" hidden>
+          <div class="page-heading"><div><h1 id="technologyTitle">Tecnologia</h1><p>Acompanhe as atividades e os prazos do setor.</p></div></div>
+          <div id="technologyOverview" class="stats-grid technology-overview" aria-label="Atividades por situação">
+            <article class="stat-card"><strong id="technologyOpen">—</strong><span>Abertas</span></article>
+            <article class="stat-card"><strong id="technologyInProgress">—</strong><span>Em andamento</span></article>
+            <article class="stat-card"><strong id="technologyDone">—</strong><span>Concluídas</span></article>
           </div>
-          <article id="storageOverview" class="surface section-spaced" hidden><div class="surface-header"><div><p class="eyebrow">ADMINISTRAÇÃO</p><h3>Uso do banco de dados</h3></div></div><div class="storage-summary"><strong id="storageUsage">—</strong><span id="storageDescription">Medindo tabelas e índices...</span></div><p class="small-muted">Estimativa das tabelas deste banco. Confira a cota real e o espaço disponível no hPanel da Hostinger.</p></article>
+          <div id="technologyAdminActions" class="feature-grid technology-actions" hidden>
+            <article class="feature-card"><h3>Equipe e acessos</h3><p>Crie usuários e defina o acesso por setor e por ação.</p><button type="button" class="text-button" data-go="users">Gerenciar acessos <span aria-hidden="true">↗</span></button></article>
+            <article class="feature-card"><h3>Agentes de coleta</h3><p>Consulte os vínculos e a comunicação dos agentes.</p><button type="button" class="text-button" data-go="agents">Gerenciar agentes <span aria-hidden="true">↗</span></button></article>
+          </div>
+          <div id="technologyRestricted" class="module-message" hidden><span aria-hidden="true">⌘</span><div><strong>Atividades com acesso restrito</strong><p>Seu perfil pode acessar Tecnologia. A visualização das atividades é liberada em Equipe e acessos.</p></div></div>
+        </section>
+
+        <section class="view" id="view-rh" aria-labelledby="rhTitle" hidden>
+          <div class="page-heading"><div><h1 id="rhTitle">Recursos Humanos</h1><p>Espaço do time de Recursos Humanos.</p></div><span class="status-pill status-planned">Em preparação</span></div>
+        </section>
+
+        <section class="view" id="view-marketing" aria-labelledby="marketingTitle" hidden>
+          <div class="page-heading"><div><h1 id="marketingTitle">Marketing</h1><p>Espaço do time de Marketing.</p></div><span class="status-pill status-planned">Em preparação</span></div>
+        </section>
+
+        <section class="view" id="view-diretoria" aria-labelledby="diretoriaTitle" hidden>
+          <div class="page-heading"><div><h1 id="diretoriaTitle">Diretoria</h1><p>Espaço de acompanhamento da Diretoria.</p></div><span class="status-pill status-planned">Em preparação</span></div>
         </section>
 
         <section class="view" id="view-fiscal" aria-labelledby="fiscalTitle" hidden>
           <div class="page-heading"><div><p class="eyebrow">MÓDULO FISCAL</p><h1 id="fiscalTitle">Fiscal</h1><p>Documentos, eventos e solicitações em uma visão consultiva.</p></div><span class="status-pill status-planned">Conectores em preparação</span></div>
-          <div class="feature-grid three">
-            <article class="feature-card"><span class="feature-icon blue">▤</span><h3>NF-e recebidas</h3><p>Consulta por CNPJ, chave, período e situação, conforme os acessos autorizados.</p><span class="feature-tag">Integração planejada</span></article>
-            <article class="feature-card"><span class="feature-icon teal">◇</span><h3>NFS-e</h3><p>Serviços recebidos e prestados conforme a cobertura do ambiente nacional e dos municípios.</p><span class="feature-tag">Integração planejada</span></article>
-            <article class="feature-card"><span class="feature-icon amber">◷</span><h3>Cancelamentos</h3><p>Solicite ao emissor, acompanhe o prazo e confira o evento oficial da nota.</p><span class="feature-tag">Fluxo em preparação</span></article>
+          <div id="fiscalDocumentTools">
+            <div class="feature-grid three">
+              <article class="feature-card"><span class="feature-icon blue">▤</span><h3>NF-e recebidas</h3><p>Consulta por CNPJ, chave, período e situação, conforme os acessos autorizados.</p><span class="feature-tag">Integração planejada</span></article>
+              <article class="feature-card"><span class="feature-icon teal">◇</span><h3>NFS-e</h3><p>Serviços recebidos e prestados conforme a cobertura do ambiente nacional e dos municípios.</p><span class="feature-tag">Integração planejada</span></article>
+              <article class="feature-card"><span class="feature-icon amber">◷</span><h3>Cancelamentos</h3><p>Solicite ao emissor, acompanhe o prazo e confira o evento oficial da nota.</p><span class="feature-tag">Fluxo em preparação</span></article>
+            </div>
+            <article class="surface section-spaced"><div class="surface-header"><div><p class="eyebrow">CARTEIRA FISCAL</p><h3>NFS-e por empresa</h3></div><button type="button" class="text-button" data-go="companies">Ver empresas ↗</button></div><div id="fiscalCompanyQuickList" class="list-content" aria-live="polite"></div></article>
+            <article class="surface section-spaced"><div class="surface-header"><div><p class="eyebrow">DOCUMENTOS</p><h3>Chaves e dados fiscais recebidos pela API</h3></div><label class="work-filter"><span class="sr-only">Filtrar empresa</span><select id="fiscalCompanyFilter" aria-label="Filtrar empresa nas notas"></select></label></div><div id="fiscalDocumentsList" class="list-content" aria-live="polite"></div></article>
           </div>
-          <article class="surface section-spaced"><div class="surface-header"><div><p class="eyebrow">CARTEIRA FISCAL</p><h3>NFS-e por empresa</h3></div><button type="button" class="text-button" data-go="companies">Ver empresas ↗</button></div><div id="fiscalCompanyQuickList" class="list-content" aria-live="polite"></div></article>
-          <article class="surface section-spaced"><div class="surface-header"><div><p class="eyebrow">DOCUMENTOS</p><h3>Chaves e dados fiscais recebidos pela API</h3></div><label class="work-filter"><span class="sr-only">Filtrar empresa</span><select id="fiscalCompanyFilter" aria-label="Filtrar empresa nas notas"></select></label></div><div id="fiscalDocumentsList" class="list-content" aria-live="polite"></div></article>
         </section>
 
         <section class="view" id="view-dp" aria-labelledby="dpTitle" hidden>
@@ -193,7 +241,7 @@
         </section>
 
         <section class="view" id="view-users" aria-labelledby="usersTitle" hidden>
-          <div class="page-heading"><div><p class="eyebrow">ACESSO E PERMISSÕES</p><h1 id="usersTitle">Equipe</h1><p>Defina quem pode ver cada módulo e as empresas da carteira.</p></div><button id="newUserButton" class="button button-primary" type="button">+ Novo acesso</button></div>
+          <div class="page-heading"><div><p class="eyebrow">ACESSO E PERMISSÕES</p><h1 id="usersTitle">Equipe</h1><p>Controle o acesso por módulo, por ação e por empresa.</p></div><button id="newUserButton" class="button button-primary" type="button">+ Novo acesso</button></div>
           <div class="permission-note"><span class="permission-note-icon" aria-hidden="true">◈</span><div><strong>Permissões por contexto</strong><p>O acesso às empresas e aos módulos é verificado pela API. A navegação acompanha as permissões de cada pessoa.</p></div></div>
           <article class="surface"><div class="surface-header"><div><p class="eyebrow">PESSOAS</p><h3>Usuários cadastrados</h3></div><span id="usersCount" class="list-count">— usuários</span></div><div id="usersList" class="list-content" aria-live="polite"></div></article>
         </section>
@@ -227,15 +275,9 @@
       <div id="userPasswordRow" class="field"><label for="userPassword">Senha inicial</label><input id="userPassword" name="password" type="password" required minlength="12" autocomplete="new-password" placeholder="Ao menos 12 caracteres"><small>Entregue a senha à pessoa por um canal seguro.</small></div>
       <div class="field"><label for="userRole">Perfil</label><select id="userRole" name="role"><option value="member">Membro da equipe</option><option value="admin">Administrador</option></select></div>
       <label id="userActiveRow" class="check-row" hidden><input id="userActive" type="checkbox" checked> Acesso ativo</label>
-      <fieldset class="access-fieldset"><legend>Módulos permitidos</legend><div class="grant-grid">
-        <label>Fiscal <select name="grant-fiscal"><option value="">Sem acesso</option><option value="view" selected>Visualizar</option><option value="edit">Editar</option><option value="manage">Gerenciar</option></select></label>
-        <label>DP <select name="grant-dp"><option value="">Sem acesso</option><option value="view">Visualizar</option><option value="edit">Editar</option><option value="manage">Gerenciar</option></select></label>
-        <label>Contábil <select name="grant-contabil"><option value="">Sem acesso</option><option value="view">Visualizar</option><option value="edit">Editar</option><option value="manage">Gerenciar</option></select></label>
-        <label>Societário <select name="grant-societario"><option value="">Sem acesso</option><option value="view">Visualizar</option><option value="edit">Editar</option><option value="manage">Gerenciar</option></select></label>
-        <label>Financeiro <select name="grant-financeiro"><option value="">Sem acesso</option><option value="view">Visualizar</option><option value="edit">Editar</option><option value="manage">Gerenciar</option></select></label>
-        <label>Gestão <select name="grant-gestao"><option value="">Sem acesso</option><option value="view">Visualizar</option><option value="edit">Editar</option><option value="manage">Gerenciar</option></select></label>
-      </div></fieldset>
-      <fieldset class="access-fieldset"><legend>Empresas permitidas</legend><div id="userCompanyOptions" class="checkbox-grid"></div><small>Para membros, selecione as empresas da carteira. Administradores têm acesso a todas as empresas e módulos.</small></fieldset>
+      <p id="userFullAccessNote" class="muted" hidden>Administradores têm acesso a todos os módulos, ações e empresas.</p>
+      <fieldset id="userModuleGrants" class="access-fieldset"><legend>Permissões por módulo</legend><div id="userGrantOptions" class="grant-grid"></div></fieldset>
+      <fieldset id="userCompanyGrants" class="access-fieldset"><legend>Empresas permitidas</legend><div id="userCompanyOptions" class="checkbox-grid"></div><small>Para membros, selecione as empresas da carteira.</small></fieldset>
       <p id="userError" class="form-message" role="alert" hidden></p>
       <div class="dialog-actions"><button type="button" class="button button-quiet close-dialog">Cancelar</button><button type="submit" class="button button-primary">Criar acesso</button></div>
     </form>
@@ -257,8 +299,8 @@
   <dialog id="workItemDialog" class="form-dialog" aria-labelledby="workItemDialogTitle">
     <form id="workItemForm" method="dialog">
       <div class="dialog-header"><div><p class="eyebrow">ATIVIDADE</p><h2 id="workItemDialogTitle">Nova atividade</h2></div><button type="button" class="icon-button close-dialog" aria-label="Fechar">×</button></div>
-      <p class="dialog-description">Registre uma pendência de acompanhamento vinculada à empresa e ao módulo.</p>
-      <div class="field"><label for="workItemCompany">Empresa</label><select id="workItemCompany" name="companyCnpj" required></select></div>
+      <p id="workItemDialogDescription" class="dialog-description">Registre uma pendência de acompanhamento da equipe.</p>
+      <div class="field"><label id="workItemCompanyLabel" for="workItemCompany">Empresa</label><select id="workItemCompany" name="companyCnpj" required></select></div>
       <div class="field"><label for="workItemTitle">Título</label><input id="workItemTitle" name="title" required maxlength="160" placeholder="O que precisa ser feito?"></div>
       <div class="field"><label for="workItemDescription">Detalhes (opcional)</label><textarea id="workItemDescription" name="description" rows="3" maxlength="2000" placeholder="Contexto para a equipe"></textarea></div>
       <div class="field"><label for="workItemDue">Prazo (opcional)</label><input id="workItemDue" name="dueAt" type="date"></div>

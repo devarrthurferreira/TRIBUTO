@@ -16,11 +16,19 @@ test('servidor entrega painel e API na mesma origem com headers de proteção', 
     assert.equal(html.status, 200);
     assert.match(html.headers.get('content-type'), /text\/html/);
     assert.match(html.headers.get('content-security-policy'), /default-src 'self'/);
-    assert.match(await html.text(), /TRIBUTO \| Maximum Contábil/);
-    const dashboard = await fetch(`${origin}/painel`);
-    assert.equal(dashboard.status, 200);
-    assert.match(await dashboard.text(), /id="appView"/);
+    assert.match(await html.text(), /<title>Central Maximum \| Maximum Contábil<\/title>/);
+    for (const path of ['/home', '/painel']) {
+      const dashboard = await fetch(`${origin}${path}`);
+      assert.equal(dashboard.status, 200);
+      assert.match(await dashboard.text(), /id="appView"/);
+    }
     for (const asset of ['/styles.css', '/app.js']) assert.equal((await fetch(`${origin}${asset}`)).status, 200);
+    for (const [asset, mime] of [['/maximum-logo.png', 'image/png'], ['/maximum-carreiras.webp', 'image/webp'],
+      ['/poppins-regular.woff2', 'font/woff2'], ['/poppins-semibold.woff2', 'font/woff2'], ['/poppins-bold.woff2', 'font/woff2']]) {
+      const result = await fetch(`${origin}${asset}`);
+      assert.equal(result.status, 200);
+      assert.equal(result.headers.get('content-type'), mime);
+    }
     assert.equal((await fetch(`${origin}/healthz`)).status, 200);
     assert.equal((await fetch(`${origin}/.env.example`)).status, 404);
   } finally { await new Promise(resolve => server.close(resolve)); }
