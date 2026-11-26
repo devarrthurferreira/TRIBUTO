@@ -322,6 +322,10 @@
   .club-card-actions .club-button { min-height: 40px; }
 }
 
+@container (max-width: 280px) {
+  .club-filter { flex-basis: 100%; }
+}
+
 @media (max-width: 490px) {
   .club-dialog-fields { grid-template-columns: minmax(0, 1fr); }
   .club-field :is(input, select, textarea), .club-search input, .club-filter select { font-size: 16px; }

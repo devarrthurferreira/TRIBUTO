@@ -272,7 +272,7 @@ export function mountClub(root, { request, onAuthError }) {
         <button type="button" class="club-button club-primary" data-panel="add" hidden><i class="bi bi-plus-lg" aria-hidden="true"></i>Adicionar ${section.singular}</button>
       </header>
       <div class="club-tools" data-panel="tools" hidden>
-        <label class="club-search"><i class="bi bi-search" aria-hidden="true"></i><span class="sr-only">${section.search}</span><input type="search" data-panel="search" placeholder="${section.search}"></label>
+        <label class="club-search"><i class="bi bi-search" aria-hidden="true"></i><span class="sr-only">${section.search}</span><input type="search" data-panel="search" placeholder="Buscar ${section.singular}"></label>
         <label class="club-filter" data-panel="filter" hidden><span class="sr-only">${key === 'partners' ? 'Filtrar por segmento' : 'Filtrar por categoria'}</span><select data-panel="category"></select></label>
         <p class="club-results" data-panel="results" role="status"></p>
       </div>
