@@ -209,15 +209,15 @@ function setPortalContext(view) {
   $('appView').dataset.view = view;
   $('homeClub').hidden = view !== 'overview';
   $('railClub').hidden = view === 'overview';
-  renderClubRail(view === 'club', assignedSectors);
+  renderContextRail(view === 'club' || view === 'maxhub', assignedSectors);
 }
 
-function clubOriginSector() {
+function contextOriginSector() {
   const referrer = document.referrer ? new URL(document.referrer) : null;
   const sourcePath = referrer?.origin === location.origin ? referrer.pathname : '';
   const sector = allModules.find(({ id }) => sourcePath === `${SECTOR_PREFIX}${id}` && canView(id))?.id;
   try {
-    if (clubPageFromPath(sourcePath)) return sessionStorage.getItem(CLUB_ORIGIN_KEY);
+    if (clubPageFromPath(sourcePath) || isMaxHubPath(sourcePath)) return sessionStorage.getItem(CLUB_ORIGIN_KEY);
     if (sector) sessionStorage.setItem(CLUB_ORIGIN_KEY, sector);
     else sessionStorage.removeItem(CLUB_ORIGIN_KEY);
   } catch {
@@ -226,9 +226,9 @@ function clubOriginSector() {
   return sector;
 }
 
-function renderClubRail(active, assignedSectors) {
+function renderContextRail(active, assignedSectors) {
   const preferredSectors = active
-    ? [clubOriginSector(), ...assignedSectors.map(({ id }) => id), 'tecnologia', ...allModules.map(({ id }) => id)].filter(Boolean)
+    ? [contextOriginSector(), ...assignedSectors.map(({ id }) => id), 'tecnologia', ...allModules.map(({ id }) => id)].filter(Boolean)
     : [];
   const sector = preferredSectors.find(canView);
   const talkSector = preferredSectors.find((id) => canUse(id, 'sectorTalkRead'));

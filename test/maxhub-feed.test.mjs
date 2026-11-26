@@ -48,7 +48,7 @@ test('O feed reutiliza sessão e CSRF e valida público, menções, mídia e com
     async list() { return { posts: [], nextCursor: null }; },
     async create(user, input) { recorded.push({ user: user._id, ...input }); return { id: randomUUID() }; },
   };
-  const post = { kind: 'celebration', text: '  Parabéns!  ', audience: { type: 'people', userIds: [invited] },
+  const post = { kind: 'celebration', text: '  Parabéns!  ', audience: { type: 'all' },
     mentions: [invited, invited], image: imageData, clientId };
 
   await withFeed(store, async (request, [member, rh]) => {
@@ -58,7 +58,7 @@ test('O feed reutiliza sessão e CSRF e valida público, menções, mídia e com
     assert.equal(created.status, 201);
     assert.ok(created.result.post.id);
     assert.deepEqual(recorded[0], {
-      user: member._id, kind: 'celebration', text: 'Parabéns!', audience: { type: 'people', userIds: [invited] },
+      user: member._id, kind: 'celebration', text: 'Parabéns!', audience: { type: 'all' },
       mentions: [invited], image: { mime: 'image/png', data: PNG }, clientId,
     });
 
@@ -69,7 +69,7 @@ test('O feed reutiliza sessão e CSRF e valida público, menções, mídia e com
 
     for (const invalid of [
       { audience: { type: 'sector', sector: 'desconhecido' } },
-      { audience: { type: 'people', userIds: [] } },
+      { audience: { type: 'people', userIds: [invited] } },
       { mentions: ['fora-do-diretorio'] },
       { image: 'data:image/svg+xml;base64,AAA=' },
       { image: `data:image/jpeg;base64,${PNG.toString('base64')}` },

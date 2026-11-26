@@ -1,7 +1,5 @@
 .club-checkin {
   --checkin-space: clamp(14px, 3cqw, 34px);
-  display: grid;
-  gap: 9px;
   color: var(--ink);
 }
 .club-checkin-card {
@@ -80,63 +78,10 @@
 .club-checkin-status[data-kind="success"] { color: var(--club-success); }
 .club-checkin-status[data-kind="error"] { color: var(--club-danger); }
 
-.club-checkin-history summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  padding: 13px var(--checkin-space);
-  border-radius: inherit;
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 1.4;
-  list-style: none;
-  cursor: pointer;
-}
-.club-checkin-history summary::-webkit-details-marker { display: none; }
-.club-checkin-history summary:hover { color: var(--club-accent); }
-.club-checkin-history summary > i { color: var(--club-accent); }
-.club-checkin-history summary > i:last-child { margin-inline-start: auto; transition: transform .2s ease; }
-.club-checkin-history[open] summary > i:last-child { transform: rotate(180deg); }
-.club-checkin-history summary span { color: var(--muted); font-size: 11px; }
-.club-checkin-history-body { padding: 0 var(--checkin-space) var(--checkin-space); }
-.club-checkin-history-info { margin: 0; padding: 10px 0; color: var(--muted); font-size: 13px; }
-.club-checkin-calendar {
-  display: grid;
-  grid-template-columns: repeat(10, minmax(0, 1fr));
-  gap: clamp(4px, 1cqw, 10px);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.club-checkin-calendar > li {
-  display: grid;
-  justify-items: center;
-  gap: 5px;
-  padding: 7px 2px;
-  border: 1px solid var(--club-edge);
-  border-radius: 9px;
-  background: var(--portal-floor);
-  color: var(--muted);
-}
-.club-checkin-calendar > li[data-mood] {
-  border-color: color-mix(in srgb, var(--mood-color) 50%, var(--club-edge));
-  background: color-mix(in srgb, var(--mood-color) 16%, var(--club-surface));
-}
-.club-checkin-calendar > li[data-presence] { background: var(--club-success-bg); color: var(--club-success); }
-.club-checkin-calendar > li:has([aria-current="date"]) { border-color: var(--club-accent); }
-.club-checkin-calendar time { font-size: clamp(9px, 1.25cqw, 12px); font-variant-numeric: tabular-nums; }
-.club-checkin-day-mark { font-size: clamp(15px, 2.25cqw, 24px); line-height: 1; }
-.club-checkin-calendar-legend { display: flex; flex-wrap: wrap; gap: 4px 15px; margin: 12px 0 0; color: var(--muted); font-size: 11px; }
-.club-checkin-calendar-legend b { display: inline-block; margin-inline-end: 3px; }
-
-@container (max-width: 630px) {
-  .club-checkin-calendar { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-}
 @container (max-width: 420px) {
   .club-checkin-mark { inset: 3px 3px auto auto; width: 12px; font-size: 8px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .club-checkin-choice, .club-checkin-history summary > i:last-child { transition: none; }
+  .club-checkin-choice { transition: none; }
   .club-checkin-choice:not([aria-disabled="true"]):hover { transform: none; }
 }

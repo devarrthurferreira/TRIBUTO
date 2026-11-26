@@ -42,16 +42,69 @@ export function legacyMaxHubUrl(fragment) {
 }
 
 export function mountMaxHub(root, { request, onAuthError, onProfileChange }) {
+  const menuButton = document.getElementById('maxHubMenuButton');
+  const subnav = document.getElementById('maxHubSubnav');
+  const narrowViewport = matchMedia('(max-width: 700px)');
   let selectedUrl;
   let activeSession;
   let cleanupMood;
   let cleanupWorkspace;
+
+  function showMenu(expanded) {
+    if (!expanded && subnav.contains(document.activeElement)) menuButton.focus({ preventScroll: true });
+    subnav.hidden = !expanded;
+    menuButton.setAttribute('aria-expanded', String(expanded));
+  }
+
+  menuButton.addEventListener('click', () => {
+    showMenu(subnav.hidden);
+    if (!subnav.hidden && narrowViewport.matches) {
+      (subnav.querySelector('[aria-current="page"]') || subnav.querySelector('a'))?.focus({ preventScroll: true });
+    }
+  });
+
+  function dismissOnEscape(event) {
+    if (event.key !== 'Escape' || subnav.hidden) return;
+    event.preventDefault();
+    showMenu(false);
+  }
+
+  menuButton.addEventListener('keydown', dismissOnEscape);
+  subnav.addEventListener('keydown', dismissOnEscape);
+
+  function dismissOnOutside(event) {
+    if (narrowViewport.matches && !subnav.hidden && !subnav.contains(event.target) && !menuButton.contains(event.target)) showMenu(false);
+  }
+
+  document.addEventListener('click', dismissOnOutside);
+  document.addEventListener('focusin', dismissOnOutside);
+  narrowViewport.addEventListener('change', ({ matches }) => {
+    if (activeSession) showMenu(!matches);
+  });
+
+  function renderMenu(area, activeSection) {
+    const mainLinks = Object.entries(areas).filter(([id]) => id !== 'perfil').map(([id, { label, icon, sections }]) => {
+      const active = id === area;
+      const nested = active && sections;
+      const current = active && !sections ? ' aria-current="page"' : '';
+      return `<a class="sector-subnav-link${nested ? ' sector-subnav-parent' : ''}" href="${areaUrl(id, sections?.[0].id)}"${current}>
+        <i class="bi bi-${icon}" aria-hidden="true"></i><span>${label}</span></a>
+        ${nested ? `<div class="sector-subnav-children" role="group" aria-label="${label}">
+          ${sections.map(item => `<a class="sector-subnav-link sector-subnav-child" href="${areaUrl(area, item.id)}"${item.id === activeSection ? ' aria-current="page"' : ''}>
+            <i class="bi bi-${item.icon}" aria-hidden="true"></i><span>${item.label}</span></a>`).join('')}
+        </div>` : ''}`;
+    });
+    subnav.innerHTML = `<h2>MaxHub</h2><div class="sector-subnav-list">${mainLinks.join('')}</div>`;
+  }
 
   function close() {
     cleanupMood?.();
     cleanupWorkspace?.();
     cleanupMood = cleanupWorkspace = undefined;
     selectedUrl = activeSession = undefined;
+    showMenu(false);
+    menuButton.hidden = true;
+    subnav.replaceChildren();
     root.replaceChildren();
   }
 
@@ -69,16 +122,12 @@ export function mountMaxHub(root, { request, onAuthError, onProfileChange }) {
     activeSession = session;
     selectedUrl = url;
     document.title = `${section?.label ?? areas[area].label} | MaxHub`;
+    renderMenu(area, section?.id);
+    menuButton.hidden = false;
+    showMenu(!narrowViewport.matches);
     root.innerHTML = `
       <div class="maxhub">
-        <header class="maxhub-heading"><span aria-hidden="true"><i class="bi bi-people"></i></span><h1>MaxHub</h1></header>
-        <nav class="maxhub-areas" aria-label="Áreas do MaxHub">
-          ${Object.entries(areas).filter(([id]) => id !== 'perfil').map(([id, { label, icon, sections: children }]) => `
-            <a href="${areaUrl(id, children?.[0]?.id)}"${id === area ? ' aria-current="page"' : ''}><i class="bi bi-${icon}" aria-hidden="true"></i>${label}</a>`).join('')}
-        </nav>
-        ${sections ? `<nav class="maxhub-sections" aria-label="${areas[area].label}">
-          ${sections.map(({ id, label, icon }) => `<a href="${areaUrl(area, id)}"${id === section.id ? ' aria-current="page"' : ''}><i class="bi bi-${icon}" aria-hidden="true"></i>${label}</a>`).join('')}
-        </nav>` : ''}
+        <h1 class="sr-only">MaxHub</h1>
         ${workspace === 'home' ? '<div id="maxHubMood" class="maxhub-mood"></div>' : ''}
         <div id="maxHubWorkspace" class="maxhub-workspace"></div>
       </div>`;

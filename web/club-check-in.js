@@ -5,50 +5,11 @@ export const clubMoods = [
   { value: 4, face: '🙂', label: 'Feliz' },
   { value: 5, face: '😄', label: 'Muito feliz' },
 ];
-const dateLabel = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long', timeZone: 'UTC' });
-const shortDate = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
 const localDay = new Intl.DateTimeFormat('en', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'America/Sao_Paulo' });
-
-function dayDate(day) { return new Date(`${day}T12:00:00Z`); }
 
 function currentDay() {
   const parts = Object.fromEntries(localDay.formatToParts(new Date()).map(({ type, value }) => [type, value]));
   return `${parts.year}-${parts.month}-${parts.day}`;
-}
-
-function element(tag, text, className) {
-  const node = document.createElement(tag);
-  if (text !== undefined) node.textContent = text;
-  if (className) node.className = className;
-  return node;
-}
-
-function recentDays(lastDay) {
-  const date = dayDate(lastDay);
-  date.setUTCDate(date.getUTCDate() - 29);
-  return Array.from({ length: 30 }, () => {
-    const day = date.toISOString().slice(0, 10);
-    date.setUTCDate(date.getUTCDate() + 1);
-    return day;
-  });
-}
-
-function calendarCell(day, mood, today) {
-  const cell = element('li');
-  cell.dataset.date = day;
-  const time = element('time', shortDate.format(dayDate(day)));
-  time.dateTime = day;
-  const date = dateLabel.format(dayDate(day));
-  time.setAttribute('aria-label', today ? `Hoje, ${date}` : date);
-  if (today) time.setAttribute('aria-current', 'date');
-  const response = clubMoods.find(({ value }) => value === mood);
-  if (response) cell.dataset.mood = response.value;
-  if (mood === null) cell.dataset.presence = '';
-  const marker = element('span', response?.face ?? (mood === null ? '✓' : '–'), 'club-checkin-day-mark');
-  marker.setAttribute('aria-hidden', 'true');
-  const label = element('span', response?.label ?? (mood === null ? 'Presença sem resposta de humor' : 'Sem check-in'), 'sr-only');
-  cell.append(time, marker, label);
-  return cell;
 }
 
 export function mountClubCheckIn(container, { request, onAuthError, onSubmitted }) {
@@ -68,19 +29,6 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
         <p class="club-checkin-status" data-checkin-part="status" role="status"></p>
         <button class="club-button club-checkin-retry" type="button" data-checkin-part="retry" hidden>Tentar novamente</button>
       </div>
-      <details class="club-checkin-card club-checkin-history">
-        <summary>
-          <i class="bi bi-clock-history" aria-hidden="true"></i>
-          <strong>Meu histórico</strong>
-          <span>Últimos 30 dias</span>
-          <i class="bi bi-chevron-down" aria-hidden="true"></i>
-        </summary>
-        <div class="club-checkin-history-body">
-          <p data-checkin-part="historyInfo" class="club-checkin-history-info">Carregando seu histórico…</p>
-          <ol data-checkin-part="history" class="club-checkin-calendar" hidden></ol>
-          <p data-checkin-part="historyLegend" class="club-checkin-calendar-legend" hidden><span><b aria-hidden="true">✓</b> Presença sem resposta de humor</span><span><b aria-hidden="true">–</b> Sem check-in</span></p>
-        </div>
-      </details>
     </section>`;
 
   const refs = Object.fromEntries([...container.querySelectorAll('[data-checkin-part]')].map(node => [node.dataset.checkinPart, node]));
@@ -103,14 +51,6 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
     }
   }
 
-  function renderState(data) {
-    state = data;
-    const moodsByDay = new Map(state.history.map(({ date, mood }) => [date, mood]));
-    refs.history.replaceChildren(...recentDays(state.today).map(day => calendarCell(day, moodsByDay.get(day), day === state.today)));
-    refs.history.hidden = refs.historyLegend.hidden = false;
-    refs.historyInfo.hidden = true;
-  }
-
   async function loadPersonal() {
     if (sending || loading || disposed) return;
     loading = true;
@@ -120,7 +60,7 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
     try {
       const data = await request('/club/check-in');
       if (disposed) return;
-      renderState(data);
+      state = data;
       const answered = data.todayMood && data.sharedWithRh;
       status(answered ? 'Resposta de hoje enviada ao RH.' : '', answered ? 'success' : '');
     } catch (error) {
@@ -128,7 +68,6 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
       if (error.status === 401) { onAuthError(error); return; }
       status('Não foi possível carregar suas respostas.', 'error');
       refs.retry.hidden = false;
-      refs.historyInfo.textContent = 'Não foi possível carregar seu histórico.';
     } finally {
       loading = false;
       if (!disposed) renderControls();
@@ -144,7 +83,7 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
     try {
       const data = await request('/club/check-in', { method: 'PUT', body: { mood, shareWithRh: true } });
       if (disposed) return;
-      renderState(data);
+      state = data;
       status('Resposta de hoje enviada ao RH.', 'success');
       onSubmitted?.();
     } catch (error) {

@@ -15,18 +15,15 @@ function uuid(value) {
   return value.toLowerCase();
 }
 
-function ids(value, max, required) {
-  if (!Array.isArray(value) || value.length > max || (required && value.length === 0)) {
-    invalid(`Selecione até ${max} pessoas${required ? ' para receber a publicação' : ' para mencionar'}.`);
-  }
+function mentionIds(value) {
+  if (!Array.isArray(value) || value.length > 12) invalid('Selecione até 12 pessoas para mencionar.');
   return [...new Set(value.map(uuid))];
 }
 
 function audienceFor(input) {
   if (input?.type === 'all') return { type: 'all' };
   if (input?.type === 'sector' && SECTORS.has(input.sector)) return { type: 'sector', sector: input.sector };
-  if (input?.type === 'people') return { type: 'people', userIds: ids(input.userIds, 50, true) };
-  invalid('Escolha o público da publicação.');
+  invalid('Escolha publicar para todos ou para um setor.');
 }
 
 function textFor(raw, maximum) {
@@ -42,7 +39,7 @@ function postInput(input, user) {
   const text = textFor(input.text ?? '', 2_000);
   const image = input.image == null ? null : parseMaxHubImage(input.image, MAX_IMAGE_BYTES);
   if (!text && !image) invalid('Escreva uma mensagem ou adicione uma imagem.');
-  return { kind: input.kind, text, image, audience: audienceFor(input.audience), mentions: ids(input.mentions ?? [], 12, false),
+  return { kind: input.kind, text, image, audience: audienceFor(input.audience), mentions: mentionIds(input.mentions ?? []),
     ...(input.clientId === undefined ? {} : { clientId: uuid(input.clientId) }) };
 }
 

@@ -40,14 +40,6 @@ function btn(label, { glyph, primary = false, type = 'button' } = {}) {
   return element;
 }
 
-function link(label, href, glyph) {
-  const element = el('a', 'hub-link');
-  element.href = href;
-  element.append(document.createTextNode(label));
-  if (glyph) element.append(icon(glyph));
-  return element;
-}
-
 function field(label, input) {
   const wrapper = el('label', 'hub-field');
   wrapper.append(el('span', '', label), input);
@@ -118,17 +110,6 @@ function avatar(person, { large = false, source } = {}) {
   return frame;
 }
 
-function selectionChip(name, remove) {
-  const chip = el('span', 'hub-chip');
-  chip.append(el('span', '', name));
-  const action = btn('', { glyph: 'x-lg' });
-  action.className = 'hub-chip-remove';
-  action.setAttribute('aria-label', `Remover ${name}`);
-  action.addEventListener('click', remove);
-  chip.append(action);
-  return chip;
-}
-
 function readImage(file, limit) {
   if (!file) return Promise.resolve(undefined);
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
@@ -145,6 +126,41 @@ function readImage(file, limit) {
   });
 }
 
+function editedRange(previous, current, selection) {
+  const delta = current.length - previous.length;
+  if (selection) {
+    let { start, end } = selection;
+    if (start === end && delta < 0) {
+      if (selection.type.endsWith('Backward')) start += delta;
+      if (selection.type.endsWith('Forward')) end -= delta;
+    }
+    if (start >= 0 && end <= previous.length && end + delta >= start
+      && previous.slice(0, start) === current.slice(0, start)
+      && previous.slice(end) === current.slice(end + delta)) return { start, end, delta };
+  }
+  let start = 0;
+  let end = previous.length;
+  let currentEnd = current.length;
+  while (start < end && start < currentEnd && previous[start] === current[start]) start += 1;
+  while (start < end && start < currentEnd && previous[end - 1] === current[currentEnd - 1]) {
+    end -= 1;
+    currentEnd -= 1;
+  }
+  return { start, end, delta };
+}
+
+function mentionAtCursor(editor, mentions) {
+  const caret = editor.selectionStart;
+  if (caret !== editor.selectionEnd || caret === 0) return null;
+  const start = editor.value.lastIndexOf('@', caret - 1);
+  if (start < 0 || (start && !/[\s([{'".,;:!?]/u.test(editor.value[start - 1]))
+    || mentions.some(mention => mention.start === start)) return null;
+  const raw = editor.value.slice(start + 1, caret);
+  if (!/^[\p{L}\p{M}\p{N}_ .’'-]{0,80}$/u.test(raw)) return null;
+  const suffix = editor.value.slice(caret).match(/^[\p{L}\p{M}\p{N}_’'-]*/u)[0];
+  return { start, end: caret + suffix.length, query: raw.trim() };
+}
+
 function mountComposer(root, { kind, ctx, onPost }) {
   const form = el('form', 'hub-card hub-composer');
   const top = el('div', 'hub-composer-top');
@@ -155,15 +171,31 @@ function mountComposer(root, { kind, ctx, onPost }) {
   const kindSelect = el('select', 'hub-input');
   kindSelect.append(new Option('Publicação', 'post'), new Option('Celebração', 'celebration'));
   kindSelect.value = kind || 'post';
-  if (!kind) top.append(field('Tipo', kindSelect));
+  if (!kind) top.append(field('Tipo de publicação', kindSelect));
+
+  const editor = el('div', 'hub-composer-editor');
   const message = el('textarea', 'hub-input hub-composer-text');
   message.rows = 3;
   message.maxLength = 2000;
-  message.placeholder = kind === 'celebration' ? 'O que vamos celebrar hoje?' : 'Escreva uma mensagem…';
   message.setAttribute('aria-label', 'Mensagem da publicação');
+  message.setAttribute('aria-autocomplete', 'list');
+  message.setAttribute('aria-controls', 'maxhub-mention-list');
+  message.setAttribute('aria-describedby', 'maxhub-mention-hint');
+
+  const suggestions = el('div', 'hub-mention-popup');
+  suggestions.hidden = true;
+  const suggestionStatus = el('div', 'hub-mention-status');
+  suggestionStatus.setAttribute('role', 'status');
+  const suggestionList = el('ul', 'hub-mention-list');
+  suggestionList.id = 'maxhub-mention-list';
+  suggestionList.setAttribute('role', 'listbox');
+  suggestionList.setAttribute('aria-label', 'Pessoas para mencionar');
+  suggestions.append(suggestionStatus, suggestionList);
+  editor.append(message, suggestions);
+
   const toolbar = el('div', 'hub-composer-toolbar');
   const audienceSelect = el('select', 'hub-input');
-  audienceSelect.append(new Option('Todos', 'all'), new Option('Um setor', 'sector'), new Option('Pessoas específicas', 'people'));
+  audienceSelect.append(new Option('Todos', 'all'), new Option('Um setor', 'sector'));
   const sectorSelect = el('select', 'hub-input');
   sectorSelect.required = true;
   sectorSelect.append(new Option('Selecione um setor', ''));
@@ -171,140 +203,150 @@ function mountComposer(root, { kind, ctx, onPost }) {
   const toolbarFields = el('div', 'hub-composer-fields');
   toolbarFields.append(field('Quem pode ver', audienceSelect), sectorField);
   const tools = el('div', 'hub-composer-tools');
-  const mentionOpen = btn('Marcar pessoas', { glyph: 'person-badge' });
-  mentionOpen.setAttribute('aria-expanded', 'false');
-  const attach = btn('Imagem', { glyph: 'paperclip' });
+  const attach = btn('', { glyph: 'paperclip' });
+  attach.classList.add('hub-composer-attach');
+  attach.setAttribute('aria-label', 'Anexar imagem');
+  attach.title = 'Anexar imagem';
+  const hint = el('span', 'hub-composer-hint', 'Use @ para mencionar alguém');
+  hint.id = 'maxhub-mention-hint';
+  const count = el('span', 'hub-composer-count');
+  count.hidden = true;
   const file = el('input');
   file.hidden = true;
   file.type = 'file';
   file.accept = 'image/png,image/jpeg,image/webp';
   const send = btn(kind === 'celebration' ? 'Celebrar' : 'Publicar', { glyph: 'send', type: 'submit', primary: true });
-  tools.append(mentionOpen, attach);
+  tools.append(attach, hint, count);
   toolbar.append(tools, send);
   const feedback = status();
   const preview = el('div', 'hub-image-preview');
   preview.hidden = true;
-  const selections = el('div', 'hub-selections');
-  const picker = el('div', 'hub-picker');
-  picker.hidden = true;
-  const pickerTop = el('div', 'hub-picker-top');
-  const pickerTitle = el('strong', '');
-  const pickerClose = btn('Fechar', { glyph: 'x-lg' });
-  pickerTop.append(pickerTitle, pickerClose);
-  const search = el('input', 'hub-input');
-  search.type = 'search';
-  search.placeholder = 'Buscar por nome';
-  search.setAttribute('aria-label', 'Buscar pessoas por nome');
-  const pickerResults = el('div', 'hub-picker-results');
-  picker.append(pickerTop, search, pickerResults);
-  form.append(top, message, toolbarFields, selections, picker, preview, file, toolbar, feedback.line);
+  form.append(top, editor, toolbarFields, preview, file, toolbar, feedback.line);
   root.append(form);
 
-  let pickerMode = '';
+  let marks = [];
+  let previousText = '';
+  let beforeEdit;
+  let composing = false;
+  let activeMention;
+  let dismissedMention;
+  let matches = [];
+  let activeOption = -1;
+  let directoryTimer;
+  let directoryVersion = 0;
   let imageData;
   let fileVersion = 0;
   let reading = false;
   let submitting = false;
   let retryDraft;
-  let diskTimer;
-  let directoryVersion = 0;
-  const people = new Map();
-  const mentions = new Map();
-
-  function selectionGroup(title, items, mode) {
-    const section = el('div', 'hub-selection-group');
-    const row = el('div', 'hub-chip-row');
-    section.append(el('strong', '', title), row);
-    for (const person of items.values()) {
-      const chip = selectionChip(mode === 'mentions' ? `@${person.name}` : person.name, () => {
-        if (submitting) return;
-        items.delete(person.id);
-        syncSelections();
-        if (pickerMode === mode) void queryPeople();
-      });
-      row.append(chip);
-    }
-    if (mode === 'audience') {
-      const action = btn(items.size ? 'Adicionar pessoas' : 'Selecionar pessoas', { glyph: 'people' });
-      action.addEventListener('click', () => { if (!submitting) showPicker(mode); });
-      row.append(action);
-    }
-    return section;
-  }
-
-  function syncSelections() {
-    selections.replaceChildren();
-    if (audienceSelect.value === 'people') selections.append(selectionGroup('Destinatários', people, 'audience'));
-    if (mentions.size) selections.append(selectionGroup('Marcações', mentions, 'mentions'));
-    selections.hidden = !selections.childElementCount;
-  }
 
   function syncKind() {
     const value = kind || kindSelect.value;
     send.lastChild.textContent = value === 'celebration' ? 'Celebrar' : 'Publicar';
-    message.placeholder = value === 'celebration' ? 'O que vamos celebrar hoje?' : 'Escreva uma mensagem…';
+    message.placeholder = value === 'celebration' ? 'O que vamos celebrar hoje?' : 'O que você quer compartilhar?';
   }
 
-  function closePicker(restoreFocus = false) {
-    const prior = pickerMode;
-    pickerMode = '';
-    picker.hidden = true;
-    mentionOpen.setAttribute('aria-expanded', 'false');
+  function trackEdit({ start, end, delta }) {
+    marks = marks.flatMap(mark => {
+      if (mark.end <= start) return [mark];
+      if (mark.start >= end) return [{ ...mark, start: mark.start + delta, end: mark.end + delta }];
+      return [];
+    }).filter(mark => message.value.slice(mark.start, mark.end) === `@${mark.name}`
+      && !/[\p{L}\p{M}\p{N}_@]/u.test(message.value[mark.start - 1] || '')
+      && !/[\p{L}\p{M}\p{N}_@]/u.test(message.value[mark.end] || ''));
+    previousText = message.value;
+    updateCount();
+  }
+
+  function updateCount() {
+    const length = message.value.length;
+    count.hidden = length < 1800;
+    if (!count.hidden) count.textContent = `${number.format(length)} / ${number.format(message.maxLength)}`;
+  }
+
+  function closeSuggestions() {
+    clearTimeout(directoryTimer);
     directoryVersion += 1;
-    clearTimeout(diskTimer);
-    if (restoreFocus) {
-      const selectionAction = selections.querySelector('.hub-selection-group .hub-btn:last-child');
-      (prior === 'audience' ? selectionAction : mentionOpen)?.focus();
+    activeMention = null;
+    matches = [];
+    activeOption = -1;
+    suggestions.hidden = true;
+    suggestionList.replaceChildren();
+    message.removeAttribute('aria-activedescendant');
+  }
+
+  function activateOption(index, scroll = false) {
+    activeOption = index;
+    for (const [position, option] of [...suggestionList.children].entries()) {
+      option.setAttribute('aria-selected', String(position === index));
     }
+    if (index < 0) { message.removeAttribute('aria-activedescendant'); return; }
+    const option = suggestionList.children[index];
+    message.setAttribute('aria-activedescendant', option.id);
+    if (scroll) option.scrollIntoView({ block: 'nearest' });
   }
 
-  function showPicker(mode) {
-    if (pickerMode === mode) { closePicker(true); return; }
-    pickerMode = mode;
-    picker.hidden = false;
-    search.value = '';
-    pickerTitle.textContent = mode === 'audience' ? 'Escolher destinatários' : 'Marcar pessoas';
-    mentionOpen.setAttribute('aria-expanded', String(mode === 'mentions'));
-    search.focus();
-    void queryPeople();
+  function selectMention(person) {
+    if (!activeMention || submitting) return;
+    const people = new Set(marks.map(mark => mark.id));
+    if (people.size >= 12 && !people.has(person.id)) {
+      feedback.set('Marque até 12 pessoas por publicação.', true);
+      closeSuggestions();
+      message.focus();
+      return;
+    }
+    const { start, end } = activeMention;
+    const token = `@${person.name}`;
+    const following = message.value[end];
+    const insertion = following && /[\s.,!?;:)]/u.test(following) ? token : `${token} `;
+    if (message.value.length - (end - start) + insertion.length > message.maxLength) {
+      feedback.set('Reduza a mensagem para incluir a menção.', true);
+      return;
+    }
+    message.setRangeText(insertion, start, end, 'end');
+    trackEdit({ start, end, delta: insertion.length - (end - start) });
+    marks.push({ id: person.id, name: person.name, start, end: start + token.length });
+    if (following === ' ') message.setSelectionRange(start + token.length + 1, start + token.length + 1);
+    closeSuggestions();
+    feedback.set('');
+    message.focus();
   }
 
-  async function queryPeople() {
-    if (!pickerMode) return;
-    const current = ++directoryVersion;
-    pickerResults.replaceChildren(info('Buscando pessoas…'));
+  async function queryPeople(version, query) {
     try {
-      const { people: results } = await ctx.request(`/maxhub/directory?q=${encodeURIComponent(search.value.trim())}`);
-      if (!ctx.active() || !pickerMode || current !== directoryVersion) return;
-      const selected = pickerMode === 'audience' ? people : mentions;
-      const max = pickerMode === 'audience' ? 50 : 12;
-      if (!results.length) { pickerResults.replaceChildren(info('Nenhuma pessoa encontrada.')); return; }
-      const list = el('ul', 'hub-picker-list');
-      for (const person of results) {
-        const item = el('li');
-        const action = el('button', 'hub-picker-person');
-        action.type = 'button';
-        const checked = selected.has(person.id);
-        action.setAttribute('aria-pressed', String(checked));
-        action.append(avatar(person), el('span', '', person.name), icon(checked ? 'check2' : 'people'));
-        action.addEventListener('click', () => {
-          if (selected.has(person.id)) selected.delete(person.id);
-          else if (selected.size < max) selected.set(person.id, person);
-          else { feedback.set(`Selecione até ${max} pessoas.`, true); return; }
-          const next = selected.has(person.id);
-          action.setAttribute('aria-pressed', String(next));
-          action.lastElementChild.replaceWith(icon(next ? 'check2' : 'people'));
-          syncSelections();
-          feedback.set('');
-        });
-        item.append(action);
-        list.append(item);
+      const { people } = await ctx.request(`/maxhub/directory?q=${encodeURIComponent(query)}`);
+      if (!ctx.active() || version !== directoryVersion) return;
+      matches = people.slice(0, 8);
+      suggestionStatus.textContent = matches.length ? 'Pessoas para mencionar' : 'Nenhuma pessoa encontrada.';
+      for (const [index, person] of matches.entries()) {
+        const option = el('li', 'hub-mention-person');
+        option.id = `maxhub-mention-option-${index}`;
+        option.setAttribute('role', 'option');
+        const name = el('span', 'hub-mention-name', person.name);
+        if (sectorNames[person.sector]) name.append(el('small', '', sectorNames[person.sector]));
+        option.append(avatar(person), name);
+        option.addEventListener('mousedown', event => event.preventDefault());
+        option.addEventListener('click', () => selectMention(person));
+        suggestionList.append(option);
       }
-      pickerResults.replaceChildren(list);
+      activateOption(matches.length ? 0 : -1);
     } catch (error) {
-      if (current !== directoryVersion || !ctx.handle(error)) return;
-      pickerResults.replaceChildren(info('Não foi possível buscar pessoas.', { error: true, retry: queryPeople }));
+      if (version !== directoryVersion || !ctx.handle(error)) return;
+      suggestionStatus.textContent = 'Não foi possível buscar pessoas. Continue digitando para tentar novamente.';
     }
+  }
+
+  function syncSuggestions() {
+    const mention = !composing && !submitting && mentionAtCursor(message, marks);
+    if (!mention) { dismissedMention = undefined; closeSuggestions(); return; }
+    const key = `${mention.start}:${mention.end}:${mention.query}`;
+    if (key === activeMention?.key || key === dismissedMention) return;
+    closeSuggestions();
+    activeMention = { ...mention, key };
+    suggestions.hidden = false;
+    suggestionStatus.textContent = 'Buscando pessoas…';
+    const version = directoryVersion;
+    directoryTimer = setTimeout(() => void queryPeople(version, mention.query), 130);
   }
 
   async function getSectors() {
@@ -325,8 +367,6 @@ function mountComposer(root, { kind, ctx, onPost }) {
     sectorField.hidden = !bySector;
     sectorSelect.disabled = !bySector;
     if (bySector) void getSectors();
-    if (audienceSelect.value !== 'people' && pickerMode === 'audience') closePicker();
-    syncSelections();
   }
 
   function renderPreview() {
@@ -372,34 +412,30 @@ function mountComposer(root, { kind, ctx, onPost }) {
     event.preventDefault();
     if (submitting || reading) return;
     const text = message.value.trim();
-    const type = audienceSelect.value;
     if (!text && !imageData) { feedback.set('Escreva uma mensagem ou anexe uma imagem.', true); message.focus(); return; }
-    if (type === 'people' && !people.size) { feedback.set('Selecione pelo menos um destinatário.', true); showPicker('audience'); return; }
-    const audience = { type };
-    if (type === 'sector') audience.sector = sectorSelect.value;
-    if (type === 'people') audience.userIds = [...people.keys()];
+    const audience = audienceSelect.value === 'sector' ? { type: 'sector', sector: sectorSelect.value } : { type: 'all' };
     const postKind = kind || kindSelect.value;
-    const body = { kind: postKind, text, audience, mentions: [...mentions.keys()], ...(imageData ? { image: imageData } : {}) };
+    const mentions = [...new Set(marks.map(mark => mark.id))];
+    const body = { kind: postKind, text, audience, mentions, ...(imageData ? { image: imageData } : {}) };
     const signature = JSON.stringify(body);
     if (retryDraft?.signature !== signature) retryDraft = { signature, id: crypto.randomUUID?.() };
     if (retryDraft.id) body.clientId = retryDraft.id;
     submitting = true;
-    const controls = [kindSelect, message, audienceSelect, sectorSelect, attach, mentionOpen, send];
+    const controls = [kindSelect, message, audienceSelect, sectorSelect, attach, send];
     controls.forEach(control => { control.disabled = true; });
-    closePicker();
+    closeSuggestions();
     feedback.set('Publicando…');
     try {
-      const { post } = await ctx.request('/maxhub/feed', {
-        method: 'POST',
-        body,
-      });
+      const { post } = await ctx.request('/maxhub/feed', { method: 'POST', body });
       if (!ctx.active()) return;
       form.reset();
       retryDraft = undefined;
-      people.clear();
-      mentions.clear();
+      marks = [];
+      previousText = '';
+      beforeEdit = undefined;
       imageData = undefined;
       renderPreview();
+      updateCount();
       syncKind();
       onPost(post);
       feedback.set(postKind === 'celebration' ? 'Celebração publicada.' : 'Publicação enviada.');
@@ -414,24 +450,49 @@ function mountComposer(root, { kind, ctx, onPost }) {
     }
   }
 
+  function closeOnOutside(event) {
+    if (!editor.contains(event.target)) closeSuggestions();
+  }
+
+  message.addEventListener('beforeinput', event => {
+    beforeEdit = { start: message.selectionStart, end: message.selectionEnd, type: event.inputType || '' };
+  });
+  message.addEventListener('input', () => {
+    if (previousText !== message.value) trackEdit(editedRange(previousText, message.value, beforeEdit));
+    beforeEdit = dismissedMention = undefined;
+    syncSuggestions();
+  });
+  message.addEventListener('click', syncSuggestions);
+  message.addEventListener('compositionstart', () => { composing = true; closeSuggestions(); });
+  message.addEventListener('compositionend', () => { composing = false; syncSuggestions(); });
+  message.addEventListener('keyup', event => {
+    if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) syncSuggestions();
+  });
+  message.addEventListener('keydown', event => {
+    if (!activeMention || event.isComposing) return;
+    if (event.key === 'Tab' || event.key === 'Escape') {
+      if (event.key === 'Escape') { event.preventDefault(); dismissedMention = activeMention.key; }
+      closeSuggestions();
+    } else if (matches.length && ['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) {
+      event.preventDefault();
+      if (event.key === 'Enter') selectMention(matches[activeOption]);
+      else activateOption((activeOption + (event.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length, true);
+    }
+  });
   kindSelect.addEventListener('change', syncKind);
   audienceSelect.addEventListener('change', syncAudience);
-  mentionOpen.addEventListener('click', () => showPicker('mentions'));
   attach.addEventListener('click', () => file.click());
   file.addEventListener('change', chooseImage);
-  pickerClose.addEventListener('click', () => closePicker(true));
-  picker.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { event.preventDefault(); closePicker(true); }
-    if (event.key === 'Enter' && event.target === search) event.preventDefault();
-  });
-  search.addEventListener('input', () => {
-    clearTimeout(diskTimer);
-    directoryVersion += 1;
-    diskTimer = setTimeout(queryPeople, 220);
-  });
   form.addEventListener('submit', publish);
+  document.addEventListener('pointerdown', closeOnOutside);
+  document.addEventListener('focusin', closeOnOutside);
+  syncKind();
   syncAudience();
-  return () => clearTimeout(diskTimer);
+  return () => {
+    closeSuggestions();
+    document.removeEventListener('pointerdown', closeOnOutside);
+    document.removeEventListener('focusin', closeOnOutside);
+  };
 }
 
 function renderPost(post, ctx, onDelete) {
@@ -440,29 +501,27 @@ function renderPost(post, ctx, onDelete) {
   const head = el('header', 'hub-post-heading');
   const identity = el('div', 'hub-post-identity');
   const names = el('div', 'hub-post-name');
-  names.append(el('strong', '', post.author.name), stamp(post.createdAt));
-  identity.append(avatar(post.author), names);
-  const kind = feedKinds[post.kind] || feedKinds.post;
-  const badge = el('span', 'hub-post-kind');
-  badge.append(icon(kind.icon), document.createTextNode(kind.label));
-  head.append(identity, badge);
-  card.append(head);
-
-  const visibility = el('div', 'hub-post-visibility');
+  const meta = el('div', 'hub-post-meta');
+  const visibility = el('span', 'hub-post-visibility');
   const audienceText = post.audience.type === 'sector' ? (sectorNames[post.audience.sector] || 'Setor selecionado')
     : post.audience.type === 'people' ? 'Destinatários selecionados' : 'Toda a equipe';
   visibility.append(icon(post.audience.type === 'all' ? 'people' : post.audience.type === 'sector' ? 'buildings' : 'person'), document.createTextNode(audienceText));
-  card.append(visibility);
-  if (post.text) card.append(el('p', 'hub-post-text', post.text));
-
-  if (post.mentions.length) {
-    const mentions = el('ul', 'hub-mentions');
-    mentions.setAttribute('aria-label', 'Pessoas marcadas');
-    for (const person of post.mentions) mentions.append(el('li', '', `@${person.name}`));
-    card.append(mentions);
+  meta.append(stamp(post.createdAt), visibility);
+  names.append(el('strong', '', post.author.name), meta);
+  identity.append(avatar(post.author), names);
+  head.append(identity);
+  if (post.kind !== 'post' && Object.hasOwn(feedKinds, post.kind)) {
+    const kind = feedKinds[post.kind];
+    const badge = el('span', 'hub-post-kind');
+    badge.append(icon(kind.icon), document.createTextNode(kind.label));
+    head.append(badge);
   }
+  card.append(head);
+  renderPostContent(card, post);
+
   const path = `/maxhub/feed/${encodeURIComponent(post.id)}`;
   if (post.hasImage) {
+    const media = el('figure', 'hub-post-media');
     const image = el('img', 'hub-post-image');
     const fallback = el('p', 'hub-image-fallback', 'A imagem não está disponível.');
     fallback.hidden = true;
@@ -471,11 +530,12 @@ function renderPost(post, ctx, onDelete) {
     image.loading = 'lazy';
     image.addEventListener('error', () => { image.remove(); fallback.hidden = false; }, { once: true });
     image.src = `/v1/platform${path}/image`;
-    card.append(image, fallback);
+    media.append(image, fallback);
+    card.append(media);
   }
 
   const reactions = el('div', 'hub-reactions');
-  const like = btn('Curtir', { glyph: 'check2' });
+  const like = btn('Curtir', { glyph: 'heart' });
   const openComments = btn('Comentários', { glyph: 'chat-dots' });
   openComments.setAttribute('aria-expanded', 'false');
   const feedback = status();
@@ -585,6 +645,7 @@ function renderPost(post, ctx, onDelete) {
 
   if (post.canDelete) {
     const remove = btn('Excluir');
+    remove.classList.add('hub-post-remove');
     const confirm = el('div', 'hub-post-confirm');
     confirm.hidden = true;
     const apply = btn('Confirmar exclusão', { primary: true });
@@ -615,6 +676,36 @@ function renderPost(post, ctx, onDelete) {
 
   syncReactions();
   return card;
+}
+
+function renderPostContent(card, { text, mentions }) {
+  const identified = new Set();
+  if (text) {
+    const content = el('p', 'hub-post-text');
+    const names = [...new Set(mentions.map(person => `@${person.name}`))]
+      .sort((a, b) => b.length - a.length)
+      .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    let start = 0;
+    if (names.length) {
+      const matchMention = new RegExp(`(?<![\\p{L}\\p{M}\\p{N}_@])(?:${names.join('|')})(?![\\p{L}\\p{M}\\p{N}_])`, 'gu');
+      for (const match of text.matchAll(matchMention)) {
+        const [mention] = match;
+        content.append(document.createTextNode(text.slice(start, match.index)), el('span', 'hub-post-mention', mention));
+        identified.add(mention);
+        start = match.index + mention.length;
+      }
+    }
+    content.append(document.createTextNode(text.slice(start)));
+    card.append(content);
+  }
+
+  const remaining = mentions.filter(person => !identified.has(`@${person.name}`));
+  if (remaining.length) {
+    const tags = el('ul', 'hub-mentions');
+    tags.setAttribute('aria-label', 'Pessoas marcadas');
+    for (const person of remaining) tags.append(el('li', '', `@${person.name}`));
+    card.append(tags);
+  }
 }
 
 function mountFeed(root, area, ctx) {
@@ -741,25 +832,16 @@ function mountRanking(root, ctx, compact = false) {
   header.append(mark, headingText);
   const results = el('div', 'hub-ranking-results');
   panel.append(header, results);
-  if (compact) {
-    const shortcuts = el('div', 'hub-ranking-links');
-    shortcuts.append(
-      link('Ver ranking completo', '/maxhub?area=clima&secao=ranking', 'arrow-up-right'),
-      link('Regras e histórico', '/maxhub?area=clima&secao=historico', 'clock-history'),
-    );
-    panel.append(shortcuts);
-  }
   root.append(panel);
   let version = 0;
 
   function render({ entries, my }) {
     const current = el('div', 'hub-ranking-me');
-    const amount = el('strong', '', `${number.format(my.points)} Maxcoin`);
-    current.append(el('span', '', my.rank ? `Sua posição · ${my.rank}º` : 'Seus Maxcoin'), amount);
+    current.append(el('span', '', 'Sua posição'), el('strong', '', my.rank ? `${my.rank}º` : '—'));
     const list = el('ol', 'hub-ranking-list');
     for (const entry of (compact ? entries.slice(0, 5) : entries)) {
       const item = el('li', 'hub-ranking-entry');
-      item.dataset.position = entry.rank <= 3 ? entry.rank : '';
+      if (entry.rank >= 1 && entry.rank <= 3) item.dataset.position = entry.rank;
       if (entry.id === ctx.session?.user?.id) item.dataset.me = 'true';
       const position = el('span', 'hub-rank-position', `${entry.rank}º`);
       const person = el('span', 'hub-rank-person', entry.name);
