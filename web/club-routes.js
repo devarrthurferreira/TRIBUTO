@@ -1,5 +1,6 @@
 export const CLUB_PATHS = Object.freeze({
   home: '/clube',
+  checkIn: '/clube/check-in',
   benefits: '/clube/beneficios',
   advantages: '/clube/vantagens',
   partners: '/clube/parceiros',

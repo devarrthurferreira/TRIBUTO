@@ -42,7 +42,7 @@ const viewLabels = {
   desempenho: 'Desempenho e Desenvolvimento', engajamento: 'Clima e Engajamento',
 };
 const clubTitles = {
-  home: 'Clube Maximum', benefits: 'Benefícios | Clube Maximum',
+  home: 'Clube Maximum', checkIn: 'Check-in diário | Clube Maximum', benefits: 'Benefícios | Clube Maximum',
   advantages: 'Vantagens | Clube Maximum', partners: 'Parceiros | Clube Maximum',
 };
 const actionLabels = {

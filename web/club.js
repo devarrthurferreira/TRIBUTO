@@ -1,4 +1,5 @@
 import { CLUB_PATHS, clubPageFromPath } from './club-routes.js';
+import { mountClubCheckIn } from './club-check-in.js';
 
 const managementPreference = 'maximum.club.manager';
 
@@ -198,6 +199,10 @@ export function mountClub(root, { request, onAuthError }) {
   let editing = null;
   let page = 'home';
   let panel = null;
+  let cleanupCheckIn;
+  let savedIds = null;
+  let savedVersion = 0;
+  const pendingSaved = new Set();
 
   root.classList.add('club-shell');
   root.innerHTML = `
@@ -231,6 +236,7 @@ export function mountClub(root, { request, onAuthError }) {
   subnav.innerHTML = `
     <div class="sector-subnav-list">
       <a class="sector-subnav-link" href="${CLUB_PATHS.home}" data-club-page="home"><i class="bi bi-house-door" aria-hidden="true"></i>Início</a>
+      <a class="sector-subnav-link" href="${CLUB_PATHS.checkIn}" data-club-page="checkIn"><i class="bi bi-check2" aria-hidden="true"></i>Check-in diário</a>
       ${Object.entries(sections).map(([key, { label, icon: name }]) => `<a class="sector-subnav-link" href="${CLUB_PATHS[key]}" data-club-page="${key}"><i class="bi bi-${name}" aria-hidden="true"></i>${label}</a>`).join('')}
     </div>
     <button type="button" class="sector-subnav-link club-manage" hidden><i class="bi bi-gear" aria-hidden="true"></i><span>Gerenciar Clube</span></button>`;
@@ -273,6 +279,7 @@ export function mountClub(root, { request, onAuthError }) {
           <a class="club-button club-hero-action" href="${CLUB_PATHS.benefits}">Explorar benefícios <i class="bi bi-arrow-right" aria-hidden="true"></i></a>
         </div>
       </header>
+      <div class="club-home-check-in"></div>
       <section class="club-home-directory" aria-labelledby="clubDirectoryTitle">
         <h2 id="clubDirectoryTitle">Explore o Clube</h2>
         <div class="club-home-grid">
@@ -287,6 +294,7 @@ export function mountClub(root, { request, onAuthError }) {
         </div>
       </section>`;
     ui.content.querySelector('.club-hero').after(ui.message, ui.loadState);
+    cleanupCheckIn = mountClubCheckIn(ui.content.querySelector('.club-home-check-in'), { request, onAuthError, isAdmin, compact: true });
   }
 
   function renderCatalogPage(key) {
@@ -305,12 +313,18 @@ export function mountClub(root, { request, onAuthError }) {
       <div class="club-tools" data-panel="tools" hidden>
         <label class="club-search"><i class="bi bi-search" aria-hidden="true"></i><span class="sr-only">${section.search}</span><input type="search" data-panel="search" placeholder="Buscar ${section.singular}"></label>
         <label class="club-filter" data-panel="filter" hidden><span class="sr-only">${key === 'partners' ? 'Filtrar por segmento' : 'Filtrar por categoria'}</span><select data-panel="category"></select></label>
+        <button type="button" class="club-button club-saved-filter" data-panel="savedFilter" aria-pressed="false" hidden><i class="bi bi-bookmark" aria-hidden="true"></i>Favoritos</button>
         <p class="club-results" data-panel="results" role="status"></p>
       </div>
+      <div data-panel="savedFeedback" class="club-saved-feedback" role="status" hidden></div>
       <div class="club-list" data-panel="list"></div>`;
     const refs = Object.fromEntries(Array.from(rootPanel.querySelectorAll('[data-panel]'), (node) => [node.dataset.panel, node]));
     refs.search.addEventListener('input', renderResults);
     refs.category.addEventListener('change', renderResults);
+    refs.savedFilter.addEventListener('click', () => {
+      refs.savedFilter.setAttribute('aria-pressed', String(refs.savedFilter.getAttribute('aria-pressed') !== 'true'));
+      renderResults();
+    });
     refs.add.addEventListener('click', () => openEditor(key));
     refs.tools.before(ui.message, ui.loadState);
     ui.content.replaceChildren(rootPanel);
@@ -322,8 +336,10 @@ export function mountClub(root, { request, onAuthError }) {
       if (link.dataset.clubPage === page) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     }
-    panel = page === 'home' ? null : renderCatalogPage(page);
-    if (!panel) renderHomePage();
+    if (page === 'checkIn') {
+      cleanupCheckIn = mountClubCheckIn(ui.content, { request, onAuthError, isAdmin });
+    } else if (page === 'home') renderHomePage();
+    else panel = renderCatalogPage(page);
   }
 
   function showMessage(message) {
@@ -356,7 +372,7 @@ export function mountClub(root, { request, onAuthError }) {
 
   function render() {
     const manageLabel = managing ? 'Voltar ao Clube' : 'Gerenciar Clube';
-    ui.manage.hidden = !isAdmin;
+    ui.manage.hidden = !isAdmin || page === 'checkIn';
     ui.manage.querySelector('span').textContent = manageLabel;
     ui.manage.setAttribute('aria-label', manageLabel);
     ui.manage.setAttribute('aria-pressed', String(managing));
@@ -376,15 +392,19 @@ export function mountClub(root, { request, onAuthError }) {
     }
   }
 
-  function emptyState(section, filtered) {
+  function emptyState(section, filtered, favoritesOnly) {
     const empty = element('div', 'club-empty');
-    const title = managing ? 'Nenhum registro cadastrado' : section.empty;
-    empty.append(icon(section.icon), element('strong', '', filtered ? 'Nenhum resultado encontrado' : title));
-    if (filtered) {
-      const clear = button('Limpar filtros');
+    const title = filtered ? 'Nenhum resultado encontrado'
+      : favoritesOnly ? 'Nenhum favorito nesta página'
+        : managing ? 'Nenhum registro cadastrado' : section.empty;
+    empty.append(icon(section.icon), element('strong', '', title));
+    if (favoritesOnly && !filtered) empty.append(element('p', '', 'Use o ícone de marcador para guardar itens que quer encontrar depois.'));
+    if (filtered || favoritesOnly) {
+      const clear = button(filtered ? 'Limpar filtros' : 'Mostrar todos');
       clear.addEventListener('click', () => {
         panel.search.value = '';
         panel.category.value = '';
+        panel.savedFilter.setAttribute('aria-pressed', 'false');
         renderResults();
         panel.search.focus();
       });
@@ -393,14 +413,93 @@ export function mountClub(root, { request, onAuthError }) {
     return empty;
   }
 
+  function savedFeedback(message, retry = false) {
+    const feedback = panel.savedFeedback;
+    feedback.textContent = message;
+    feedback.hidden = !message;
+    if (retry) {
+      const retryButton = button('Tentar novamente');
+      retryButton.addEventListener('click', () => void loadSaved());
+      feedback.append(retryButton);
+    }
+  }
+
+  async function loadSaved() {
+    if (!panel || pendingSaved.size) return;
+    const version = ++savedVersion;
+    try {
+      const data = await request('/club/saved');
+      if (version !== savedVersion) return;
+      savedIds = new Set(data.ids);
+      savedFeedback('');
+      renderResults();
+    } catch (error) {
+      if (version !== savedVersion) return;
+      if (error.status === 401) { onAuthError(error); return; }
+      savedFeedback('Não foi possível carregar os favoritos.', true);
+    }
+  }
+
+  function updateSaveControl(control, id) {
+    const selected = savedIds.has(id);
+    control.setAttribute('aria-pressed', String(selected));
+    control.setAttribute('aria-disabled', String(pendingSaved.has(id)));
+    control.title = selected ? 'Remover dos favoritos' : 'Adicionar aos favoritos';
+    control.firstElementChild.className = `bi bi-bookmark${selected ? '-fill' : ''}`;
+  }
+
+  function saveControl(item) {
+    const control = button('', 'club-button club-save-item', 'bookmark');
+    control.dataset.clubSave = item.id;
+    control.setAttribute('aria-label', `Favorito: ${item.title}`);
+    updateSaveControl(control, item.id);
+    control.addEventListener('click', () => void changeSaved(item.id, control));
+    return control;
+  }
+
+  async function changeSaved(id, clickedControl) {
+    if (!savedIds || pendingSaved.has(id)) return;
+    const method = savedIds.has(id) ? 'DELETE' : 'PUT';
+    ++savedVersion;
+    const currentPanel = panel;
+    const currentSaved = savedIds;
+    const findControl = (itemId) => currentPanel.list.querySelector(`[data-club-save="${CSS.escape(itemId)}"]`);
+    pendingSaved.add(id);
+    updateSaveControl(clickedControl, id);
+    savedFeedback('');
+    try {
+      const data = await request(`/club/saved/${encodeURIComponent(id)}`, { method });
+      if (savedIds !== currentSaved) return;
+      if (data.ids.includes(id)) savedIds.add(id);
+      else savedIds.delete(id);
+    } catch (error) {
+      if (savedIds !== currentSaved) return;
+      if (error.status === 401) { onAuthError(error); return; }
+      savedFeedback(error.message || 'Não foi possível atualizar os favoritos.');
+    } finally {
+      if (savedIds === currentSaved) {
+        pendingSaved.delete(id);
+        if (currentPanel.savedFilter.getAttribute('aria-pressed') === 'true' && !savedIds.has(id)) {
+          const focusedId = document.activeElement?.dataset.clubSave;
+          renderResults();
+          if (focusedId) (findControl(focusedId) || currentPanel.savedFilter).focus({ preventScroll: true });
+        } else {
+          const control = findControl(id);
+          if (control) updateSaveControl(control, id);
+        }
+      }
+    }
+  }
+
   function renderResults() {
     if (!catalog || !panel) return;
     const section = sections[page];
-    const { category, filter, list, results, search, tools } = panel;
+    const { category, filter, list, results, savedFilter, search, tools } = panel;
     const partners = new Map(catalog.partners.filter((partner) => managing || isPublished(partner)).map((partner) => [partner.id, partner]));
     const entries = entriesInSection(catalog, section, partners, managing);
     const categories = [...new Set(entries.map(({ category: label }) => label).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
     tools.hidden = !entries.length;
+    savedFilter.hidden = !savedIds;
     filter.hidden = !categories.length;
     if (category.dataset.options !== JSON.stringify(categories)) {
       const selected = category.value;
@@ -411,18 +510,25 @@ export function mountClub(root, { request, onAuthError }) {
     }
     if (tools.hidden) search.value = '';
     const term = matchText(search.value.trim());
+    const favoritesOnly = savedFilter.getAttribute('aria-pressed') === 'true';
     const matching = entries.filter((item) => {
+      if (favoritesOnly && !savedIds.has(item.id)) return false;
       const words = [item.title, item.description, item.offer, item.address, item.category, partners.get(item.partnerId)?.title];
       return (!category.value || category.value === item.category) && (!term || matchText(words.join(' ')).includes(term));
     });
     results.textContent = `${matching.length} ${matching.length === 1 ? 'resultado' : 'resultados'}`;
     if (!matching.length) {
-      list.replaceChildren(emptyState(section, Boolean(term || category.value)));
+      list.replaceChildren(emptyState(section, Boolean(term || category.value), favoritesOnly && !!entries.length));
       return;
     }
     list.replaceChildren(...matching.map((item) => {
       const card = element('article', 'club-card');
-      decorateCard(card, item, section, partners.get(item.partnerId));
+      const partner = partners.get(item.partnerId);
+      decorateCard(card, item, section, partner);
+      if (savedIds && isPublished(item) && (!item.partnerId || (partner && isPublished(partner)))) {
+        card.classList.add('club-card-savable');
+        card.querySelector('.club-card-heading').append(saveControl(item));
+      }
       if (managing) renderAdminActions(card, page, item);
       return card;
     }));
@@ -523,7 +629,7 @@ export function mountClub(root, { request, onAuthError }) {
   }
 
   async function load(keepMessage = false) {
-    if (!opened) return;
+    if (!opened || page === 'checkIn') return;
     const current = ++generation;
     if (!keepMessage) showMessage('');
     if (!catalog) setLoadState('Carregando o Clube…');
@@ -596,7 +702,10 @@ export function mountClub(root, { request, onAuthError }) {
     }
   });
   window.addEventListener('pageshow', (event) => {
-    if (opened && event.persisted && !saving) void load();
+    if (opened && event.persisted && !saving) {
+      void load();
+      void loadSaved();
+    }
   });
 
   function open({ isAdmin: canManage, page: nextPage = 'home' }) {
@@ -610,7 +719,9 @@ export function mountClub(root, { request, onAuthError }) {
     renderPage();
     menuButton.hidden = false;
     showMenu(!narrowViewport.matches);
+    render();
     void load();
+    void loadSaved();
   }
 
   function close() {
@@ -619,6 +730,11 @@ export function mountClub(root, { request, onAuthError }) {
     showMenu(false);
     menuButton.hidden = true;
     generation += 1;
+    savedVersion += 1;
+    savedIds = null;
+    pendingSaved.clear();
+    cleanupCheckIn?.();
+    cleanupCheckIn = undefined;
     isAdmin = false;
     managing = false;
     rememberManagement(false);

@@ -1,7 +1,7 @@
 import { ApiError } from '../api/validation.mjs';
 import { applyClubFields, CLUB_COLLECTIONS } from './catalog.mjs';
 
-const SCHEMA = `CREATE TABLE IF NOT EXISTS platform_club_catalog (
+const SCHEMAS = [`CREATE TABLE IF NOT EXISTS platform_club_catalog (
   id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
   collection VARCHAR(10) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   title VARCHAR(160) NOT NULL, description TEXT NOT NULL, active TINYINT(1) NOT NULL,
@@ -10,7 +10,24 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS platform_club_catalog (
   deleted_at DATETIME(3) NULL,
   KEY idx_club_catalog (collection, deleted_at, active, starts_at),
   KEY idx_club_partner (partner_id, deleted_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+`CREATE TABLE IF NOT EXISTS platform_club_checkins (
+  user_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  check_date DATE NOT NULL,
+  mood TINYINT UNSIGNED NULL CHECK (mood BETWEEN 1 AND 5),
+  PRIMARY KEY (user_id, check_date),
+  KEY idx_club_checkins_date (check_date, mood)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+`CREATE TABLE IF NOT EXISTS platform_club_saved (
+  user_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  item_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  PRIMARY KEY (user_id, item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`];
+
+const CATALOG_WITH_PARTNER = `FROM platform_club_catalog item
+  LEFT JOIN platform_club_catalog partner ON partner.id = item.partner_id AND partner.deleted_at IS NULL`;
+const VISIBLE_ITEM = 'item.active = 1 AND (item.partner_id IS NULL OR partner.active = 1)';
+const SAVABLE_ITEM = `item.deleted_at IS NULL AND item.collection IN ('benefits', 'partners') AND ${VISIBLE_ITEM}`;
 
 function utcIso(value) {
   if (!value) return null;
@@ -52,18 +69,60 @@ export class ClubMySqlStore {
   }
 
   async initialize() {
-    await this.platformStore.pool.query(SCHEMA);
+    for (const schema of SCHEMAS) await this.platformStore.pool.query(schema);
   }
 
   async list(includeInactive) {
-    const [rows] = await this.platformStore.pool.execute(`SELECT item.* FROM platform_club_catalog item
-      LEFT JOIN platform_club_catalog partner ON partner.id = item.partner_id AND partner.deleted_at IS NULL
+    const [rows] = await this.platformStore.pool.execute(`SELECT item.* ${CATALOG_WITH_PARTNER}
       WHERE item.deleted_at IS NULL
-        AND (? OR (item.active = 1 AND (item.partner_id IS NULL OR partner.active = 1)))
+        AND (? OR (${VISIBLE_ITEM}))
       ORDER BY item.starts_at, item.title, item.id`, [includeInactive]);
     const catalog = Object.fromEntries(CLUB_COLLECTIONS.map(collection => [collection, []]));
     for (const row of rows) catalog[row.collection].push(asRecord(row));
     return catalog;
+  }
+
+  async getMoodHistory(userId, firstDay, today) {
+    const [rows] = await this.platformStore.pool.execute(`SELECT check_date, mood FROM platform_club_checkins
+      WHERE user_id = ? AND check_date >= ? AND check_date <= ? ORDER BY check_date DESC`, [userId, firstDay, today]);
+    return rows.map(row => ({ date: row.check_date, mood: row.mood }));
+  }
+
+  async saveMood(userId, today, mood) {
+    await this.platformStore.pool.execute(`INSERT INTO platform_club_checkins (user_id, check_date, mood)
+      VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE mood = COALESCE(VALUES(mood), mood)`, [userId, today, mood]);
+  }
+
+  async getMoodSummary(firstDay, today, minimum) {
+    const [rows] = await this.platformStore.pool.execute(`SELECT check_date, COUNT(*) AS total, ROUND(AVG(mood), 2) AS average,
+      SUM(mood = 1) AS mood1, SUM(mood = 2) AS mood2, SUM(mood = 3) AS mood3, SUM(mood = 4) AS mood4, SUM(mood = 5) AS mood5
+      FROM platform_club_checkins WHERE check_date >= ? AND check_date < ? AND mood IS NOT NULL
+      GROUP BY check_date HAVING COUNT(*) >= ? ORDER BY check_date DESC`, [firstDay, today, minimum]);
+    return rows.map(row => ({
+      date: row.check_date, total: Number(row.total), average: Number(row.average),
+      counts: [row.mood1, row.mood2, row.mood3, row.mood4, row.mood5].map(Number),
+    }));
+  }
+
+  async listSaved(userId) {
+    const [rows] = await this.platformStore.pool.execute(`SELECT item.id ${CATALOG_WITH_PARTNER}
+      INNER JOIN platform_club_saved saved ON saved.item_id = item.id
+      WHERE saved.user_id = ? AND ${SAVABLE_ITEM} ORDER BY item.id`, [userId]);
+    return rows.map(row => row.id);
+  }
+
+  async addSaved(userId, id) {
+    await this.platformStore.pool.execute(`INSERT INTO platform_club_saved (user_id, item_id)
+      SELECT ?, item.id ${CATALOG_WITH_PARTNER} WHERE item.id = ? AND ${SAVABLE_ITEM}
+      ON DUPLICATE KEY UPDATE item_id = platform_club_saved.item_id`, [userId, id]);
+    const ids = await this.listSaved(userId);
+    if (!ids.includes(id)) throw new ApiError(404, 'CLUB_NOT_FOUND', 'Registro do Clube indisponível.');
+    return ids;
+  }
+
+  async removeSaved(userId, id) {
+    await this.platformStore.pool.execute('DELETE FROM platform_club_saved WHERE user_id = ? AND item_id = ?', [userId, id]);
+    return this.listSaved(userId);
   }
 
   async create(collection, id, fields, actorId) {
