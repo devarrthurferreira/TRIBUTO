@@ -54,46 +54,20 @@ function calendarCell(day, mood, today) {
 export function mountClubCheckIn(container, { request, onAuthError }) {
   container.innerHTML = `
     <section class="club-checkin" aria-labelledby="clubCheckInTitle">
-      <form class="club-checkin-card club-checkin-form">
-        <div class="club-checkin-heading">
-          <div class="club-checkin-title">
-            <span class="club-checkin-emblem" aria-hidden="true"><i class="bi bi-check2"></i></span>
-            <div><h2 id="clubCheckInTitle">Check-in diário</h2><p>Registre sua presença e, se quiser, como está se sentindo.</p></div>
-          </div>
-          <div class="club-checkin-meta">
-            <time class="club-checkin-today" data-checkin-part="date" hidden></time>
-            <span class="club-checkin-badge" data-checkin-part="visibility" hidden></span>
-          </div>
+      <div class="club-checkin-card club-checkin-question">
+        <h2 id="clubCheckInTitle">Como você está hoje?</h2>
+        <p id="clubCheckInShareHint" class="club-checkin-hint">Ao escolher, você envia seu nome, a data e a resposta ao RH.</p>
+        <div class="club-checkin-choices" data-checkin-part="choices" role="group" aria-labelledby="clubCheckInTitle" aria-describedby="clubCheckInShareHint">
+          ${clubMoods.map(({ value, face, label }) => `
+            <button type="button" class="club-checkin-choice" data-mood="${value}" aria-pressed="false" aria-disabled="true">
+              <span class="club-checkin-face" aria-hidden="true">${face}</span>
+              <span class="club-checkin-choice-label">${label}</span>
+              <span class="club-checkin-mark" aria-hidden="true">✓</span>
+            </button>`).join('')}
         </div>
-        <div class="club-checkin-content">
-          <fieldset class="club-checkin-scale" data-checkin-part="scale" disabled>
-            <legend>Como você está hoje?</legend>
-            <div class="club-checkin-choices">
-              ${clubMoods.map(({ value, face, label }) => `
-                <label class="club-checkin-choice" data-mood="${value}">
-                  <input class="sr-only" type="radio" name="mood" value="${value}">
-                  <span class="club-checkin-face" aria-hidden="true">${face}</span>
-                  <span class="club-checkin-choice-label">${label}</span>
-                  <span class="club-checkin-mark" aria-hidden="true">✓</span>
-                </label>`).join('')}
-            </div>
-          </fieldset>
-          <label class="club-checkin-share">
-            <i class="bi bi-shield-lock" aria-hidden="true"></i>
-            <span>
-              <strong id="clubCheckInShareLabel">Compartilhar este registro com o RH</strong>
-              <span id="clubCheckInShareHint">Ao ativar, o RH autorizado vê seu nome, a data e o humor informado. Você pode mudar esta opção no mesmo dia.</span>
-            </span>
-            <input type="checkbox" data-checkin-part="share" aria-labelledby="clubCheckInShareLabel" aria-describedby="clubCheckInShareHint" disabled>
-          </label>
-          <div class="club-checkin-actions">
-            <button class="club-button club-primary" type="submit" data-checkin-part="submit" disabled>Salvar humor</button>
-            <button class="club-button" type="button" data-checkin-part="presence" disabled>Registrar só a presença</button>
-            <button class="club-button" type="button" data-checkin-part="retry" hidden>Tentar novamente</button>
-          </div>
-          <p class="club-checkin-status" data-checkin-part="status" role="status" tabindex="-1"></p>
-        </div>
-      </form>
+        <p class="club-checkin-status" data-checkin-part="status" role="status"></p>
+        <button class="club-button club-checkin-retry" type="button" data-checkin-part="retry" hidden>Tentar novamente</button>
+      </div>
       <details class="club-checkin-card club-checkin-history">
         <summary>
           <i class="bi bi-clock-history" aria-hidden="true"></i>
@@ -109,12 +83,11 @@ export function mountClubCheckIn(container, { request, onAuthError }) {
       </details>
     </section>`;
 
-  const form = container.querySelector('form');
   const refs = Object.fromEntries([...container.querySelectorAll('[data-checkin-part]')].map(node => [node.dataset.checkinPart, node]));
-  const radioButtons = [...refs.scale.querySelectorAll('input')];
+  const choices = [...refs.choices.querySelectorAll('button')];
   let state = null;
   let loading = false;
-  let saving = false;
+  let sending = false;
   let disposed = false;
 
   function status(message, kind = '') {
@@ -123,27 +96,15 @@ export function mountClubCheckIn(container, { request, onAuthError }) {
   }
 
   function renderControls() {
-    const disabled = !state || loading || saving;
-    const mood = Number(form.elements.mood.value);
-    const moodChanged = Boolean(mood) && mood !== state?.todayMood;
-    const sharingChanged = state?.checkedIn && refs.share.checked !== Boolean(state.sharedWithRh);
-    refs.scale.disabled = refs.share.disabled = refs.presence.disabled = disabled;
-    refs.submit.disabled = disabled || (!moodChanged && !sharingChanged);
-    refs.submit.textContent = !moodChanged && sharingChanged ? 'Salvar compartilhamento' : state?.todayMood ? 'Atualizar humor' : 'Salvar humor';
-    refs.presence.hidden = Boolean(state?.checkedIn);
-    form.setAttribute('aria-busy', String(loading || saving));
+    refs.choices.setAttribute('aria-busy', String(loading || sending));
+    for (const choice of choices) {
+      choice.setAttribute('aria-disabled', String(!state || loading || sending));
+      choice.setAttribute('aria-pressed', String(Boolean(state?.sharedWithRh) && Number(choice.dataset.mood) === state.todayMood));
+    }
   }
 
   function renderState(data) {
     state = data;
-    refs.date.hidden = false;
-    refs.date.dateTime = state.today;
-    refs.date.textContent = dateLabel.format(dayDate(state.today));
-    refs.share.checked = Boolean(state.sharedWithRh);
-    refs.visibility.hidden = !state.checkedIn;
-    refs.visibility.textContent = state.sharedWithRh ? 'Compartilhado com o RH' : 'Registro privado';
-    refs.visibility.dataset.shared = String(Boolean(state.sharedWithRh));
-    for (const radio of radioButtons) radio.checked = Number(radio.value) === state.todayMood;
     const moodsByDay = new Map(state.history.map(({ date, mood }) => [date, mood]));
     refs.history.replaceChildren(...recentDays(state.today).map(day => calendarCell(day, moodsByDay.get(day), day === state.today)));
     refs.history.hidden = refs.historyLegend.hidden = false;
@@ -151,20 +112,21 @@ export function mountClubCheckIn(container, { request, onAuthError }) {
   }
 
   async function loadPersonal() {
-    if (saving || loading || disposed) return;
+    if (sending || loading || disposed) return;
     loading = true;
-    status('Carregando check-in…');
+    status('Carregando…');
     refs.retry.hidden = true;
     renderControls();
     try {
       const data = await request('/club/check-in');
       if (disposed) return;
       renderState(data);
-      status(data.todayMood ? 'Humor registrado hoje. Você pode atualizar sua resposta.' : data.checkedIn ? 'Presença registrada hoje.' : '', data.checkedIn ? 'success' : '');
+      const answered = data.todayMood && data.sharedWithRh;
+      status(answered ? 'Resposta de hoje enviada ao RH.' : '', answered ? 'success' : '');
     } catch (error) {
       if (disposed) return;
       if (error.status === 401) { onAuthError(error); return; }
-      status('Não foi possível carregar o check-in.', 'error');
+      status('Não foi possível carregar suas respostas.', 'error');
       refs.retry.hidden = false;
       refs.historyInfo.textContent = 'Não foi possível carregar seu histórico.';
     } finally {
@@ -173,26 +135,23 @@ export function mountClubCheckIn(container, { request, onAuthError }) {
     }
   }
 
-  async function save(mood) {
-    if (!state || saving || loading || disposed) return;
-    saving = true;
-    const sharingOnly = state.checkedIn && mood === null;
-    status('Salvando…');
+  async function sendMood(mood) {
+    if (!state || sending || loading || disposed) return;
+    sending = true;
+    refs.retry.hidden = true;
+    status('Enviando ao RH…');
     renderControls();
     try {
-      const data = await request('/club/check-in', { method: 'PUT', body: { mood, shareWithRh: refs.share.checked } });
+      const data = await request('/club/check-in', { method: 'PUT', body: { mood, shareWithRh: true } });
       if (disposed) return;
       renderState(data);
-      const message = sharingOnly ? (data.sharedWithRh ? 'Registro compartilhado com o RH.' : 'Compartilhamento com o RH desativado.')
-        : mood === null ? 'Presença registrada hoje.' : 'Humor registrado hoje.';
-      status(message, 'success');
-      refs.status.focus({ preventScroll: true });
+      status('Resposta de hoje enviada ao RH.', 'success');
     } catch (error) {
       if (disposed) return;
       if (error.status === 401) { onAuthError(error); return; }
-      status('Não foi possível salvar seu check-in. Tente novamente.', 'error');
+      status('Não foi possível confirmar o envio. Escolha uma opção para tentar novamente.', 'error');
     } finally {
-      saving = false;
+      sending = false;
       if (!disposed) renderControls();
     }
   }
@@ -207,14 +166,9 @@ export function mountClubCheckIn(container, { request, onAuthError }) {
     if (event.persisted) void loadPersonal();
   }
 
-  form.addEventListener('submit', event => {
-    event.preventDefault();
-    if (refs.submit.disabled) return;
-    const mood = Number(form.elements.mood.value);
-    void save(mood && mood !== state.todayMood ? mood : null);
-  });
-  form.addEventListener('change', renderControls);
-  refs.presence.addEventListener('click', () => void save(null));
+  for (const choice of choices) {
+    choice.addEventListener('click', () => void sendMood(Number(choice.dataset.mood)));
+  }
   refs.retry.addEventListener('click', loadPersonal);
   document.addEventListener('visibilitychange', refreshIfNewDay);
   window.addEventListener('pageshow', restoreAfterNavigation);

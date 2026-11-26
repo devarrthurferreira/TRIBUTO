@@ -10,50 +10,12 @@
   border-radius: clamp(15px, 2.1cqw, 24px);
   background: var(--club-surface);
 }
-.club-checkin-form { overflow: hidden; box-shadow: 0 8px 23px var(--portal-aura); }
-.club-checkin-heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px 18px;
-  padding: clamp(18px, 3.4cqw, 37px) var(--checkin-space);
-  background:
-    radial-gradient(circle at 100% 95%, #d8869c5c 0 14%, transparent 14.4%),
-    radial-gradient(circle at 96% 100%, transparent 0 25%, #edb2c42d 25.2% 25.45%, transparent 25.7%),
-    linear-gradient(120deg, #441930, #78293f 66%, #8e3e50);
-  color: #fff;
+.club-checkin-question {
+  padding: var(--checkin-space);
+  box-shadow: 0 8px 23px var(--portal-aura);
 }
-.club-checkin-title { display: flex; align-items: center; gap: clamp(10px, 1.5cqw, 17px); }
-.club-checkin-emblem {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: clamp(38px, 4.8cqw, 53px);
-  aspect-ratio: 1;
-  border: 1px solid #fbe4ed52;
-  border-radius: 15px;
-  background: #f7dce624;
-  color: #fff;
-  font-size: clamp(19px, 2.5cqw, 27px);
-}
-.club-checkin h2 { margin: 0; font-size: clamp(21px, 2.8cqw, 34px); line-height: 1.15; letter-spacing: -.03em; }
-.club-checkin-heading p { margin: 5px 0 0; color: #fce9ee; font-size: clamp(12px, 1.35cqw, 14px); line-height: 1.5; }
-.club-checkin-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
-.club-checkin-today, .club-checkin-badge {
-  padding: 5px 9px;
-  border: 1px solid #fbe4ed59;
-  border-radius: 20px;
-  background: #491e32a3;
-  color: #fff8fa;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.4;
-}
-.club-checkin-badge[data-shared="true"] { border-color: #98d4bf87; background: #244a40; color: #effff9; }
-.club-checkin-content { padding: var(--checkin-space); }
-.club-checkin-scale { min-width: 0; padding: 0; margin: 0; border: 0; }
-.club-checkin-scale legend { margin: 0 0 12px; padding: 0; color: var(--ink); font-size: clamp(14px, 1.65cqw, 18px); font-weight: 650; }
+.club-checkin-question h2 { margin: 0; font-size: clamp(19px, 2.5cqw, 28px); line-height: 1.2; letter-spacing: -.025em; }
+.club-checkin-hint { margin: 6px 0 15px; color: var(--muted); font-size: clamp(11px, 1.5cqw, 13px); line-height: 1.5; }
 .club-checkin-choices { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: clamp(3px, 1.2cqw, 14px); }
 .club-checkin [data-mood="1"] { --mood-color: #cc5267; }
 .club-checkin [data-mood="2"] { --mood-color: #ce784d; }
@@ -66,6 +28,7 @@
   justify-items: center;
   align-content: start;
   gap: clamp(4px, .9cqw, 10px);
+  min-width: 0;
   min-height: clamp(72px, 10.8cqw, 126px);
   padding: clamp(8px, 1.45cqw, 18px) 3px;
   border: 1px solid color-mix(in srgb, var(--mood-color) 42%, var(--club-edge));
@@ -76,8 +39,8 @@
   cursor: pointer;
   transition: background-color .18s ease, border-color .18s ease, transform .18s ease;
 }
-.club-checkin-choice:has(input:enabled):hover { border-color: var(--mood-color); transform: translateY(-2px); }
-.club-checkin-choice:has(input:checked) {
+.club-checkin-choice:not([aria-disabled="true"]):hover { border-color: var(--mood-color); transform: translateY(-2px); }
+.club-checkin-choice[aria-pressed="true"] {
   border-color: var(--mood-color);
   background: color-mix(in srgb, var(--mood-color) 23%, var(--club-surface));
   box-shadow: inset 0 -3px var(--mood-color);
@@ -95,9 +58,10 @@
   font-size: 11px;
   line-height: 1;
 }
-.club-checkin-choice:has(input:checked) .club-checkin-mark { display: grid; }
-.club-checkin-choice:has(input:focus-visible) { outline: 2px solid var(--club-accent); outline-offset: 2px; }
-.club-checkin-choice:has(input:disabled) { cursor: default; }
+.club-checkin-choice[aria-pressed="true"] .club-checkin-mark { display: grid; }
+.club-checkin-choice:focus-visible { outline: 2px solid var(--club-accent); outline-offset: 2px; }
+.club-checkin-choice[aria-disabled="true"] { cursor: default; }
+.club-checkin-choices[aria-busy="true"] .club-checkin-choice { cursor: wait; }
 .club-checkin-face {
   display: grid;
   place-items: center;
@@ -110,27 +74,7 @@
   line-height: 1;
 }
 .club-checkin-choice-label { min-width: 0; font-size: clamp(9px, 1.45cqw, 14px); font-weight: 650; line-height: 1.3; overflow-wrap: anywhere; }
-.club-checkin-share {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px clamp(8px, 1.2cqw, 14px);
-  margin-top: clamp(13px, 2.1cqw, 24px);
-  padding: clamp(9px, 1.5cqw, 15px);
-  border: 1px solid var(--club-edge);
-  border-radius: 12px;
-  background: var(--portal-floor);
-  font-size: 13px;
-  cursor: pointer;
-}
-.club-checkin-share:has(input:checked) { border-color: color-mix(in srgb, var(--club-accent) 40%, var(--club-edge)); background: var(--club-tint); }
-.club-checkin-share > i { color: var(--club-accent); font-size: 17px; }
-.club-checkin-share strong, #clubCheckInShareHint { display: block; line-height: 1.5; }
-#clubCheckInShareHint { margin-top: 2px; color: var(--muted); font-size: 11px; }
-.club-checkin-share input { margin: 0; inline-size: 18px; block-size: 18px; accent-color: var(--club-primary); cursor: inherit; }
-.club-checkin-share:has(input:focus-visible) { outline: 2px solid var(--club-accent); outline-offset: 2px; }
-.club-checkin-share:has(input:disabled) { cursor: default; }
-.club-checkin-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: clamp(12px, 1.8cqw, 22px); }
+.club-checkin-retry { margin-top: 8px; }
 .club-checkin-status { margin: 9px 0 0; color: var(--ink-soft); font-size: 13px; font-weight: 600; }
 .club-checkin-status:empty { display: none; }
 .club-checkin-status[data-kind="success"] { color: var(--club-success); }
@@ -191,10 +135,8 @@
 }
 @container (max-width: 420px) {
   .club-checkin-mark { inset: 3px 3px auto auto; width: 12px; font-size: 8px; }
-  .club-checkin-share { grid-template-columns: minmax(0, 1fr) auto; }
-  .club-checkin-share > i { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .club-checkin-choice, .club-checkin-history summary > i:last-child { transition: none; }
-  .club-checkin-choice:has(input:enabled):hover { transform: none; }
+  .club-checkin-choice:not([aria-disabled="true"]):hover { transform: none; }
 }
