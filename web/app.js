@@ -110,13 +110,13 @@ function withBusy(button, busy, message = 'Aguarde...') {
     button.disabled = false;
   }
 }
-async function request(path, { method = 'GET', body } = {}) {
+async function request(path, { method = 'GET', body, signal } = {}) {
   const headers = { Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (!['GET', 'HEAD'].includes(method) && state.session?.csrfToken) headers['X-CSRF-Token'] = state.session.csrfToken;
   let response;
   try {
-    response = await fetch(`${API}${path}`, { method, headers, credentials: 'same-origin', body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error' });
+    response = await fetch(`${API}${path}`, { method, headers, credentials: 'same-origin', body: body === undefined ? undefined : JSON.stringify(body), signal, redirect: 'error' });
   } catch {
     throw new Error('A plataforma não respondeu. Verifique sua conexão e tente novamente.');
   }
@@ -280,6 +280,7 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
     history.replaceState(null, '', `/${fragment}`);
   }
   $('appView').hidden = true;
+  $('sessionLoading').hidden = true;
   $('authView').hidden = false;
   document.title = 'Central Maximum | Maximum Contábil';
   $('setupTokenRow').hidden = !setupRequired;
@@ -308,14 +309,14 @@ function applySession(session) {
   const wantedPath = target.split(/[?#]/)[0];
   if (location.pathname !== wantedPath) {
     if (view === 'club') history.replaceState(null, '', wantedPath);
+    else if (view === 'maxhub') history.replaceState(null, '', target);
     else {
-      location.replace(view === 'maxhub' ? target : `${wantedPath}${wantedPath === DASHBOARD_PATH ? location.hash : ''}`);
+      location.replace(`${wantedPath}${wantedPath === DASHBOARD_PATH ? location.hash : ''}`);
       return;
     }
   }
   state.session = session;
   $('authView').hidden = true;
-  $('appView').hidden = false;
   $('profileName').textContent = session.user.name || session.user.email;
   $('profileRole').textContent = isAdmin() ? 'Administrador' : 'Equipe';
   $('profileInitials').textContent = initials(session.user.name);
@@ -370,6 +371,9 @@ function applySession(session) {
   void initialLoad();
   const surface = navigate(view, { replace: true });
   if (surface) {
+    $('appView').hidden = false;
+    $('sessionLoading').hidden = true;
+    $('conteudo').focus({ preventScroll: true });
     initChat(session, { surface, notify: updateChatBadges });
     const url = new URL(location.href);
     if (state.view === 'overview' && url.searchParams.has('talk')) {
@@ -398,8 +402,12 @@ async function handleAuth(event) {
   try {
     const session = await request(setup ? '/setup' : '/login', { method: 'POST', body });
     $('authForm').reset();
+    $('authView').hidden = true;
+    $('sessionLoading').hidden = false;
     applySession(session);
   } catch (error) {
+    $('sessionLoading').hidden = true;
+    $('authView').hidden = false;
     formError('authError', error.message);
   } finally {
     withBusy($('authSubmit'), false);
@@ -1521,6 +1529,7 @@ async function loadFiscalDocuments() {
 
 function setupEvents() {
   $('authForm').addEventListener('submit', handleAuth);
+  $('sessionRetry').addEventListener('click', () => void restoreSession());
   $('logoutButton').addEventListener('click', logout);
   $('profileAvatar').addEventListener('load', () => {
     $('profileAvatar').hidden = false;
@@ -1615,4 +1624,20 @@ mountPortal(() => {
   if (state.view === 'overview') openChat();
   else location.assign('/home?talk=1');
 }, () => sectorNavigation.open('whatsapp'));
-request('/session').then(applySession).catch((error) => showAuth(false, error.message, preservePortalLink()));
+async function restoreSession() {
+  $('sessionMessage').textContent = 'Verificando seu acesso…';
+  $('sessionProgress').hidden = false;
+  $('sessionRetry').hidden = true;
+  let session;
+  try {
+    session = await request('/session', { signal: AbortSignal.timeout?.(16_000) });
+  } catch {
+    $('sessionProgress').hidden = true;
+    $('sessionMessage').textContent = 'Não foi possível verificar seu acesso.';
+    $('sessionRetry').hidden = false;
+    return;
+  }
+  applySession(session);
+}
+
+void restoreSession();

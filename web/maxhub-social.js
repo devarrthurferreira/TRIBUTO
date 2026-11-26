@@ -167,11 +167,10 @@ function mountComposer(root, { kind, ctx, onPost }) {
   const signedIn = ctx.session?.user || {};
   const identity = el('div', 'hub-composer-identity');
   identity.append(avatar(signedIn), el('h3', '', kind === 'announcement' ? 'Novo comunicado' : kind === 'celebration' ? 'Nova celebração' : 'Compartilhe com a equipe'));
-  top.append(identity);
   const kindSelect = el('select', 'hub-input');
+  kindSelect.setAttribute('aria-label', 'Tipo de publicação');
   kindSelect.append(new Option('Publicação', 'post'), new Option('Celebração', 'celebration'));
   kindSelect.value = kind || 'post';
-  if (!kind) top.append(field('Tipo de publicação', kindSelect));
 
   const editor = el('div', 'hub-composer-editor');
   const message = el('textarea', 'hub-input hub-composer-text');
@@ -195,13 +194,17 @@ function mountComposer(root, { kind, ctx, onPost }) {
 
   const toolbar = el('div', 'hub-composer-toolbar');
   const audienceSelect = el('select', 'hub-input');
-  audienceSelect.append(new Option('Todos', 'all'), new Option('Um setor', 'sector'));
+  audienceSelect.setAttribute('aria-label', 'Quem pode ver');
+  audienceSelect.append(new Option('Todos', 'all'), new Option('Setor', 'sector'));
   const sectorSelect = el('select', 'hub-input');
+  sectorSelect.setAttribute('aria-label', 'Setor');
   sectorSelect.required = true;
   sectorSelect.append(new Option('Selecione um setor', ''));
   const sectorField = field('Setor', sectorSelect);
-  const toolbarFields = el('div', 'hub-composer-fields');
-  toolbarFields.append(field('Quem pode ver', audienceSelect), sectorField);
+  const fields = el('div', `hub-composer-fields${kind ? ' hub-composer-fields-fixed' : ''}`);
+  if (!kind) fields.append(field('Tipo de publicação', kindSelect));
+  fields.append(field('Quem pode ver', audienceSelect), sectorField);
+  top.append(identity, fields);
   const tools = el('div', 'hub-composer-tools');
   const attach = btn('', { glyph: 'paperclip' });
   attach.classList.add('hub-composer-attach');
@@ -221,7 +224,7 @@ function mountComposer(root, { kind, ctx, onPost }) {
   const feedback = status();
   const preview = el('div', 'hub-image-preview');
   preview.hidden = true;
-  form.append(top, editor, toolbarFields, preview, file, toolbar, feedback.line);
+  form.append(top, editor, preview, file, toolbar, feedback.line);
   root.append(form);
 
   let marks = [];
@@ -495,28 +498,320 @@ function mountComposer(root, { kind, ctx, onPost }) {
   };
 }
 
-function renderPost(post, ctx, onDelete) {
+function feedAction(label, glyph, className = '') {
+  const control = btn('', { glyph });
+  control.classList.add('hub-feed-action');
+  if (className) control.classList.add(className);
+  control.setAttribute('aria-label', label);
+  control.title = label;
+  return control;
+}
+
+function bindFeedToggle(control, { ctx, path, model, key, count, feedback, available, onChange }) {
+  const counter = count && el('span', 'hub-action-count');
+  if (counter) {
+    counter.setAttribute('aria-hidden', 'true');
+    control.append(counter);
+  }
+  let pending = false;
+
+  function sync() {
+    control.setAttribute('aria-pressed', String(Boolean(model[key])));
+    if (!counter) return;
+    const [property, singular, plural] = count;
+    const value = Number(model[property]) || 0;
+    counter.textContent = value ? number.format(value) : '';
+    counter.hidden = !value;
+    control.setAttribute('aria-description', `${number.format(value)} ${value === 1 ? singular : plural}`);
+  }
+
+  control.addEventListener('click', async () => {
+    if (pending || !available()) return;
+    pending = true;
+    control.setAttribute('aria-disabled', 'true');
+    feedback.set('');
+    try {
+      const result = await ctx.request(path, { method: model[key] ? 'DELETE' : 'PUT' });
+      if (!ctx.active() || !control.isConnected) return;
+      model[key] = result[key];
+      if (count) model[count[0]] = result[count[0]];
+      sync();
+      onChange?.();
+    } catch (error) {
+      if (ctx.handle(error) && control.isConnected) feedback.set(error.message || 'Não foi possível concluir a ação.', true);
+    } finally {
+      pending = false;
+      control.removeAttribute('aria-disabled');
+    }
+  });
+  sync();
+  return sync;
+}
+
+function renderPostComments(post, { ctx, path, available, savedOnly, onSave }) {
+  const section = el('section', 'hub-comments');
+  section.setAttribute('aria-label', 'Comentários da publicação');
+  const preview = el('ul', 'hub-comment-list hub-comment-preview');
+  const expand = btn('', { glyph: 'chat-dots' });
+  expand.classList.add('hub-comment-expand');
+  const panel = el('div', 'hub-comments-panel');
+  panel.hidden = true;
+  panel.id = `maxhub-comments-${post.id}`;
+  expand.setAttribute('aria-controls', panel.id);
+  const body = el('div', 'hub-comments-body');
+  const commentStatus = status();
+  const form = el('form', 'hub-comment-form');
+  const target = el('div', 'hub-comment-target');
+  target.hidden = true;
+  const targetText = el('span');
+  const cancel = feedAction('Cancelar resposta', 'x-lg');
+  target.append(targetText, cancel);
+  const reply = el('textarea', 'hub-input');
+  reply.required = true;
+  reply.maxLength = 600;
+  reply.rows = 2;
+  const send = btn('Comentar', { glyph: 'send', primary: true, type: 'submit' });
+  form.append(target, reply, send);
+  panel.append(body, form);
+  section.append(preview, expand, panel, commentStatus.line);
+
+  const rows = new Map();
+  let entries = [];
+  let revision = 0;
+  let parentId;
+  let loading = false;
+  let received = false;
+  let submitting = false;
+  let showSaved = savedOnly;
+  let loadVersion = 0;
+
+  function setReplyTarget(comment) {
+    parentId = comment?.parentId || comment?.id;
+    target.hidden = !comment;
+    targetText.textContent = comment ? `Respondendo a ${comment.author.name}` : '';
+    const label = comment ? 'Escreva uma resposta' : 'Escreva um comentário';
+    reply.placeholder = `${label}…`;
+    reply.setAttribute('aria-label', label);
+    send.lastChild.textContent = comment ? 'Responder' : 'Comentar';
+  }
+
+  function showPanel(open) {
+    panel.hidden = !open;
+    expand.setAttribute('aria-expanded', String(open));
+    expand.firstChild.className = `bi bi-${open ? 'chevron-up' : 'chat-dots'}`;
+    expand.lastChild.textContent = open
+      ? (showSaved ? 'Ocultar comentários salvos' : 'Ocultar comentários')
+      : showSaved ? 'Mostrar comentários salvos' : post.commentCount ? 'Mostrar todos os comentários' : 'Comentar';
+    if (post.commentCount && !showSaved) {
+      expand.setAttribute('aria-description', `${number.format(post.commentCount)} ${post.commentCount === 1 ? 'comentário' : 'comentários'}`);
+    } else expand.removeAttribute('aria-description');
+  }
+
+  function remember(comment, started = revision) {
+    const current = rows.get(comment.id);
+    if (current) {
+      // Keep reactions confirmed while this list request was in flight.
+      if (current.revision <= started) {
+        Object.assign(current.model, comment);
+        current.sync();
+      }
+      return current;
+    }
+    const row = el('li', 'hub-comment');
+    const main = el('div', 'hub-comment-main');
+    const content = el('div', 'hub-comment-content');
+    const identity = el('div', 'hub-comment-identity');
+    identity.append(el('strong', '', comment.author.name), stamp(comment.createdAt));
+    const actions = el('div', 'hub-comment-actions');
+    const like = feedAction('Curtir comentário', 'heart');
+    const respond = feedAction('Responder comentário', 'reply');
+    const save = feedAction('Salvar comentário', 'bookmark');
+    actions.append(like, respond, save);
+    const children = el('ul', 'hub-comment-list hub-comment-children');
+    children.hidden = true;
+    const context = el('span', 'hub-comment-context', 'Em resposta');
+    context.hidden = true;
+    content.append(identity, context, el('p', '', comment.text), actions);
+    main.append(avatar(comment.author), content);
+    row.append(main, children);
+
+    const model = { ...comment };
+    const entry = { model, row, children, context, revision: 0 };
+    const actionPath = `${path}/comments/${encodeURIComponent(comment.id)}`;
+    const common = { ctx, model, feedback: commentStatus, available };
+    const bump = () => { entry.revision = ++revision; };
+    const syncLike = bindFeedToggle(like, {
+      ...common, path: `${actionPath}/like`, key: 'liked',
+      count: ['likeCount', 'curtida', 'curtidas'], onChange: bump,
+    });
+    const syncSave = bindFeedToggle(save, {
+      ...common, path: `${actionPath}/save`, key: 'saved',
+      onChange() {
+        bump();
+        onSave?.(model.saved, !received || entries.some(item => item.model.saved));
+        if (showSaved && section.isConnected) draw();
+      },
+    });
+    entry.sync = () => { syncLike(); syncSave(); };
+    respond.addEventListener('click', () => {
+      if (submitting || !available()) return;
+      setReplyTarget(model);
+      if (showSaved) {
+        showSaved = false;
+        received = false;
+        entries = [];
+        draw();
+      }
+      showPanel(true);
+      if (!received || loading) void load();
+      reply.focus();
+    });
+    rows.set(comment.id, entry);
+    return entry;
+  }
+
+  function draw() {
+    const focused = section.contains(document.activeElement) ? document.activeElement : null;
+    const first = post.firstComment && remember(post.firstComment, -1);
+    const visible = showSaved ? entries.filter(entry => entry.model.saved) : entries;
+    const shown = new Map(visible.map(entry => [entry.model.id, entry]));
+    if (first) shown.set(first.model.id, first);
+    const firstReplies = el('ul', 'hub-comment-list hub-comment-first-replies');
+    const list = el('ul', 'hub-comment-list');
+    for (const entry of shown.values()) {
+      entry.children.replaceChildren();
+      entry.children.hidden = true;
+    }
+    for (const entry of visible) {
+      if (entry === first) continue;
+      const parent = shown.get(entry.model.parentId);
+      entry.context.hidden = !entry.model.parentId || Boolean(parent);
+      if (first && parent === first) firstReplies.append(entry.row);
+      else if (parent) {
+        parent.children.append(entry.row);
+        parent.children.hidden = false;
+      } else {
+        list.append(entry.row);
+      }
+    }
+    if (first) {
+      first.children.hidden = true;
+      if (preview.firstChild !== first.row) preview.replaceChildren(first.row);
+    } else preview.replaceChildren();
+    preview.hidden = !first;
+    body.replaceChildren();
+    if (loading) body.append(info('Carregando comentários…'));
+    if (firstReplies.childElementCount) body.append(firstReplies);
+    if (list.childElementCount) body.append(list);
+    if (showSaved && received && !visible.length) body.append(info('Nenhum comentário salvo nesta publicação.'));
+    form.hidden = showSaved;
+    send.disabled = loading || submitting;
+    showPanel(!panel.hidden);
+    if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+  }
+
+  function applyComments(result, started) {
+    post.commentCount = result.commentCount ?? result.comments.length;
+    if (result.firstComment) {
+      post.firstComment = result.firstComment;
+      remember(result.firstComment, started);
+    }
+    entries = result.comments.map(comment => remember(comment, started));
+    if (!showSaved && !post.firstComment && entries.length) post.firstComment = entries[0].model;
+    received = true;
+    draw();
+  }
+
+  async function load() {
+    const version = ++loadVersion;
+    const started = revision;
+    loading = true;
+    draw();
+    try {
+      const result = await ctx.request(`${path}/comments${showSaved ? '?saved=1' : ''}`);
+      if (!ctx.active() || !section.isConnected || version !== loadVersion) return;
+      loading = false;
+      applyComments(result, started);
+    } catch (error) {
+      if (version !== loadVersion || !ctx.handle(error) || !section.isConnected) return;
+      loading = false;
+      draw();
+      body.prepend(info('Não foi possível carregar os comentários.', { error: true, retry: load }));
+    }
+  }
+
+  expand.addEventListener('click', () => {
+    showPanel(panel.hidden);
+    if (!panel.hidden && !received && !loading) void load();
+  });
+  cancel.addEventListener('click', () => {
+    setReplyTarget();
+    reply.focus();
+  });
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const text = reply.value.trim();
+    if (send.disabled || !available() || !text) return;
+    const started = revision;
+    const responding = Boolean(parentId);
+    submitting = true;
+    send.disabled = reply.disabled = cancel.disabled = true;
+    commentStatus.set(responding ? 'Enviando resposta…' : 'Enviando comentário…');
+    try {
+      const result = await ctx.request(`${path}/comments`, { method: 'POST', body: { text, ...(parentId && { parentId }) } });
+      if (!ctx.active() || !section.isConnected) return;
+      applyComments(result, started);
+      reply.value = '';
+      setReplyTarget();
+      commentStatus.set(responding ? 'Resposta publicada.' : 'Comentário publicado.');
+    } catch (error) {
+      if (ctx.handle(error) && section.isConnected) commentStatus.set(error.message || 'Não foi possível comentar.', true);
+    } finally {
+      submitting = false;
+      send.disabled = loading;
+      reply.disabled = cancel.disabled = false;
+    }
+  });
+
+  setReplyTarget();
+  showPanel(showSaved);
+  draw();
+  if (showSaved) queueMicrotask(() => { if (section.isConnected) void load(); });
+  return section;
+}
+
+function renderPost(post, ctx, { onDelete, onSave, onCommentSave, onRepost, savedOnly }) {
   const card = el('article', 'hub-card hub-post');
   card.dataset.kind = post.kind;
+  const repostInfo = el('div', 'hub-repost-info');
+  function syncRepostInfo() {
+    repostInfo.hidden = !post.repostedBy;
+    if (!post.repostedBy) return;
+    const name = post.repostedBy.id === ctx.session?.user?.id ? 'Você republicou' : `${post.repostedBy.name} republicou`;
+    repostInfo.replaceChildren(icon('arrow-repeat'), el('span', '', name));
+  }
+  syncRepostInfo();
   const head = el('header', 'hub-post-heading');
   const identity = el('div', 'hub-post-identity');
   const names = el('div', 'hub-post-name');
+  names.append(el('strong', '', post.author.name), stamp(post.createdAt));
+  identity.append(avatar(post.author), names);
+  head.append(identity);
+
   const meta = el('div', 'hub-post-meta');
+  const kind = feedKinds[post.kind];
+  if (kind) {
+    const badge = el('span', 'hub-post-kind');
+    badge.append(icon(kind.icon), document.createTextNode(kind.label));
+    meta.append(badge);
+  }
   const visibility = el('span', 'hub-post-visibility');
   const audienceText = post.audience.type === 'sector' ? (sectorNames[post.audience.sector] || 'Setor selecionado')
     : post.audience.type === 'people' ? 'Destinatários selecionados' : 'Toda a equipe';
   visibility.append(icon(post.audience.type === 'all' ? 'people' : post.audience.type === 'sector' ? 'buildings' : 'person'), document.createTextNode(audienceText));
-  meta.append(stamp(post.createdAt), visibility);
-  names.append(el('strong', '', post.author.name), meta);
-  identity.append(avatar(post.author), names);
-  head.append(identity);
-  if (post.kind !== 'post' && Object.hasOwn(feedKinds, post.kind)) {
-    const kind = feedKinds[post.kind];
-    const badge = el('span', 'hub-post-kind');
-    badge.append(icon(kind.icon), document.createTextNode(kind.label));
-    head.append(badge);
-  }
-  card.append(head);
+  meta.append(visibility);
+  head.append(meta);
+  card.append(repostInfo, head);
   renderPostContent(card, post);
 
   const path = `/maxhub/feed/${encodeURIComponent(post.id)}`;
@@ -534,118 +829,35 @@ function renderPost(post, ctx, onDelete) {
     card.append(media);
   }
 
-  const reactions = el('div', 'hub-reactions');
-  const like = btn('Curtir', { glyph: 'heart' });
-  const openComments = btn('Comentários', { glyph: 'chat-dots' });
-  openComments.setAttribute('aria-expanded', 'false');
-  const feedback = status();
-  reactions.append(like, openComments);
-  const comments = el('section', 'hub-comments');
-  comments.setAttribute('aria-label', 'Comentários da publicação');
-  comments.hidden = true;
-  const body = el('div', 'hub-comments-body');
-  const form = el('form', 'hub-comment-form');
-  const reply = el('textarea', 'hub-input');
-  reply.placeholder = 'Escreva um comentário…';
-  reply.setAttribute('aria-label', 'Escreva um comentário');
-  reply.required = true;
-  reply.maxLength = 600;
-  reply.rows = 2;
-  const send = btn('Comentar', { glyph: 'send', primary: true, type: 'submit' });
-  const commentStatus = status();
-  form.append(reply, send, commentStatus.line);
-  comments.append(body, form);
-  let loadingComments = false;
-  let receivedComments = false;
   let deleting = false;
-
-  function syncReactions() {
-    like.setAttribute('aria-pressed', String(post.liked));
-    like.setAttribute('aria-label', post.liked ? 'Remover curtida' : 'Curtir');
-    like.lastChild.textContent = post.likeCount ? `Curtir · ${number.format(post.likeCount)}` : 'Curtir';
-    openComments.lastChild.textContent = post.commentCount ? `Comentários · ${number.format(post.commentCount)}` : 'Comentários';
-  }
-
-  function renderComments(data) {
-    post.commentCount = data.commentCount ?? data.comments.length;
-    syncReactions();
-    body.replaceChildren();
-    if (!data.comments.length) { body.append(info('Seja a primeira pessoa a comentar.')); return; }
-    const list = el('ul', 'hub-comment-list');
-    for (const comment of data.comments) {
-      const row = el('li', 'hub-comment');
-      const content = el('div', 'hub-comment-content');
-      const identity = el('div', 'hub-comment-identity');
-      identity.append(el('strong', '', comment.author.name), stamp(comment.createdAt));
-      content.append(identity, el('p', '', comment.text));
-      row.append(avatar(comment.author), content);
-      list.append(row);
-    }
-    body.append(list);
-  }
-
-  async function loadComments() {
-    if (loadingComments) return;
-    loadingComments = true;
-    body.replaceChildren(info('Carregando comentários…'));
-    try {
-      const result = await ctx.request(`${path}/comments`);
-      if (!ctx.active() || !card.isConnected) return;
-      receivedComments = true;
-      renderComments(result);
-    } catch (error) {
-      if (ctx.handle(error) && card.isConnected) body.replaceChildren(info('Não foi possível carregar os comentários.', { error: true, retry: loadComments }));
-    } finally {
-      loadingComments = false;
-    }
-  }
-
-  like.addEventListener('click', async () => {
-    if (like.disabled || deleting) return;
-    like.disabled = true;
-    feedback.set('');
-    try {
-      const result = await ctx.request(`${path}/like`, { method: post.liked ? 'DELETE' : 'PUT' });
-      if (!ctx.active() || !card.isConnected) return;
-      post.liked = result.liked;
-      post.likeCount = result.likeCount;
-      syncReactions();
-    } catch (error) {
-      if (ctx.handle(error) && card.isConnected) feedback.set(error.message || 'Não foi possível atualizar a curtida.', true);
-    } finally {
-      like.disabled = false;
-    }
+  const available = () => ctx.active() && card.isConnected && !deleting;
+  const feedback = status();
+  const reactions = el('div', 'hub-reactions');
+  reactions.setAttribute('role', 'group');
+  reactions.setAttribute('aria-label', 'Ações da publicação');
+  const like = feedAction('Curtir', 'heart');
+  const repost = feedAction('Republicar', 'arrow-repeat');
+  const save = feedAction('Salvar publicação', 'bookmark');
+  const common = { ctx, model: post, feedback, available };
+  bindFeedToggle(like, {
+    ...common, path: `${path}/like`, key: 'liked', count: ['likeCount', 'curtida', 'curtidas'],
   });
-
-  openComments.addEventListener('click', () => {
-    comments.hidden = !comments.hidden;
-    openComments.setAttribute('aria-expanded', String(!comments.hidden));
-    if (!comments.hidden && !receivedComments) void loadComments();
+  bindFeedToggle(repost, {
+    ...common, path: `${path}/repost`, key: 'reposted', count: ['repostCount', 'republicação', 'republicações'],
+    onChange() {
+      const user = ctx.session?.user;
+      if (post.reposted && user) post.repostedBy = user;
+      else if (post.repostedBy?.id === user?.id) post.repostedBy = undefined;
+      syncRepostInfo();
+      onRepost?.(post.reposted, card);
+    },
   });
-
-  form.addEventListener('submit', async event => {
-    event.preventDefault();
-    const text = reply.value.trim();
-    if (send.disabled || deleting || !text) return;
-    send.disabled = reply.disabled = true;
-    commentStatus.set('Enviando comentário…');
-    try {
-      const result = await ctx.request(`${path}/comments`, { method: 'POST', body: { text } });
-      if (!ctx.active() || !card.isConnected) return;
-      renderComments(result);
-      receivedComments = true;
-      reply.value = '';
-      commentStatus.set('Comentário publicado.');
-    } catch (error) {
-      if (ctx.handle(error) && card.isConnected) commentStatus.set(error.message || 'Não foi possível comentar.', true);
-    } finally {
-      send.disabled = reply.disabled = false;
-    }
-  });
+  bindFeedToggle(save, { ...common, path: `${path}/save`, key: 'saved', onChange: () => onSave?.(post.saved) });
+  reactions.append(like, repost, save);
+  card.append(reactions);
 
   if (post.canDelete) {
-    const remove = btn('Excluir');
-    remove.classList.add('hub-post-remove');
+    const remove = feedAction('Excluir publicação', 'trash', 'hub-post-remove');
     const confirm = el('div', 'hub-post-confirm');
     confirm.hidden = true;
     const apply = btn('Confirmar exclusão', { primary: true });
@@ -668,13 +880,10 @@ function renderPost(post, ctx, onDelete) {
         apply.disabled = cancel.disabled = remove.disabled = false;
       }
     });
-    reactions.append(remove);
-    card.append(reactions, confirm, feedback.line, comments);
-  } else {
-    card.append(reactions, feedback.line, comments);
+    head.append(remove);
+    card.append(confirm);
   }
-
-  syncReactions();
+  card.append(feedback.line, renderPostComments(post, { ctx, path, available, savedOnly, onSave: onCommentSave }));
   return card;
 }
 
@@ -718,8 +927,13 @@ function mountFeed(root, area, ctx) {
   const feed = el('section', 'hub-feed');
   const heading = el('div', 'hub-feed-heading');
   const title = panelHeading(definition.title, definition.kind ? feedKinds[definition.kind].icon : 'chat-square-text');
+  const tools = el('div', 'hub-feed-tools');
+  const filter = el('select', 'hub-input hub-feed-filter');
+  filter.setAttribute('aria-label', 'Filtrar feed');
+  filter.append(new Option('Todas as publicações', 'all'), new Option('Publicações salvas', 'saved'), new Option('Comentários salvos', 'savedComments'));
   const refresh = btn('Atualizar', { glyph: 'arrow-clockwise' });
-  heading.append(title, refresh);
+  tools.append(filter, refresh);
+  heading.append(title, tools);
   const results = el('div', 'hub-feed-posts');
   const eventStatus = status();
   const next = btn('Carregar mais');
@@ -737,17 +951,43 @@ function mountFeed(root, area, ctx) {
     window.dispatchEvent(new Event('maxhub:points-change'));
   }
 
+  function emptyFeed() {
+    if (filter.value === 'saved') return 'Você ainda não tem publicações salvas aqui.';
+    if (filter.value === 'savedComments') return 'Você ainda não tem comentários salvos aqui.';
+    return definition.empty;
+  }
+
+  function removeCard(post) {
+    posts.delete(post.id);
+    const removed = [...results.children].find(item => item.dataset.postId === post.id);
+    if (!removed) return;
+    const moveFocus = removed.contains(document.activeElement);
+    const successor = removed.nextElementSibling || removed.previousElementSibling;
+    removed.remove();
+    if (!posts.size) results.replaceChildren(info(emptyFeed()));
+    if (moveFocus) (successor?.querySelector('.hub-reactions button') || filter).focus({ preventScroll: true });
+  }
+
   function postCard(post) {
-    return renderPost(post, ctx, () => {
-      posts.delete(post.id);
-      const removed = [...results.querySelectorAll('[data-post-id]')].find(item => item.dataset.postId === post.id);
-      const successor = removed?.nextElementSibling || removed?.previousElementSibling;
-      removed?.remove();
-      if (!posts.size) results.replaceChildren(info(definition.empty));
-      const nextControl = successor?.querySelector('button') || refresh;
-      nextControl.focus({ preventScroll: true });
-      eventStatus.set('Publicação excluída.');
-      if (post.kind === 'celebration') notifyRanking();
+    return renderPost(post, ctx, {
+      savedOnly: filter.value === 'savedComments',
+      onDelete() {
+        removeCard(post);
+        eventStatus.set('Publicação excluída.');
+        if (post.kind === 'celebration') notifyRanking();
+      },
+      onSave(saved) {
+        if (!saved && filter.value === 'saved') removeCard(post);
+      },
+      onCommentSave(saved, keepPost) {
+        if (!saved && !keepPost && filter.value === 'savedComments') removeCard(post);
+      },
+      onRepost(reposted, card) {
+        if (!reposted || filter.value !== 'all' || results.firstElementChild === card) return;
+        const focused = card.contains(document.activeElement) ? document.activeElement : null;
+        results.prepend(card);
+        focused?.focus({ preventScroll: true });
+      },
     });
   }
 
@@ -778,13 +1018,14 @@ function mountFeed(root, area, ctx) {
     if (!posts.size) results.replaceChildren(info('Carregando publicações…'));
     const filters = new URLSearchParams();
     if (definition.kind) filters.set('kind', definition.kind);
+    if (filter.value !== 'all') filters.set(filter.value, '1');
     if (append) filters.set('cursor', cursor);
     try {
       const result = await ctx.request(`/maxhub/feed${filters.size ? `?${filters}` : ''}`);
       if (!ctx.active() || current !== version) return;
       if (!append) { posts.clear(); results.replaceChildren(); }
       for (const post of result.posts) appendPost(post);
-      if (!posts.size) results.replaceChildren(info(definition.empty));
+      if (!posts.size) results.replaceChildren(info(emptyFeed()));
       cursor = result.nextCursor;
       next.hidden = !cursor;
     } catch (error) {
@@ -803,19 +1044,27 @@ function mountFeed(root, area, ctx) {
     kind: definition.kind,
     ctx,
     onPost(post) {
-      if (loading) {
-        version += 1;
-        loading = false;
-        refresh.disabled = next.disabled = false;
+      if (filter.value === 'all') {
+        if (loading) {
+          version += 1;
+          loading = false;
+          refresh.disabled = next.disabled = false;
+        }
+        eventStatus.set('');
+        appendPost(post, true);
       }
-      eventStatus.set('');
-      appendPost(post, true);
       if (post.kind === 'celebration') notifyRanking();
     },
   }) : undefined;
   const aside = el('aside', 'hub-rank-aside');
   if (area === 'home') layout.append(aside);
   const disposeRanking = area === 'home' ? mountRanking(aside, ctx, true) : undefined;
+  filter.addEventListener('change', () => {
+    posts.clear();
+    cursor = null;
+    next.hidden = true;
+    void load();
+  });
   refresh.addEventListener('click', () => void load());
   next.addEventListener('click', () => void load(true));
   void load();

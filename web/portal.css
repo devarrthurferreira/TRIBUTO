@@ -328,3 +328,18 @@
   .portal-sector { max-width: 65px; }
   .portal-header { padding-inline: 9px; }
 }
+.portal-startup {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 20px;
+  background: radial-gradient(ellipse at 50% 12%, #fff8f5, #f8f2f1 65%);
+  color: #632c31;
+}
+.portal-startup-card { display: grid; justify-items: center; gap: 19px; width: min(100%, 360px); }
+.portal-startup-card img { width: min(210px, 82%); height: auto; filter: brightness(0) saturate(100%) invert(14%) sepia(62%) saturate(2762%) hue-rotate(340deg) brightness(83%) contrast(103%); }
+.portal-startup-card p { margin: 0; font-size: 13px; }
+.portal-startup-progress { width: min(200px, 80%); height: 4px; overflow: hidden; border-radius: 8px; background: #e8cdd1; }
+.portal-startup-progress::before { display: block; width: 39%; height: 100%; border-radius: inherit; background: #8a1821; content: ''; animation: portal-startup-progress 1.15s ease-in-out infinite alternate; }
+@keyframes portal-startup-progress { to { transform: translateX(156%); } }
+@media (prefers-reduced-motion: reduce) { .portal-startup-progress::before { animation: none; } }

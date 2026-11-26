@@ -52,6 +52,16 @@ function detailFeedback(message, onRetry) {
   return feedback;
 }
 
+function anonymousWeek({ start, comments }) {
+  const week = element('details', 'club-rh-anonymous-week');
+  const title = element('summary', '', 'Semana de ');
+  title.append(dateElement(start, fullDay), element('span', '', `${number.format(comments.length)} comentários`));
+  const list = element('ul', 'club-rh-anonymous-list');
+  for (const comment of comments) list.append(element('li', '', comment));
+  week.append(title, list);
+  return week;
+}
+
 function distribution(totals) {
   if (!totals.answers) return detailFeedback('As respostas de humor compartilhadas aparecem aqui.');
   const list = element('ul', 'club-rh-distribution');
@@ -243,6 +253,13 @@ export function mountClubRhMood(container, { request, onAuthError }) {
           <div data-rh-part="profiles"></div>
         </section>
       </div>
+      <section class="club-rh-card club-rh-anonymous" data-rh-part="anonymousSection" aria-labelledby="clubRhAnonymousTitle" hidden>
+        <div>
+          <h2 id="clubRhAnonymousTitle">Comentários anônimos do termômetro</h2>
+          <p class="club-rh-anonymous-note" data-rh-part="anonymousNote"></p>
+        </div>
+        <div class="club-rh-anonymous-weeks" data-rh-part="anonymousWeeks"></div>
+      </section>
       <dialog class="club-rh-dialog" aria-labelledby="clubRhProfileTitle">
         <header class="club-rh-dialog-head">
           <div><h2 id="clubRhProfileTitle"></h2><p data-rh-part="profilePeriod"></p></div>
@@ -263,6 +280,7 @@ export function mountClubRhMood(container, { request, onAuthError }) {
   let profileOpener;
   let reportRequest = 0;
   let profileRequest = 0;
+  let anonymousRequest = 0;
 
   async function loadProfile(profile) {
     const current = ++profileRequest;
@@ -385,23 +403,52 @@ export function mountClubRhMood(container, { request, onAuthError }) {
     }
   }
 
+  async function loadAnonymousComments() {
+    const current = ++anonymousRequest;
+    refs.anonymousNote.textContent = '';
+    refs.anonymousSection.hidden = false;
+    refs.anonymousWeeks.replaceChildren(detailFeedback('Carregando comentários…'));
+    try {
+      const { weeks, minimum } = await request('/club/check-in/anonymous-comments');
+      if (current !== anonymousRequest) return;
+      refs.anonymousNote.textContent = `Os comentários ficam disponíveis ao fim de cada semana com pelo menos ${number.format(minimum)} participantes.`;
+      refs.anonymousWeeks.replaceChildren(...(weeks.length
+        ? weeks.map(anonymousWeek)
+        : [detailFeedback('Nenhum grupo de comentários disponível.')]));
+    } catch (error) {
+      if (current !== anonymousRequest) return;
+      refs.anonymousSection.hidden = error.status === 401 || error.status === 403;
+      if (error.status === 401) onAuthError(error);
+      refs.anonymousWeeks.replaceChildren(detailFeedback('Não foi possível carregar os comentários.', loadAnonymousComments));
+    }
+  }
+
+  function refreshDashboard() {
+    void loadReport();
+    void loadAnonymousComments();
+  }
+
   function clearWhenHidden() {
     reportRequest += 1;
+    anonymousRequest += 1;
     clearReport();
     refs.feedback.replaceChildren();
+    refs.anonymousSection.hidden = true;
+    refs.anonymousNote.textContent = '';
+    refs.anonymousWeeks.replaceChildren();
   }
 
   function refreshOnVisibility() {
-    if (document.visibilityState === 'visible') void loadReport();
+    if (document.visibilityState === 'visible') refreshDashboard();
     else clearWhenHidden();
   }
 
   function restoreOnBack(event) {
-    if (event.persisted && document.visibilityState === 'visible') void loadReport();
+    if (event.persisted && document.visibilityState === 'visible') refreshDashboard();
   }
 
   period.addEventListener('change', loadReport);
-  refresh.addEventListener('click', loadReport);
+  refresh.addEventListener('click', refreshDashboard);
   search.addEventListener('input', renderProfiles);
   close.addEventListener('click', () => dialog.close());
   dialog.addEventListener('close', () => {
@@ -413,7 +460,7 @@ export function mountClubRhMood(container, { request, onAuthError }) {
   document.addEventListener('visibilitychange', refreshOnVisibility);
   window.addEventListener('pageshow', restoreOnBack);
   window.addEventListener('pagehide', clearWhenHidden);
-  void loadReport();
+  refreshDashboard();
   return () => {
     clearWhenHidden();
     document.removeEventListener('visibilitychange', refreshOnVisibility);

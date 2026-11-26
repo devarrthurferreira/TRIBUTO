@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import http from 'node:http';
 import test from 'node:test';
 import { sha256 } from '../src/api/validation.mjs';
-import { goalDetails, goalFields, meetingFields, planFields, surveyFields, surveyRating } from '../src/people/fields.mjs';
+import { goalDetails, goalFields, meetingFields, noteFields, planFields, surveyFields, surveyRating } from '../src/people/fields.mjs';
 import { createPeopleRouter } from '../src/people/routes.mjs';
 import { createPlatformRouter } from '../src/platform/routes.mjs';
 
@@ -23,6 +23,22 @@ test('Pessoas normaliza progresso, valida datas e rejeita respostas fora da esca
   assert.throws(() => meetingFields({ title: '1:1', participantId: randomUUID(), date: '2027-02-29', time: '10:00' }), { code: 'PEOPLE_INVALID_INPUT' });
 });
 
+test('Feedback valida anonimato explícito e notas inteiras para os oito itens da empresa', () => {
+  const feedback = { recipientId: randomUUID(), text: 'Colaboração' };
+  const ratings = {
+    culture: 1, customer: 2, teamwork: 3, communication: 4, commitment: 5, engagement: 1, leadership: 2, active_listening: 3,
+  };
+  assert.deepEqual(noteFields({ ...feedback, description: ' Na reunião ', anonymous: true, ratings }),
+    { ...feedback, description: 'Na reunião', anonymous: true, ratings });
+  assert.deepEqual(noteFields(feedback), { ...feedback, description: '', anonymous: false, ratings: {} });
+  for (const changes of [
+    { anonymous: 'true' }, { ratings: [] }, { ratings: null }, { ratings: { unsupported: 1 } },
+    { ratings: { culture: '5' } }, { ratings: { culture: 1.5 } }, { ratings: { culture: 0 } }, { ratings: { culture: 6 } },
+  ]) {
+    assert.throws(() => noteFields({ ...feedback, ...changes }), { code: 'PEOPLE_INVALID_INPUT' });
+  }
+});
+
 test('Pessoas usa a sessão e o CSRF da Central, preserva o titular e protege a publicação de pesquisas', async () => {
   const [person, admin, rh, rhViewer] = [
     { role: 'member' }, { role: 'admin' }, { role: 'member', moduleGrants: { rh: 'edit' } },
@@ -31,7 +47,10 @@ test('Pessoas usa a sessão e o CSRF da Central, preserva o titular e protege a 
   const sessions = [person, admin, rh, rhViewer].map((user, index) => ({ user, userId: user._id, token: String(index + 1).repeat(64), csrfToken: `test-${index}` }));
   const [personSession, adminSession, rhSession, rhViewerSession] = sessions;
   const goalId = randomUUID();
+  const reviewId = randomUUID();
   const surveyId = randomUUID();
+  const reviewAssignment = { id: reviewId, status: 'pending', response: null };
+  let pending = true;
   const calls = [];
   const people = createPeopleRouter({
     async listGoals(owner) { return owner === person._id ? [{ id: goalId }] : []; },
@@ -44,6 +63,12 @@ test('Pessoas usa a sessão e o CSRF da Central, preserva o titular e protege a 
     },
     async listNotes(kind, owner, all) { return [{ kind, owner, all }]; },
     async createNote(kind, owner, fields) { return { kind, owner, ...fields }; },
+    async listAvailableReviews(owner) { return owner === person._id && pending ? [reviewAssignment] : []; },
+    async respondToReview(owner, id, fields) {
+      if (owner !== person._id || id !== reviewId || !pending) return null;
+      pending = false;
+      return { id, status: 'responded', response: fields };
+    },
     async listSurveys() { return []; },
     async createSurvey(actor, fields) { assert.equal(actor, admin._id); return { id: surveyId, ...fields, results: null }; },
     async closeSurvey(actor, id) { assert.equal(actor, admin._id); return { id, status: 'closed', results: null }; },
@@ -83,7 +108,7 @@ test('Pessoas usa a sessão e o CSRF da Central, preserva o titular e protege a 
     const feedback = { recipientId: rh._id.toUpperCase(), text: ' Excelente parceria ' };
     assert.equal((await request('/feedback', personSession, { method: 'POST', body: feedback, csrf: '' })).status, 403);
     assert.deepEqual((await request('/feedback', personSession, { method: 'POST', body: feedback })).data.item,
-      { kind: 'feedback', owner: person._id, recipientId: rh._id, text: 'Excelente parceria' });
+      { kind: 'feedback', owner: person._id, recipientId: rh._id, text: 'Excelente parceria', description: '', anonymous: false, ratings: {} });
     assert.deepEqual((await request('/feedback?scope=all', adminSession)).data.items, [{ kind: 'feedback', owner: admin._id, all: false }]);
     const review = { recipientId: person._id, title: 'Desenvolvimento', text: 'Próximos passos' };
     for (const session of [personSession, rhViewerSession]) {
@@ -93,6 +118,18 @@ test('Pessoas usa a sessão e o CSRF da Central, preserva o titular e protege a 
     assert.equal((await request('/reviews', rhSession, { method: 'POST', body: review })).status, 201);
     assert.deepEqual((await request('/reviews?scope=all', rhSession)).data.items, [{ kind: 'review', owner: rh._id, all: true }]);
     assert.deepEqual((await request('/reviews', personSession)).data.items, [{ kind: 'review', owner: person._id, all: false }]);
+    const available = '/reviews/available';
+    const reviewResponse = `/reviews/${reviewId.toUpperCase()}/response`;
+    assert.equal((await request(available)).status, 401);
+    assert.deepEqual((await request(available, personSession)).data.items, [reviewAssignment]);
+    assert.deepEqual((await request(`${available}?scope=all`, adminSession)).data.items, []);
+    assert.deepEqual((await request(available, rhSession)).data.items, []);
+    assert.equal((await request(reviewResponse, rhSession, { method: 'POST', body: { text: 'Resposta de outra pessoa' } })).status, 404);
+    assert.equal((await request(reviewResponse, personSession, { method: 'POST', body: { text: '' } })).status, 400);
+    assert.equal((await request(reviewResponse, personSession, { method: 'POST', body: { text: ' Pronto ' }, csrf: '' })).status, 403);
+    assert.deepEqual((await request(reviewResponse, personSession, { method: 'POST', body: { text: ' Pronto ' } })).data.item,
+      { id: reviewId, status: 'responded', response: { text: 'Pronto' } });
+    assert.deepEqual((await request(available, personSession)).data.items, []);
     const survey = { title: 'Pesquisa da equipe', question: 'Como foi a semana?' };
     assert.equal((await request('/surveys', personSession, { method: 'POST', body: survey })).status, 403);
     assert.equal((await request('/surveys', adminSession, { method: 'POST', body: survey })).status, 201);

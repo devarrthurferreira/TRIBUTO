@@ -5,7 +5,8 @@ import { parseMaxHubImage, sendMaxHubImage } from './core-routes.mjs';
 const KINDS = new Set(['post', 'celebration', 'announcement']);
 const SECTORS = new Set(MODULES.filter(module => !module.legacy).map(module => module.id));
 const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
-const POST_PATH = /^\/maxhub\/feed\/([^/]+)(?:\/(image|comments|like))?$/;
+const POST_PATH = /^\/maxhub\/feed\/([^/]+)(?:\/(image|comments|like|save|repost))?$/;
+const COMMENT_ACTION_PATH = /^\/maxhub\/feed\/([^/]+)\/comments\/([^/]+)\/(like|save)$/;
 const MAX_IMAGE_BYTES = 1024 * 1024;
 
 function invalid(message) { throw new ApiError(400, 'MAXHUB_INVALID_FEED_INPUT', message); }
@@ -43,18 +44,28 @@ function postInput(input, user) {
     ...(input.clientId === undefined ? {} : { clientId: uuid(input.clientId) }) };
 }
 
-function feedQuery(url) {
-  const query = new URL(url, 'http://localhost').searchParams;
+function savedFilters(query, fields) {
+  const filters = {};
+  for (const field of fields) {
+    const value = query.get(field);
+    if (value === '1') filters[field] = true;
+    else if (value !== null && value !== '0') invalid('Filtro de itens salvos inválido.');
+  }
+  return filters;
+}
+
+function feedQuery(query) {
   const kind = query.get('kind');
   if (kind !== null && !KINDS.has(kind)) invalid('Filtro de publicações inválido.');
+  const filters = { kind, ...savedFilters(query, ['saved', 'savedComments']) };
   const token = query.get('cursor');
-  if (token === null) return { kind };
+  if (token === null) return filters;
   if (!/^[a-zA-Z0-9_-]{40,100}$/.test(token)) invalid('Página de publicações inválida.');
   const [timestamp, id, ...rest] = Buffer.from(token, 'base64url').toString().split('/');
   const createdAt = new Date(timestamp);
   if (rest.length || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(timestamp)
     || Number.isNaN(createdAt.getTime()) || !UUID.test(id)) invalid('Página de publicações inválida.');
-  return { kind, cursor: { createdAt, id: uuid(id) } };
+  return { ...filters, cursor: { createdAt, id: uuid(id) } };
 }
 
 export function createMaxHubFeedRouter(store) {
@@ -64,7 +75,8 @@ export function createMaxHubFeedRouter(store) {
       const reply = (status, data) => { send(res, status, data); return true; };
       const method = req.method;
       try {
-        if (route === '/maxhub/feed' && method === 'GET') return reply(200, await store.list(user, feedQuery(req.url)));
+        const query = new URL(req.url, 'http://localhost').searchParams;
+        if (route === '/maxhub/feed' && method === 'GET') return reply(200, await store.list(user, feedQuery(query)));
         if (route === '/maxhub/feed' && method === 'POST') {
           const post = await store.create(user, postInput(await readBody(req, 1_450_000), user));
           return reply(201, { post });
@@ -81,15 +93,29 @@ export function createMaxHubFeedRouter(store) {
             sendMaxHubImage(res, await store.getImage(user, id), method === 'HEAD');
             return true;
           }
-          if (action === 'comments' && method === 'GET') return reply(200, await store.getComments(user, id));
+          if (action === 'comments' && method === 'GET') {
+            return reply(200, await store.getComments(user, id, savedFilters(query, ['saved'])));
+          }
           if (action === 'comments' && method === 'POST') {
-            const text = textFor((await readBody(req))?.text, 600);
+            const input = await readBody(req);
+            const text = textFor(input?.text, 600);
             if (!text) invalid('Escreva um comentário para continuar.');
-            return reply(201, await store.addComment(user, id, text));
+            return reply(201, await store.addComment(user, id, text, input.parentId == null ? undefined : uuid(input.parentId)));
           }
-          if (action === 'like' && (method === 'PUT' || method === 'DELETE')) {
-            return reply(200, await store.setLike(user, id, method === 'PUT'));
+          if (method === 'PUT' || method === 'DELETE') {
+            const enabled = method === 'PUT';
+            if (action === 'like') return reply(200, await store.setLike(user, id, enabled));
+            if (action === 'repost') return reply(200, await store.setRepost(user, id, enabled));
+            if (action === 'save') return reply(200, await store.setSaved(user, id, enabled));
           }
+        }
+        const comment = COMMENT_ACTION_PATH.exec(route);
+        if (comment && (method === 'PUT' || method === 'DELETE')) {
+          const id = uuid(comment[1]);
+          const commentId = uuid(comment[2]);
+          const enabled = method === 'PUT';
+          if (comment[3] === 'like') return reply(200, await store.setCommentLike(user, id, commentId, enabled));
+          return reply(200, await store.setCommentSaved(user, id, commentId, enabled));
         }
         throw new ApiError(404, 'MAXHUB_FEED_NOT_FOUND', 'Funcionalidade de publicação indisponível.');
       } catch (error) {

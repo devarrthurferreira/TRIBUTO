@@ -6,8 +6,11 @@ import { clubFields, clubId, importClubFields } from './catalog.mjs';
 const RECORD_PATH = /^\/club\/(benefits|partners|events)(?:\/([a-f\d-]{36}))?$/i;
 const SAVED_PATH = /^\/club\/saved\/([^/]+)$/;
 const RH_MOOD_PATH = /^\/club\/check-in\/rh(?:\/([^/]+))?$/;
+const ANONYMOUS_COMMENTS_PATH = '/club/check-in/anonymous-comments';
 const HISTORY_DAYS = 30;
 const MIN_SUMMARY_RESPONSES = 5;
+const MIN_ANONYMOUS_COMMENTERS = 5;
+const ANONYMOUS_HISTORY_WEEKS = 13;
 const RH_PERIODS = ['7', '30', '90'];
 const localDate = new Intl.DateTimeFormat('sv-SE', {
   timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -17,6 +20,19 @@ function earlierDate(date, days) {
   const boundary = new Date(`${date}T00:00:00Z`);
   boundary.setUTCDate(boundary.getUTCDate() - days);
   return boundary.toISOString().slice(0, 10);
+}
+
+function weekStart(date) {
+  const dayOfWeek = new Date(`${date}T00:00:00Z`).getUTCDay();
+  return earlierDate(date, (dayOfWeek + 6) % 7);
+}
+
+function anonymousComment(input) {
+  const comment = typeof input?.comment === 'string' ? input.comment.trim() : '';
+  if (!comment || comment.length > 1000) {
+    throw new ApiError(400, 'CLUB_INVALID_COMMENT', 'Escreva um comentário de até 1.000 caracteres.');
+  }
+  return comment;
 }
 
 function checkInMood(input) {
@@ -63,6 +79,21 @@ export function createClubRouter(store, { clock = () => new Date() } = {}) {
           const today = localDate.format(clock());
           const days = await store.getMoodSummary(earlierDate(today, HISTORY_DAYS), today, MIN_SUMMARY_RESPONSES);
           return send(res, 200, { days, minimum: MIN_SUMMARY_RESPONSES });
+        }
+        if (route === ANONYMOUS_COMMENTS_PATH && method === 'POST') {
+          const input = await readBody(req);
+          const today = localDate.format(clock());
+          const created = await store.saveAnonymousMoodComment(user._id, today, weekStart(today), anonymousComment(input));
+          return send(res, created ? 201 : 200, { submitted: true });
+        }
+        if (route === ANONYMOUS_COMMENTS_PATH && method === 'GET') {
+          if (!canPerform(user, 'rh', 'clubMoodRead')) {
+            throw new ApiError(403, 'FORBIDDEN', 'Acesso restrito ao acompanhamento de check-ins do RH.');
+          }
+          const currentWeek = weekStart(localDate.format(clock()));
+          const firstWeek = earlierDate(currentWeek, ANONYMOUS_HISTORY_WEEKS * 7);
+          const weeks = await store.getAnonymousMoodComments(firstWeek, currentWeek, MIN_ANONYMOUS_COMMENTERS);
+          return send(res, 200, { weeks, minimum: MIN_ANONYMOUS_COMMENTERS });
         }
         const rhMood = RH_MOOD_PATH.exec(route);
         if (rhMood && method === 'GET') {

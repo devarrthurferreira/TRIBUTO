@@ -29,7 +29,16 @@
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <section id="authView" class="auth-screen" aria-labelledby="authTitle">
+  <div id="sessionLoading" class="portal-startup">
+    <div class="portal-startup-card">
+      <img src="/maximum-logo.png" width="512" height="107" alt="Maximum Assessoria Contábil">
+      <span id="sessionProgress" class="portal-startup-progress" aria-hidden="true"></span>
+      <p id="sessionMessage" role="status">Verificando seu acesso…</p>
+      <button id="sessionRetry" type="button" class="button button-primary" hidden>Tentar novamente</button>
+      <noscript><p>Ative o JavaScript para entrar na Central Maximum.</p></noscript>
+    </div>
+  </div>
+  <section id="authView" class="auth-screen" aria-labelledby="authTitle" hidden>
     <a class="skip-link" href="#authContent">Pular para o formulário</a>
     <div class="auth-layout">
       <div class="auth-intro">

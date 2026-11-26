@@ -20,22 +20,40 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
         <p id="clubCheckInShareHint" class="club-checkin-hint">Ao escolher, você envia seu nome, a data e a resposta ao RH.</p>
         <div class="club-checkin-choices" data-checkin-part="choices" role="group" aria-labelledby="clubCheckInTitle" aria-describedby="clubCheckInShareHint">
           ${clubMoods.map(({ value, face, label }) => `
-            <button type="button" class="club-checkin-choice" data-mood="${value}" aria-pressed="false" aria-disabled="true">
+            <button type="button" class="club-checkin-choice" data-mood="${value}" disabled>
               <span class="club-checkin-face" aria-hidden="true">${face}</span>
               <span class="club-checkin-choice-label">${label}</span>
-              <span class="club-checkin-mark" aria-hidden="true">✓</span>
             </button>`).join('')}
         </div>
         <p class="club-checkin-status" data-checkin-part="status" role="status"></p>
         <button class="club-button club-checkin-retry" type="button" data-checkin-part="retry" hidden>Tentar novamente</button>
       </div>
-    </section>`;
+    </section>
+    <dialog class="club-checkin-dialog" data-checkin-part="dialog" aria-labelledby="clubCheckInCommentTitle" aria-describedby="clubCheckInCommentPrivacy">
+      <form data-checkin-part="commentForm">
+        <div class="club-checkin-dialog-heading">
+          <span class="club-checkin-dialog-icon" aria-hidden="true"><i class="bi bi-chat-heart"></i></span>
+          <h2 id="clubCheckInCommentTitle">Deseja adicionar um comentário anônimo?</h2>
+        </div>
+        <p id="clubCheckInCommentPrivacy">O RH pode ler os comentários em grupo, sem identificação. Evite incluir nomes ou detalhes que possam identificar você.</p>
+        <label class="sr-only" for="clubCheckInComment">Seu comentário</label>
+        <textarea id="clubCheckInComment" data-checkin-part="comment" placeholder="Escreva seu comentário" rows="4" maxlength="1000" required></textarea>
+        <p class="club-checkin-status" data-checkin-part="commentStatus" data-kind="error" role="status"></p>
+        <div class="club-checkin-dialog-actions">
+          <button class="button-quiet" type="button" data-checkin-part="skip" autofocus>Pular</button>
+          <button class="button-primary" type="submit" data-checkin-part="submitComment">Enviar comentário</button>
+        </div>
+      </form>
+    </dialog>`;
 
   const refs = Object.fromEntries([...container.querySelectorAll('[data-checkin-part]')].map(node => [node.dataset.checkinPart, node]));
   const choices = [...refs.choices.querySelectorAll('button')];
+  container.after(refs.dialog);
+  container.hidden = true;
   let state = null;
   let loading = false;
   let sending = false;
+  let sendingComment = false;
   let disposed = false;
 
   function status(message, kind = '') {
@@ -45,10 +63,7 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
 
   function renderControls() {
     refs.choices.setAttribute('aria-busy', String(loading || sending));
-    for (const choice of choices) {
-      choice.setAttribute('aria-disabled', String(!state || loading || sending));
-      choice.setAttribute('aria-pressed', String(Boolean(state?.sharedWithRh) && Number(choice.dataset.mood) === state.todayMood));
-    }
+    for (const choice of choices) choice.disabled = !state || loading || sending;
   }
 
   async function loadPersonal() {
@@ -61,11 +76,13 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
       const data = await request('/club/check-in');
       if (disposed) return;
       state = data;
-      const answered = data.todayMood && data.sharedWithRh;
-      status(answered ? 'Resposta de hoje enviada ao RH.' : '', answered ? 'success' : '');
+      container.hidden = data.todayMood != null;
+      status('');
     } catch (error) {
       if (disposed) return;
       if (error.status === 401) { onAuthError(error); return; }
+      state = null;
+      container.hidden = false;
       status('Não foi possível carregar suas respostas.', 'error');
       refs.retry.hidden = false;
     } finally {
@@ -75,7 +92,7 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
   }
 
   async function sendMood(mood) {
-    if (!state || sending || loading || disposed) return;
+    if (!state || state.todayMood != null || sending || loading || disposed) return;
     sending = true;
     refs.retry.hidden = true;
     status('Enviando ao RH…');
@@ -84,7 +101,8 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
       const data = await request('/club/check-in', { method: 'PUT', body: { mood, shareWithRh: true } });
       if (disposed) return;
       state = data;
-      status('Resposta de hoje enviada ao RH.', 'success');
+      container.hidden = true;
+      if (data.todayMood === 1 || data.todayMood === 2) refs.dialog.showModal();
       onSubmitted?.();
     } catch (error) {
       if (disposed) return;
@@ -96,8 +114,42 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
     }
   }
 
+  async function sendComment(event) {
+    event.preventDefault();
+    if (sendingComment || disposed) return;
+    const comment = refs.comment.value.trim();
+    if (!comment) {
+      refs.commentStatus.textContent = 'Escreva um comentário ou selecione Pular.';
+      refs.comment.focus();
+      return;
+    }
+    sendingComment = true;
+    refs.comment.readOnly = true;
+    refs.skip.disabled = true;
+    refs.submitComment.disabled = true;
+    refs.commentStatus.textContent = '';
+    try {
+      await request('/club/check-in/anonymous-comments', { method: 'POST', body: { comment } });
+      if (!disposed) refs.dialog.close();
+    } catch (error) {
+      if (disposed) return;
+      if (error.status === 401) { onAuthError(error); return; }
+      refs.commentStatus.textContent = error.status === 409
+        ? error.message
+        : 'Não foi possível enviar o comentário. Tente novamente ou selecione Pular.';
+    } finally {
+      sendingComment = false;
+      if (!disposed) {
+        refs.comment.readOnly = false;
+        refs.skip.disabled = false;
+        refs.submitComment.disabled = false;
+      }
+    }
+  }
+
   function refreshIfNewDay() {
     if (state && document.visibilityState === 'visible' && state.today !== currentDay()) {
+      if (refs.dialog.open && !sendingComment) refs.dialog.close();
       void loadPersonal();
     }
   }
@@ -110,6 +162,13 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
     choice.addEventListener('click', () => void sendMood(Number(choice.dataset.mood)));
   }
   refs.retry.addEventListener('click', loadPersonal);
+  refs.skip.addEventListener('click', () => refs.dialog.close());
+  refs.commentForm.addEventListener('submit', sendComment);
+  refs.dialog.addEventListener('cancel', event => { if (sendingComment) event.preventDefault(); });
+  refs.dialog.addEventListener('close', () => {
+    refs.commentForm.reset();
+    refs.commentStatus.textContent = '';
+  });
   document.addEventListener('visibilitychange', refreshIfNewDay);
   window.addEventListener('pageshow', restoreAfterNavigation);
   const dayWatcher = setInterval(refreshIfNewDay, 60_000);
@@ -118,6 +177,7 @@ export function mountClubCheckIn(container, { request, onAuthError, onSubmitted 
   return () => {
     disposed = true;
     clearInterval(dayWatcher);
+    refs.dialog.remove();
     document.removeEventListener('visibilitychange', refreshIfNewDay);
     window.removeEventListener('pageshow', restoreAfterNavigation);
   };

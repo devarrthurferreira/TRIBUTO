@@ -104,7 +104,25 @@
 
 .club-rh-charts { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); align-items: start; gap: clamp(12px, 2cqi, 20px); }
 .club-rh-card { display: grid; gap: 14px; min-width: 0; padding: clamp(12px, 2.4cqi, 24px); border: 1px solid var(--rh-edge); border-radius: 16px; background: var(--rh-surface); }
-.club-rh-card h3, .club-rh-dialog-content h3 { margin: 0; font-size: clamp(15px, 2cqi, 20px); line-height: 1.25; }
+.club-rh-card :is(h2, h3), .club-rh-dialog-content h3 { margin: 0; font-size: clamp(15px, 2cqi, 20px); line-height: 1.25; }
+.club-rh-anonymous-note { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.club-rh-anonymous-note:empty { display: none; }
+.club-rh-anonymous-weeks, .club-rh-anonymous-list { display: grid; gap: 8px; }
+.club-rh-anonymous-week { border: 1px solid var(--rh-edge); border-radius: 10px; background: var(--rh-light); }
+.club-rh-anonymous-week summary { padding: 11px 13px; color: var(--rh-accent); cursor: pointer; font-size: 13px; font-weight: 650; }
+.club-rh-anonymous-week summary span { display: inline-block; margin-inline-start: 9px; color: var(--muted); font-size: 11px; font-weight: 500; }
+.club-rh-anonymous-list { margin: 0; padding: 0 10px 10px; list-style: none; }
+.club-rh-anonymous-list li {
+  padding: 9px 11px;
+  border: 1px solid var(--rh-edge);
+  border-radius: 8px;
+  background: var(--rh-surface);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .club-rh-mood [data-mood-level="1"] { --rh-level: var(--rh-mood-1); }
 .club-rh-mood [data-mood-level="2"] { --rh-level: var(--rh-mood-2); }
 .club-rh-mood [data-mood-level="3"] { --rh-level: var(--rh-mood-3); }

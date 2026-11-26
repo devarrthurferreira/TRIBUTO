@@ -1,13 +1,14 @@
 import { ApiError } from '../api/validation.mjs';
 import { canAccess } from '../platform/policy.mjs';
 import { closeSurveyFields, completeMeetingFields, goalCheckInFields, goalFields,
-  meetingFields, noteFields, planFields, surveyFields, surveyRating } from './fields.mjs';
+  meetingFields, noteFields, planFields, reviewResponseFields, surveyFields, surveyRating } from './fields.mjs';
 import { MIN_SURVEY_RESPONSES } from './mysql-store.mjs';
 
 const GOAL = /^\/people\/goals\/([a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})(\/check-in)?$/i;
 const SURVEY = /^\/people\/surveys\/([a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})(\/response)?$/i;
 const PLAN = /^\/people\/plans\/([a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})$/i;
 const MEETING = /^\/people\/meetings\/([a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})$/i;
+const REVIEW_RESPONSE = /^\/people\/reviews\/([a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})\/response$/i;
 
 function found(item) {
   if (!item) throw new ApiError(404, 'PEOPLE_NOT_FOUND', 'Registro não encontrado.');
@@ -53,6 +54,15 @@ export function createPeopleRouter(store) {
             if (review) requireRhEditor(user);
             return send(res, 201, { item: await store.createNote(kind, userId, noteFields(await readBody(req), { review })) });
           }
+        }
+        if (route === '/people/reviews/available' && req.method === 'GET') {
+          return send(res, 200, { items: await store.listAvailableReviews(userId) });
+        }
+        const reviewResponse = REVIEW_RESPONSE.exec(route);
+        if (reviewResponse && req.method === 'POST') {
+          const response = reviewResponseFields(await readBody(req));
+          const item = found(await store.respondToReview(userId, reviewResponse[1].toLowerCase(), response));
+          return send(res, 200, { item });
         }
         if (route === '/people/plans') {
           if (req.method === 'GET') return send(res, 200, { items: await store.listPlans(userId) });

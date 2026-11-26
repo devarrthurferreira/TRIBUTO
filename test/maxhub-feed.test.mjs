@@ -123,3 +123,66 @@ test('O feed usa cursor por data e aplica o escopo do ator a comentários, reaç
     assert.deepEqual((await request(`/${id}`, { method: 'DELETE' })).result, { deleted: true });
   });
 });
+
+test('O feed encaminha republicações, favoritos e respostas com o ator autenticado', async () => {
+  const id = randomUUID();
+  const commentId = randomUUID();
+  const calls = [];
+  const store = {
+    async list(actor, filters) { calls.push(['list', actor._id, filters]); return { posts: [], nextCursor: null }; },
+    async getComments(actor, postId, filters) {
+      calls.push(['comments', actor._id, postId, filters]);
+      return { comments: [], firstComment: null, commentCount: 0 };
+    },
+    async addComment(actor, postId, text, parentId) {
+      calls.push(['reply', actor._id, postId, parentId, text]);
+      return { comments: [], firstComment: null, commentCount: 0 };
+    },
+    async setRepost(actor, postId, reposted) {
+      calls.push(['repost', actor._id, postId, reposted]);
+      return { reposted, repostCount: Number(reposted) };
+    },
+    async setSaved(actor, postId, saved) { calls.push(['save', actor._id, postId, saved]); return { saved }; },
+    async setCommentSaved(actor, postId, childId, saved) {
+      calls.push(['save-comment', actor._id, postId, childId, saved]);
+      return { saved };
+    },
+    async setCommentLike(actor, postId, childId, liked) {
+      calls.push(['like-comment', actor._id, postId, childId, liked]);
+      return { liked, likeCount: Number(liked) };
+    },
+  };
+
+  await withFeed(store, async (request, [member, rh]) => {
+    const postPath = `/${id}`;
+    const commentPath = `${postPath}/comments/${commentId}`;
+    assert.equal((await request(`${postPath}/repost`, { method: 'PUT', csrf: '' })).status, 403);
+    assert.equal((await request(`${postPath}/save`, { method: 'POST' })).status, 404);
+    assert.equal((await request(`${postPath}/comments`, { method: 'POST', body: { text: 'Resposta', parentId: 'inválido' } })).status, 400);
+    assert.equal((await request(`${postPath}/comments/id-inválido/like`, { method: 'PUT' })).status, 400);
+    assert.equal((await request('?saved=sim')).status, 400);
+    assert.equal((await request(`${postPath}/comments?saved=sim`)).status, 400);
+    assert.equal(calls.length, 0);
+
+    assert.deepEqual((await request(`${postPath}/repost`, { method: 'PUT' })).result, { reposted: true, repostCount: 1 });
+    assert.deepEqual((await request(`${postPath}/repost`, { method: 'DELETE' })).result, { reposted: false, repostCount: 0 });
+    assert.deepEqual((await request(`${postPath}/save`, { method: 'PUT' })).result, { saved: true });
+    assert.equal((await request('?saved=1', { account: rh })).status, 200);
+    assert.equal((await request('?savedComments=1')).status, 200);
+    assert.equal((await request(`${postPath}/comments?saved=1`)).status, 200);
+    assert.equal((await request(`${postPath}/comments`, { method: 'POST', body: { text: ' Resposta ', parentId: commentId } })).status, 201);
+    assert.deepEqual((await request(`${commentPath}/like`, { method: 'PUT' })).result, { liked: true, likeCount: 1 });
+    assert.deepEqual((await request(`${commentPath}/save`, { method: 'DELETE' })).result, { saved: false });
+    assert.deepEqual(calls, [
+      ['repost', member._id, id, true],
+      ['repost', member._id, id, false],
+      ['save', member._id, id, true],
+      ['list', rh._id, { kind: null, saved: true }],
+      ['list', member._id, { kind: null, savedComments: true }],
+      ['comments', member._id, id, { saved: true }],
+      ['reply', member._id, id, commentId, 'Resposta'],
+      ['like-comment', member._id, id, commentId, true],
+      ['save-comment', member._id, id, commentId, false],
+    ]);
+  });
+});

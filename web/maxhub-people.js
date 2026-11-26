@@ -1,7 +1,7 @@
 const sections = {
-  reviews: { title: 'Avaliações', icon: 'journal-text', intro: 'Consulte avaliações registradas e acompanhe as devolutivas.', resource: 'reviews', action: 'Registrar avaliação' },
-  'my-reviews': { title: 'Minhas avaliações', icon: 'person-badge', intro: 'Releia as avaliações que você recebeu.', resource: 'reviews' },
-  feedback: { title: 'Feedbacks', icon: 'chat-dots', intro: 'Converse em particular sobre entregas, aprendizados e próximos passos.', resource: 'feedback', action: 'Enviar feedback' },
+  reviews: { title: 'Avaliações', icon: 'journal-text', intro: 'Responda às avaliações enviadas pelo RH.', resource: 'reviews' },
+  'my-reviews': { title: 'Minhas avaliações', icon: 'person-badge', intro: 'Responda às avaliações enviadas pelo RH.', resource: 'reviews' },
+  feedback: { title: 'Feedbacks', icon: 'chat-dots', intro: 'Converse em particular sobre entregas, aprendizados e próximos passos.', resource: 'feedback' },
   pdi: { title: 'Planos de Desenvolvimento', icon: 'folder2-open', intro: 'Planeje o que quer desenvolver e acompanhe o andamento dos seus PDIs.', resource: 'plans', action: 'Novo PDI' },
   meetings: { title: 'Reuniões 1:1', icon: 'clock-history', intro: 'Agende conversas individuais e registre o que será tratado.', resource: 'meetings', action: 'Agendar reunião' },
   objectives: { title: 'Objetivos', icon: 'graph-up', intro: 'Defina objetivos e faça check-ins para acompanhar seu progresso.', resource: 'goals', action: 'Novo objetivo' },
@@ -9,21 +9,34 @@ const sections = {
 };
 const statuses = {
   planned: 'Planejado', in_progress: 'Em andamento', done: 'Concluído', draft: 'Rascunho', active: 'Vigente', completed: 'Concluído',
-  scheduled: 'Agendada', open: 'Aberta', closed: 'Encerrada',
+  scheduled: 'Agendada', open: 'Aberta', closed: 'Encerrada', pending: 'Aguardando resposta',
 };
 const surveyKinds = {
   engagement: 'Pesquisa de engajamento', satisfaction: 'Pesquisa de satisfação', quick_survey: 'Pesquisa rápida', super_survey: 'Super pesquisa',
 };
 const filters = {
-  reviews: { mine: 'Minhas avaliações', all: 'Todas as avaliações' },
   feedback: { all: 'Todos', received: 'Recebidos', sent: 'Enviados' },
   pdi: { all: 'Todos os status', draft: 'Rascunhos', active: 'Vigentes', completed: 'Concluídos' },
   meetings: { all: 'Todas as reuniões', scheduled: 'Agendadas', completed: 'Concluídas' },
   objectives: { all: 'Todos os status', planned: 'Planejados', in_progress: 'Em andamento', done: 'Concluídos' },
   surveys: { all: 'Todas as pesquisas', open: 'Abertas', closed: 'Encerradas' },
 };
+const feedbackCriteria = {
+  culture: ['Alinhamento Cultural', 'Alinhamento com os valores, cultura e propósito da empresa.'],
+  customer: ['Foco no Cliente', 'Comprometimento em gerar excelência, agilidade e qualidade nas entregas aos clientes.'],
+  teamwork: ['Trabalho em Equipe', 'Colaboração, respeito e apoio nas relações com colegas e equipes.'],
+  communication: ['Comunicação', 'Clareza, respeito e efetividade na comunicação do dia a dia.'],
+  commitment: ['Comprometimento', 'Responsabilidade com prazos, entregas e combinados.'],
+  engagement: ['Engajamento', 'Participação ativa e envolvimento com as ações e objetivos da empresa.'],
+  leadership: ['Liderança', 'Capacidade de inspirar, direcionar e desenvolver pessoas e equipes.'],
+  active_listening: ['Escuta Ativa', 'Capacidade de ouvir, compreender e considerar opiniões e necessidades.'],
+};
 const dayFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium', timeZone: 'America/Sao_Paulo' });
 const numberFormat = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
+
+function feedbackDirection(item, userId) {
+  return item.direction || (item.sender?.id === userId ? 'sent' : 'received');
+}
 
 function node(tag, className, text) {
   const element = document.createElement(tag);
@@ -111,13 +124,75 @@ function goalFields(item, descriptionLimit = 2000) {
   ];
 }
 
+function feedbackRatings() {
+  const section = node('section', 'maxpeople-feedback-ratings');
+  const title = node('h3', '', 'Itens da empresa');
+  title.id = 'maxpeople-feedback-criteria';
+  section.setAttribute('aria-labelledby', title.id);
+  const criteria = node('div', 'maxpeople-ratings-grid');
+  for (const [key, [label, details]] of Object.entries(feedbackCriteria)) {
+    const criterion = node('fieldset', 'maxpeople-criterion');
+    const detail = node('p', '', details);
+    detail.id = `maxpeople-${key}-description`;
+    criterion.setAttribute('aria-describedby', detail.id);
+    const options = node('div', 'maxpeople-stars');
+    const clear = button('Limpar nota', () => {
+      const selected = options.querySelector(':checked');
+      if (!selected) return;
+      selected.checked = false;
+      selected.focus();
+      clear.disabled = true;
+    }, { subject: label });
+    clear.className = 'maxpeople-rating-clear';
+    clear.disabled = true;
+    for (let value = 1; value <= 5; value++) {
+      const option = node('label', 'maxpeople-star');
+      const score = node('input', 'sr-only');
+      Object.assign(score, { type: 'radio', name: key, value });
+      score.setAttribute('aria-label', value === 1 ? '1 estrela' : `${value} estrelas`);
+      const star = node('span');
+      star.setAttribute('aria-hidden', 'true');
+      option.append(score, star);
+      options.append(option);
+    }
+    options.addEventListener('change', () => { clear.disabled = false; });
+    const controls = node('div', 'maxpeople-criterion-controls');
+    controls.append(options, clear);
+    criterion.append(node('legend', '', label), detail, controls);
+    criteria.append(criterion);
+  }
+  section.append(title, node('p', '', 'Atribua uma nota de 1 a 5 a um ou mais itens, se desejar.'), criteria);
+  return section;
+}
+
+function feedbackPrivacy() {
+  const wrapper = node('div', 'maxpeople-feedback-privacy');
+  const anonymous = node('input');
+  Object.assign(anonymous, { type: 'checkbox', name: 'anonymous' });
+  const label = node('label', 'maxpeople-private-toggle');
+  label.append(anonymous, node('span', '', 'Enviar anonimamente'));
+  const note = node('p');
+  note.id = 'maxpeople-feedback-privacy';
+  note.setAttribute('aria-live', 'polite');
+  anonymous.setAttribute('aria-describedby', note.id);
+  const updateNote = () => {
+    note.textContent = anonymous.checked
+      ? 'Seu nome fica oculto para quem recebe e o envio anônimo não gera Maxcoin.'
+      : 'Somente você e a pessoa escolhida podem ver este feedback.';
+  };
+  anonymous.addEventListener('change', updateNote);
+  updateNote();
+  wrapper.append(label, note);
+  return wrapper;
+}
+
 export function mountMaxHubPeople(root, { area, request, onAuthError, session }) {
   if (!Object.hasOwn(sections, area)) return () => {};
   const userId = session?.user?.id || session?.user?._id;
   const admin = session?.user?.role === 'admin';
-  const reviewsAllowed = admin || ['edit', 'manage'].includes(session?.permissions?.rh);
-  const section = area === 'reviews' && !reviewsAllowed ? sections['my-reviews'] : sections[area];
-  const usesFilter = filters[area] && (area !== 'reviews' || reviewsAllowed);
+  const section = sections[area];
+  const isReviews = section.resource === 'reviews';
+  const usesFilter = Object.hasOwn(filters, area);
   const path = `/people/${section.resource}`;
   const itemPath = item => `${path}/${encodeURIComponent(item.id)}`;
   const panel = node('section', 'people-workspace maxhub-people');
@@ -163,6 +238,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
   let disposed = false;
   let activeDialog;
   let busy = false;
+  let cancelFeedbackSearch;
 
   function readError(error) {
     if (error.status !== 401) return false;
@@ -191,9 +267,10 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     ui.form.setAttribute('aria-busy', String(value));
   }
 
-  function dialog({ title, fields, submit = 'Salvar', run, success = 'Registro atualizado.' }) {
+  function dialog({ title, fields, submit = 'Salvar', run, success = 'Registro atualizado.', afterSuccess, drawer = false }) {
     dialogVersion++;
-    activeDialog = { run, success };
+    activeDialog = { run, success, afterSuccess };
+    ui.dialog.classList.toggle('maxpeople-feedback-drawer', drawer);
     ui.dialogTitle.textContent = title;
     ui.fields.replaceChildren(...fields);
     ui.error.hidden = true;
@@ -247,6 +324,141 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     return fieldset;
   }
 
+  function feedbackRecipientControl() {
+    const wrapper = node('div', 'maxpeople-feedback-entry');
+    const searchField = field('Para quem você quer enviar feedback?', 'feedbackPerson', 'search', {
+      maxLength: 80, placeholder: 'Digite o nome de um colega', autocomplete: 'off',
+    });
+    const search = searchField.querySelector('input');
+    const results = node('div', 'maxpeople-feedback-results');
+    results.hidden = true;
+    const status = node('p', '', '');
+    status.setAttribute('role', 'status');
+    const list = node('ul', 'maxpeople-feedback-options');
+    list.id = 'maxpeople-feedback-people';
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('aria-label', 'Pessoas encontradas');
+    search.setAttribute('role', 'combobox');
+    search.setAttribute('aria-autocomplete', 'list');
+    search.setAttribute('aria-expanded', 'false');
+    search.setAttribute('aria-controls', list.id);
+    results.append(status, list);
+    const directory = node('div', 'maxpeople-feedback-directory');
+    directory.append(searchField, results);
+    let matches = [];
+    let activeIndex = -1;
+    let selected;
+    let timer;
+    let searchVersion = 0;
+    const send = button('Enviar feedback', () => {
+      if (selected) createFeedback(selected, () => {
+        selected = undefined;
+        search.value = '';
+        send.disabled = true;
+        search.focus();
+      });
+    }, { primary: true, icon: 'send' });
+    send.disabled = true;
+    wrapper.append(directory, send);
+
+    function cancelSearch() {
+      searchVersion++;
+      clearTimeout(timer);
+      timer = undefined;
+      matches = [];
+      activeIndex = -1;
+      results.hidden = true;
+      list.replaceChildren();
+      search.setAttribute('aria-expanded', 'false');
+      search.removeAttribute('aria-activedescendant');
+    }
+
+    function activate(index) {
+      activeIndex = index;
+      for (const [position, option] of Array.from(list.children).entries()) {
+        option.setAttribute('aria-selected', String(position === index));
+      }
+      const option = list.children[index];
+      search.setAttribute('aria-activedescendant', option.id);
+      option.scrollIntoView({ block: 'nearest' });
+    }
+
+    function selectPerson(person) {
+      selected = person;
+      search.value = person.name;
+      send.disabled = false;
+      cancelSearch();
+      search.focus();
+    }
+
+    function suggest() {
+      cancelSearch();
+      const query = search.value.trim();
+      if (!query || selected || disposed) return;
+      results.hidden = false;
+      search.setAttribute('aria-expanded', 'true');
+      status.textContent = 'Buscando pessoas…';
+      const current = searchVersion;
+      timer = setTimeout(async () => {
+        timer = undefined;
+        try {
+          const { people = [] } = await request(`/maxhub/directory?${new URLSearchParams({ q: query })}`);
+          if (disposed || current !== searchVersion) return;
+          matches = people.filter(person => person.id !== userId).slice(0, 8);
+          status.textContent = matches.length ? '' : 'Nenhuma pessoa encontrada.';
+          for (const [index, person] of matches.entries()) {
+            const option = node('li', '', person.name);
+            option.id = `maxpeople-directory-option-${index}`;
+            option.setAttribute('role', 'option');
+            option.setAttribute('aria-selected', 'false');
+            option.addEventListener('mousedown', event => event.preventDefault());
+            option.addEventListener('click', () => selectPerson(person));
+            list.append(option);
+          }
+        } catch (error) {
+          if (disposed || current !== searchVersion || readError(error)) return;
+          status.textContent = 'Não foi possível buscar pessoas. Altere a busca para tentar novamente.';
+        }
+      }, 160);
+    }
+
+    search.addEventListener('input', () => {
+      selected = undefined;
+      send.disabled = true;
+      suggest();
+    });
+    search.addEventListener('focus', suggest);
+    search.addEventListener('blur', cancelSearch);
+    search.addEventListener('keydown', event => {
+      if (event.isComposing) return;
+      if (event.key === 'Escape') {
+        if (!results.hidden) {
+          event.preventDefault();
+          cancelSearch();
+        }
+      } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        if (matches.length) {
+          event.preventDefault();
+          const step = event.key === 'ArrowDown' ? 1 : -1;
+          activate(activeIndex < 0 && step < 0 ? matches.length - 1 : (activeIndex + step + matches.length) % matches.length);
+        } else if (results.hidden && !selected) {
+          suggest();
+        }
+      } else if (event.key === 'Enter') {
+        if (matches.length) {
+          event.preventDefault();
+          selectPerson(matches[Math.max(activeIndex, 0)]);
+        } else if (selected) {
+          event.preventDefault();
+          send.click();
+        }
+      }
+    });
+    cancelFeedbackSearch = cancelSearch;
+
+    return wrapper;
+  }
+
   function editGoal(item) {
     dialog({
       title: item ? 'Editar objetivo' : 'Novo objetivo',
@@ -292,23 +504,26 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     }
   }
 
-  function createFeedback() {
+  function createFeedback(recipient, afterSuccess) {
     dialog({
-      title: 'Enviar feedback', fields: [personalField('Destinatário'),
+      title: 'Enviar feedback', drawer: true, fields: [
         field('Seu feedback', 'text', 'textarea', { required: true, rows: 5, maxLength: 4000 }),
-        node('p', 'people-privacy-note', 'O feedback fica disponível para você e para a pessoa escolhida.')],
-      submit: 'Enviar feedback', success: 'Feedback enviado.',
-      run: data => request(path, { method: 'POST', body: { recipientId: text(data, 'recipientId'), text: text(data, 'text') } }),
+        field('Descrição', 'description', 'textarea', { rows: 4, maxLength: 4000 }),
+        feedbackRatings(), feedbackPrivacy()],
+      submit: 'Enviar feedback', success: 'Feedback enviado.', afterSuccess,
+      run: data => request(path, { method: 'POST', body: {
+        recipientId: recipient.id, text: text(data, 'text'), description: text(data, 'description'), anonymous: data.has('anonymous'),
+        ratings: Object.fromEntries(Object.keys(feedbackCriteria).filter(key => data.has(key)).map(key => [key, Number(data.get(key))])),
+      } }),
     });
   }
 
-  function createReview() {
+  function answerReview(item) {
     dialog({
-      title: 'Registrar avaliação', fields: [personalField('Pessoa avaliada'),
-        field('Título da avaliação', 'title', 'text', { required: true, maxLength: 160 }),
-        field('Observações', 'text', 'textarea', { required: true, rows: 5, maxLength: 4000 })],
-      submit: 'Registrar avaliação', success: 'Avaliação registrada.',
-      run: data => request(path, { method: 'POST', body: { recipientId: text(data, 'recipientId'), title: text(data, 'title'), text: text(data, 'text') } }),
+      title: item.title, fields: [description(item.text), field('Sua resposta', 'text', 'textarea', { required: true, rows: 5, maxLength: 4000 })],
+      submit: 'Enviar resposta', success: 'Resposta enviada.',
+      run: data => request(`${itemPath(item)}/response`, { method: 'POST', body: { text: text(data, 'text') } }),
+      afterSuccess: () => window.dispatchEvent(new Event('maxhub:reviews-change')),
     });
   }
 
@@ -405,14 +620,29 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
   }
 
   function renderFeedback(item) {
-    const outgoing = item.sender.id === userId;
-    return card(`${outgoing ? 'Para' : 'De'} ${outgoing ? item.recipient.name : item.sender.name}`, null,
-      [meta('clock-history', day(item.createdAt)), description(item.text)]);
+    const outgoing = feedbackDirection(item, userId) === 'sent';
+    const title = outgoing ? `Para ${item.recipient.name}` : item.anonymous ? 'Feedback anônimo' : `De ${item.sender.name}`;
+    const contents = [meta('clock-history', day(item.createdAt)), description(item.text)];
+    if (item.anonymous && outgoing) contents.unshift(meta('shield-lock', 'Enviado anonimamente'));
+    if (item.description) contents.push(description(item.description));
+    const scores = node('ul', 'maxpeople-feedback-scores');
+    for (const [key, [label]] of Object.entries(feedbackCriteria)) {
+      const score = item.ratings?.[key];
+      if (!score) continue;
+      const rating = node('li');
+      const mark = node('span', '', '★');
+      mark.setAttribute('aria-hidden', 'true');
+      rating.append(mark, node('span', '', `${label} · ${score}/5`));
+      scores.append(rating);
+    }
+    if (scores.childElementCount) contents.push(scores);
+    return card(title, null, contents);
   }
 
   function renderReview(item) {
-    return card(item.title, null, [meta('person', `Avaliação de ${item.recipient.name}`),
-      meta('clock-history', `${item.reviewer.name} · ${day(item.createdAt)}`), description(item.text)]);
+    return card(item.title, 'pending', [meta('clock-history', `${item.reviewer.name} · ${day(item.createdAt)}`), description(item.text)], [
+      button('Responder', () => answerReview(item), { primary: true, icon: 'send', subject: item.title }),
+    ]);
   }
 
   function renderPlan(item) {
@@ -454,18 +684,18 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     return card(item.title, item.status, content, actions);
   }
 
-  const creators = { reviews: createReview, feedback: createFeedback, pdi: editPlan, meetings: scheduleMeeting, objectives: editGoal, surveys: createSurvey };
+  const creators = { pdi: editPlan, meetings: scheduleMeeting, objectives: editGoal, surveys: createSurvey };
   const renderers = { reviews: renderReview, 'my-reviews': renderReview, feedback: renderFeedback, pdi: renderPlan,
     meetings: renderMeeting, objectives: renderGoal, surveys: renderSurvey };
-  const canCreate = section.action && (area !== 'reviews' || reviewsAllowed) && (area !== 'surveys' || admin);
+  const canCreate = section.action && (area !== 'surveys' || admin);
   if (canCreate) ui.headingAction.append(button(section.action, () => creators[area](), { primary: true, icon: 'plus-lg' }));
+  if (area === 'feedback') ui.feedback.after(feedbackRecipientControl());
   if (usesFilter) for (const [value, label] of Object.entries(filters[area])) ui.filter.add(new Option(label, value));
 
   function visibleItems() {
-    if (area === 'my-reviews' || (area === 'reviews' && ui.filter.value !== 'all')) return items.filter(item => item.recipient.id === userId);
     const chosen = ui.filter.value;
-    if (!chosen || chosen === 'all' || area === 'reviews') return items;
-    if (area === 'feedback') return items.filter(item => item[chosen === 'sent' ? 'sender' : 'recipient'].id === userId);
+    if (!chosen || chosen === 'all') return items;
+    if (area === 'feedback') return items.filter(item => feedbackDirection(item, userId) === chosen);
     return items.filter(item => item.status === chosen);
   }
 
@@ -473,7 +703,10 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     const visible = visibleItems();
     ui.count.textContent = visible.length === 1 ? '1 registro' : `${visible.length} registros`;
     ui.toolbar.hidden = !usesFilter;
-    if (!visible.length) { showState('Nenhum registro nesta seleção.'); return; }
+    if (!visible.length) {
+      showState(isReviews ? 'Nenhuma avaliação disponível para responder.' : 'Nenhum registro nesta seleção.');
+      return;
+    }
     const grid = node('div', 'people-cards');
     grid.append(...visible.map(renderers[area]));
     ui.items.replaceChildren(grid);
@@ -482,10 +715,9 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
   async function load() {
     const current = ++version;
     ui.items.setAttribute('aria-busy', 'true');
-    if (!loaded || area === 'reviews') showState('Carregando…');
+    if (!loaded) showState('Carregando…');
     try {
-      const scope = area === 'reviews' && reviewsAllowed && ui.filter.value === 'all' ? '?scope=all' : '';
-      const data = await request(`${path}${scope}`);
+      const data = await request(isReviews ? `${path}/available` : path);
       if (disposed || current !== version) return;
       items = data.items || [];
       minResponses = data.minResponses ?? minResponses;
@@ -499,14 +731,14 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     }
   }
 
-  ui.filter.addEventListener('change', () => area === 'reviews' ? void load() : draw());
+  ui.filter.addEventListener('change', draw);
   for (const close of [ui.close, ui.cancel]) close.addEventListener('click', () => ui.dialog.close());
   ui.dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
   ui.dialog.addEventListener('close', () => { if (!ui.dialog.open) activeDialog = undefined; });
   ui.form.addEventListener('submit', async event => {
     event.preventDefault();
     if (!activeDialog?.run || busy || disposed) return;
-    const { run, success } = activeDialog;
+    const { run, success, afterSuccess } = activeDialog;
     const currentDialog = dialogVersion;
     setDialogBusy(true);
     ui.error.hidden = true;
@@ -515,6 +747,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
       if (disposed) return;
       ui.dialog.close();
       feedback(success);
+      afterSuccess?.();
       window.dispatchEvent(new Event('maxhub:points-change'));
       void load();
     } catch (error) {
@@ -529,6 +762,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
 
   return () => {
     disposed = true;
+    cancelFeedbackSearch?.();
     if (ui.dialog.open) ui.dialog.close();
     panel.remove();
   };

@@ -45,10 +45,44 @@ const TABLES = [
     PRIMARY KEY (post_id, user_id),
     CONSTRAINT fk_maxhub_feed_like FOREIGN KEY (post_id) REFERENCES platform_maxhub_feed (id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_maxhub_feed_reposts (
+    post_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    created_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (post_id, user_id),
+    KEY idx_maxhub_feed_repost_created (post_id, created_at, user_id),
+    CONSTRAINT fk_maxhub_feed_repost FOREIGN KEY (post_id) REFERENCES platform_maxhub_feed (id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_maxhub_feed_saves (
+    post_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    PRIMARY KEY (post_id, user_id),
+    KEY idx_maxhub_feed_saver (user_id, post_id),
+    CONSTRAINT fk_maxhub_feed_save FOREIGN KEY (post_id) REFERENCES platform_maxhub_feed (id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_maxhub_feed_comment_replies (
+    comment_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+    parent_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    KEY idx_maxhub_comment_parent (parent_id),
+    CONSTRAINT fk_maxhub_reply_comment FOREIGN KEY (comment_id) REFERENCES platform_maxhub_feed_comments (id) ON DELETE CASCADE,
+    CONSTRAINT fk_maxhub_reply_parent FOREIGN KEY (parent_id) REFERENCES platform_maxhub_feed_comments (id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_maxhub_feed_comment_likes (
+    comment_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    PRIMARY KEY (comment_id, user_id),
+    CONSTRAINT fk_maxhub_comment_like FOREIGN KEY (comment_id) REFERENCES platform_maxhub_feed_comments (id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_maxhub_feed_comment_saves (
+    comment_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    PRIMARY KEY (comment_id, user_id),
+    KEY idx_maxhub_comment_saver (user_id, comment_id),
+    CONSTRAINT fk_maxhub_comment_save FOREIGN KEY (comment_id) REFERENCES platform_maxhub_feed_comments (id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 ];
 
 const PAGE_SIZE = 20;
-const COMMENT_LIMIT = 100;
 
 function placeholders(count) { return Array(count).fill('?').join(', '); }
 
@@ -72,31 +106,52 @@ function postNotFound() {
   return new ApiError(404, 'MAXHUB_POST_NOT_FOUND', 'Publicação indisponível.');
 }
 
+function commentNotFound() {
+  return new ApiError(404, 'MAXHUB_COMMENT_NOT_FOUND', 'Comentário indisponível.');
+}
+
+const ACTIVITY_DATE = 'COALESCE(latest_repost.created_at, post.created_at)';
 const POST_SELECT = `SELECT post.id, post.author_id, post.kind, post.body, post.audience_type,
   post.audience_sector, post.created_at, post.image_mime IS NOT NULL AS has_image,
   author.name AS author_name, profile.photo_mime IS NOT NULL AS has_avatar,
   (SELECT COUNT(*) FROM platform_maxhub_feed_likes reaction WHERE reaction.post_id = post.id) AS like_count,
   EXISTS (SELECT 1 FROM platform_maxhub_feed_likes my_like WHERE my_like.post_id = post.id AND my_like.user_id = ?) AS liked,
-  (SELECT COUNT(*) FROM platform_maxhub_feed_comments comment WHERE comment.post_id = post.id) AS comment_count
+  (SELECT COUNT(*) FROM platform_maxhub_feed_comments comment WHERE comment.post_id = post.id) AS comment_count,
+  EXISTS (SELECT 1 FROM platform_maxhub_feed_saves my_save WHERE my_save.post_id = post.id AND my_save.user_id = ?) AS saved,
+  EXISTS (SELECT 1 FROM platform_maxhub_feed_reposts my_repost WHERE my_repost.post_id = post.id AND my_repost.user_id = ?) AS reposted,
+  (SELECT COUNT(*) FROM platform_maxhub_feed_reposts repost WHERE repost.post_id = post.id) AS repost_count,
+  latest_repost.created_at AS reposted_at, reposter.id AS reposter_id, reposter.name AS reposter_name,
+  reposter_profile.photo_mime IS NOT NULL AS reposter_has_avatar, ${ACTIVITY_DATE} AS activity_at
   FROM platform_maxhub_feed post INNER JOIN platform_users author ON author.id = post.author_id
-  LEFT JOIN platform_maxhub_profiles profile ON profile.user_id = author.id`;
+  LEFT JOIN platform_maxhub_profiles profile ON profile.user_id = author.id
+  LEFT JOIN platform_maxhub_feed_reposts latest_repost ON latest_repost.post_id = post.id
+    AND latest_repost.user_id = (SELECT recent.user_id FROM platform_maxhub_feed_reposts recent
+      WHERE recent.post_id = post.id ORDER BY recent.created_at DESC, recent.user_id DESC LIMIT 1)
+  LEFT JOIN platform_users reposter ON reposter.id = latest_repost.user_id
+  LEFT JOIN platform_maxhub_profiles reposter_profile ON reposter_profile.user_id = reposter.id`;
 
-function postView(row, mentions, viewer) {
+function postView(row, mentions, firstComment, viewer) {
   return {
     id: row.id, kind: row.kind, text: row.body,
     author: { id: row.author_id, name: row.author_name, hasAvatar: Number(row.has_avatar) === 1 },
     audience: { type: row.audience_type, ...(row.audience_sector ? { sector: row.audience_sector } : {}) },
     mentions, createdAt: dateLabel(row.created_at), hasImage: Number(row.has_image) === 1,
-    likeCount: Number(row.like_count), liked: Number(row.liked) === 1, commentCount: Number(row.comment_count),
+    likeCount: Number(row.like_count), liked: Number(row.liked) === 1, commentCount: Number(row.comment_count), firstComment,
+    saved: Number(row.saved) === 1, reposted: Number(row.reposted) === 1, repostCount: Number(row.repost_count),
+    repostedBy: row.reposter_id ? { id: row.reposter_id, name: row.reposter_name, hasAvatar: Number(row.reposter_has_avatar) === 1 } : null,
+    repostedAt: row.reposted_at ? dateLabel(row.reposted_at) : null,
     canDelete: row.author_id === viewer._id || viewer.role === 'admin',
   };
 }
 
-async function includedMentions(connection, ids) {
+async function includedMentions(connection, viewer, ids) {
   if (!ids.length) return new Map();
+  const scope = accessScope(viewer);
   const [rows] = await connection.execute(`SELECT mention.post_id, person.id, person.name
-    FROM platform_maxhub_feed_mentions mention INNER JOIN platform_users person ON person.id = mention.user_id
-    WHERE mention.post_id IN (${placeholders(ids.length)}) ORDER BY mention.post_id, mention.ordinal`, ids);
+    FROM platform_maxhub_feed_mentions mention INNER JOIN platform_maxhub_feed post ON post.id = mention.post_id
+    INNER JOIN platform_users person ON person.id = mention.user_id
+    WHERE post.id IN (${placeholders(ids.length)}) AND ${scope.where} ORDER BY mention.post_id, mention.ordinal`,
+  [...ids, ...scope.values]);
   const mentions = new Map();
   for (const row of rows) {
     if (!mentions.has(row.post_id)) mentions.set(row.post_id, []);
@@ -114,24 +169,79 @@ async function visiblePost(connection, viewer, id, lock = false) {
 }
 
 async function createdPost(connection, viewer, id) {
-  const [[row]] = await connection.execute(`${POST_SELECT} WHERE post.id = ? AND post.author_id = ?`, [viewer._id, id, viewer._id]);
+  const [[row]] = await connection.execute(`${POST_SELECT} WHERE post.id = ? AND post.author_id = ?`,
+    [viewer._id, viewer._id, viewer._id, id, viewer._id]);
   if (!row) return null;
-  const mentions = await includedMentions(connection, [id]);
-  return postView(row, mentions.get(id) || [], viewer);
+  const mentions = await includedMentions(connection, viewer, [id]);
+  const first = await firstComments(connection, viewer, [id]);
+  return postView(row, mentions.get(id) || [], first.get(id) ?? null, viewer);
 }
 
-async function commentsFor(connection, id) {
-  const [rows] = await connection.execute(`SELECT comment.id, comment.body, comment.author_id,
-      comment.created_at, author.name AS author_name, profile.photo_mime IS NOT NULL AS has_avatar
-    FROM platform_maxhub_feed_comments comment INNER JOIN platform_users author ON author.id = comment.author_id
-      LEFT JOIN platform_maxhub_profiles profile ON profile.user_id = author.id
-    WHERE comment.post_id = ? ORDER BY comment.created_at DESC, comment.id DESC LIMIT ${COMMENT_LIMIT}`, [id]);
-  const [[{ total }]] = await connection.execute('SELECT COUNT(*) AS total FROM platform_maxhub_feed_comments WHERE post_id = ?', [id]);
-  const comments = rows.reverse().map(row => ({
-    id: row.id, text: row.body, createdAt: dateLabel(row.created_at),
+const COMMENT_SELECT = `SELECT comment.id, comment.post_id, comment.body, comment.author_id, comment.created_at,
+  author.name AS author_name, profile.photo_mime IS NOT NULL AS has_avatar, parent_link.parent_id,
+  (SELECT COUNT(*) FROM platform_maxhub_feed_comment_replies reply WHERE reply.parent_id = comment.id) AS reply_count,
+  (SELECT COUNT(*) FROM platform_maxhub_feed_comment_likes reaction WHERE reaction.comment_id = comment.id) AS like_count,
+  EXISTS (SELECT 1 FROM platform_maxhub_feed_comment_likes my_like WHERE my_like.comment_id = comment.id AND my_like.user_id = ?) AS liked,
+  EXISTS (SELECT 1 FROM platform_maxhub_feed_comment_saves my_save WHERE my_save.comment_id = comment.id AND my_save.user_id = ?) AS saved`;
+const COMMENT_JOINS = `LEFT JOIN platform_users author ON author.id = comment.author_id
+  LEFT JOIN platform_maxhub_profiles profile ON profile.user_id = author.id
+  LEFT JOIN platform_maxhub_feed_comment_replies parent_link ON parent_link.comment_id = comment.id`;
+
+function commentView(row) {
+  return {
+    id: row.id, parentId: row.parent_id ?? null, text: row.body, createdAt: dateLabel(row.created_at),
     author: { id: row.author_id, name: row.author_name, hasAvatar: Number(row.has_avatar) === 1 },
-  }));
-  return { comments, commentCount: Number(total) };
+    likeCount: Number(row.like_count), liked: Number(row.liked) === 1,
+    saved: Number(row.saved) === 1, replyCount: Number(row.reply_count),
+  };
+}
+
+async function firstComments(connection, viewer, ids) {
+  if (!ids.length) return new Map();
+  const scope = accessScope(viewer);
+  const [rows] = await connection.execute(`${COMMENT_SELECT}
+    FROM platform_maxhub_feed post INNER JOIN platform_maxhub_feed_comments comment ON comment.id = (
+      SELECT candidate.id FROM platform_maxhub_feed_comments candidate
+      LEFT JOIN platform_maxhub_feed_comment_replies candidate_parent ON candidate_parent.comment_id = candidate.id
+      WHERE candidate.post_id = post.id AND candidate_parent.comment_id IS NULL
+      ORDER BY candidate.created_at, candidate.id LIMIT 1
+    ) ${COMMENT_JOINS} WHERE post.id IN (${placeholders(ids.length)}) AND ${scope.where}`,
+  [viewer._id, viewer._id, ...ids, ...scope.values]);
+  return new Map(rows.map(row => [row.post_id, commentView(row)]));
+}
+
+async function commentsFor(connection, viewer, id, savedOnly = false) {
+  const scope = accessScope(viewer);
+  const savedJoin = savedOnly ? `INNER JOIN platform_maxhub_feed_comment_saves bookmark
+    ON bookmark.comment_id = comment.id AND bookmark.user_id = ?` : '';
+  const [rows] = await connection.execute(`${COMMENT_SELECT}
+    FROM platform_maxhub_feed_comments comment INNER JOIN platform_maxhub_feed post ON post.id = comment.post_id
+    ${savedJoin} ${COMMENT_JOINS} WHERE post.id = ? AND ${scope.where} ORDER BY comment.created_at, comment.id`,
+  [viewer._id, viewer._id, ...(savedOnly ? [viewer._id] : []), id, ...scope.values]);
+  const comments = rows.map(commentView);
+  if (!savedOnly) return { comments, commentCount: comments.length,
+    firstComment: comments.find(comment => comment.parentId === null) ?? null };
+  const first = await firstComments(connection, viewer, [id]);
+  const [[{ total }]] = await connection.execute(`SELECT COUNT(*) AS total FROM platform_maxhub_feed_comments comment
+    INNER JOIN platform_maxhub_feed post ON post.id = comment.post_id WHERE post.id = ? AND ${scope.where}`,
+  [id, ...scope.values]);
+  return { comments, commentCount: Number(total), firstComment: first.get(id) ?? null };
+}
+
+async function visibleComment(connection, id, commentId) {
+  const [[comment]] = await connection.execute(`SELECT comment.id, reply.parent_id FROM platform_maxhub_feed_comments comment
+    LEFT JOIN platform_maxhub_feed_comment_replies reply ON reply.comment_id = comment.id
+    WHERE comment.post_id = ? AND comment.id = ? FOR UPDATE`, [id, commentId]);
+  if (!comment) throw commentNotFound();
+  return comment;
+}
+
+async function setBookmark(connection, table, column, itemId, userId, saved) {
+  if (saved) {
+    await connection.execute(`INSERT INTO ${table} (${column}, user_id)
+      VALUES (?, ?) ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)`, [itemId, userId]);
+  } else await connection.execute(`DELETE FROM ${table} WHERE ${column} = ? AND user_id = ?`, [itemId, userId]);
+  return { saved };
 }
 
 export class MaxHubFeedStore {
@@ -141,23 +251,35 @@ export class MaxHubFeedStore {
     for (const sql of TABLES) await this.platformStore.pool.query(sql);
   }
 
-  async list(viewer, { kind, cursor } = {}) {
+  async list(viewer, { kind, cursor, saved, savedComments } = {}) {
     const connection = this.platformStore.pool;
     const scope = accessScope(viewer);
     const where = [scope.where];
-    const values = [viewer._id, ...scope.values];
+    const values = [viewer._id, viewer._id, viewer._id, ...scope.values];
     if (kind) { where.push('post.kind = ?'); values.push(kind); }
+    if (saved) {
+      where.push('EXISTS (SELECT 1 FROM platform_maxhub_feed_saves bookmark WHERE bookmark.post_id = post.id AND bookmark.user_id = ?)');
+      values.push(viewer._id);
+    }
+    if (savedComments) {
+      where.push(`EXISTS (SELECT 1 FROM platform_maxhub_feed_comment_saves bookmark
+        INNER JOIN platform_maxhub_feed_comments comment ON comment.id = bookmark.comment_id
+        WHERE bookmark.user_id = ? AND comment.post_id = post.id)`);
+      values.push(viewer._id);
+    }
     if (cursor) {
-      where.push('(post.created_at < ? OR (post.created_at = ? AND post.id < ?))');
+      where.push(`(${ACTIVITY_DATE} < ? OR (${ACTIVITY_DATE} = ? AND post.id < ?))`);
       values.push(cursor.createdAt, cursor.createdAt, cursor.id);
     }
     const [rows] = await connection.execute(`${POST_SELECT} WHERE ${where.join(' AND ')}
-      ORDER BY post.created_at DESC, post.id DESC LIMIT ${PAGE_SIZE + 1}`, values);
+      ORDER BY activity_at DESC, post.id DESC LIMIT ${PAGE_SIZE + 1}`, values);
     const more = rows.length > PAGE_SIZE;
     const page = rows.slice(0, PAGE_SIZE);
-    const mentions = await includedMentions(connection, page.map(post => post.id));
-    const posts = page.map(row => postView(row, mentions.get(row.id) || [], viewer));
-    return { posts, nextCursor: more ? Buffer.from(`${posts.at(-1).createdAt}/${posts.at(-1).id}`).toString('base64url') : null };
+    const ids = page.map(post => post.id);
+    const [mentions, first] = await Promise.all([includedMentions(connection, viewer, ids), firstComments(connection, viewer, ids)]);
+    const posts = page.map(row => postView(row, mentions.get(row.id) || [], first.get(row.id) ?? null, viewer));
+    const last = page.at(-1);
+    return { posts, nextCursor: more ? Buffer.from(`${dateLabel(last.activity_at)}/${last.id}`).toString('base64url') : null };
   }
 
   async create(viewer, { kind, text, audience, mentions, image, clientId }) {
@@ -209,18 +331,25 @@ export class MaxHubFeedStore {
     return image;
   }
 
-  async getComments(viewer, id) {
+  async getComments(viewer, id, { saved } = {}) {
     const connection = this.platformStore.pool;
     await visiblePost(connection, viewer, id);
-    return commentsFor(connection, id);
+    return commentsFor(connection, viewer, id, saved);
   }
 
-  async addComment(viewer, id, text) {
+  async addComment(viewer, id, text, parentId) {
     return this.platformStore.transaction(async connection => {
       await visiblePost(connection, viewer, id, true);
+      if (parentId) {
+        const parent = await visibleComment(connection, id, parentId);
+        if (parent.parent_id) throw new ApiError(400, 'MAXHUB_COMMENT_REPLY_DEPTH', 'Responda ao comentário que iniciou a conversa.');
+      }
+      const commentId = randomUUID();
       await connection.execute(`INSERT INTO platform_maxhub_feed_comments
-        (id, post_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)`, [randomUUID(), id, viewer._id, text, new Date()]);
-      return commentsFor(connection, id);
+        (id, post_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)`, [commentId, id, viewer._id, text, new Date()]);
+      if (parentId) await connection.execute('INSERT INTO platform_maxhub_feed_comment_replies (comment_id, parent_id) VALUES (?, ?)',
+        [commentId, parentId]);
+      return commentsFor(connection, viewer, id);
     });
   }
 
@@ -234,6 +363,47 @@ export class MaxHubFeedStore {
       } else await connection.execute('DELETE FROM platform_maxhub_feed_likes WHERE post_id = ? AND user_id = ?', values);
       const [[{ total }]] = await connection.execute('SELECT COUNT(*) AS total FROM platform_maxhub_feed_likes WHERE post_id = ?', [id]);
       return { liked, likeCount: Number(total) };
+    });
+  }
+
+  async setRepost(viewer, id, reposted) {
+    return this.platformStore.transaction(async connection => {
+      await visiblePost(connection, viewer, id, true);
+      if (reposted) {
+        await connection.execute(`INSERT INTO platform_maxhub_feed_reposts (post_id, user_id, created_at)
+          VALUES (?, ?, UTC_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)`, [id, viewer._id]);
+      } else await connection.execute('DELETE FROM platform_maxhub_feed_reposts WHERE post_id = ? AND user_id = ?', [id, viewer._id]);
+      const [[{ total }]] = await connection.execute('SELECT COUNT(*) AS total FROM platform_maxhub_feed_reposts WHERE post_id = ?', [id]);
+      return { reposted, repostCount: Number(total) };
+    });
+  }
+
+  async setSaved(viewer, id, saved) {
+    return this.platformStore.transaction(async connection => {
+      await visiblePost(connection, viewer, id, true);
+      return setBookmark(connection, 'platform_maxhub_feed_saves', 'post_id', id, viewer._id, saved);
+    });
+  }
+
+  async setCommentLike(viewer, id, commentId, liked) {
+    return this.platformStore.transaction(async connection => {
+      await visiblePost(connection, viewer, id, true);
+      await visibleComment(connection, id, commentId);
+      const values = [commentId, viewer._id];
+      if (liked) {
+        await connection.execute(`INSERT INTO platform_maxhub_feed_comment_likes (comment_id, user_id)
+          VALUES (?, ?) ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)`, values);
+      } else await connection.execute('DELETE FROM platform_maxhub_feed_comment_likes WHERE comment_id = ? AND user_id = ?', values);
+      const [[{ total }]] = await connection.execute('SELECT COUNT(*) AS total FROM platform_maxhub_feed_comment_likes WHERE comment_id = ?', [commentId]);
+      return { liked, likeCount: Number(total) };
+    });
+  }
+
+  async setCommentSaved(viewer, id, commentId, saved) {
+    return this.platformStore.transaction(async connection => {
+      await visiblePost(connection, viewer, id, true);
+      await visibleComment(connection, id, commentId);
+      return setBookmark(connection, 'platform_maxhub_feed_comment_saves', 'comment_id', commentId, viewer._id, saved);
     });
   }
 

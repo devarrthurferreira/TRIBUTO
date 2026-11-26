@@ -51,6 +51,23 @@ const SCHEMA = [
     KEY idx_people_notes_sender (kind, sender_id, created_at),
     KEY idx_people_notes_recipient (kind, recipient_id, created_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_people_feedback_details (
+    note_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+    description TEXT NOT NULL, ratings JSON NOT NULL,
+    CONSTRAINT fk_people_feedback_note FOREIGN KEY (note_id) REFERENCES platform_people_notes (id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_people_anonymous_feedback (
+    id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+    sender_key BINARY(32) NOT NULL,
+    recipient_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    body TEXT NOT NULL, description TEXT NOT NULL, ratings JSON NOT NULL, created_at DATETIME(3) NOT NULL,
+    KEY idx_people_anonymous_recipient (recipient_id), KEY idx_people_anonymous_sender (sender_key)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_people_review_assignments (
+    note_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+    response TEXT NULL, responded_at DATETIME(3) NULL,
+    CONSTRAINT fk_people_review_note FOREIGN KEY (note_id) REFERENCES platform_people_notes (id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS platform_people_plans (
     id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
     owner_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -72,8 +89,16 @@ const SCHEMA = [
 
 const SURVEYS = `SELECT survey.*, kind.kind FROM platform_people_surveys survey
     LEFT JOIN platform_people_survey_kinds kind ON kind.survey_id = survey.id`;
-const NOTES = `SELECT note.*, sender.name AS sender_name, recipient.name AS recipient_name FROM platform_people_notes note
+const NOTE_FIELDS = 'note.*, sender.name AS sender_name, recipient.name AS recipient_name';
+const NOTE_PEOPLE = `FROM platform_people_notes note
     JOIN platform_users sender ON sender.id = note.sender_id JOIN platform_users recipient ON recipient.id = note.recipient_id`;
+const FEEDBACK = `SELECT ${NOTE_FIELDS}, details.description, details.ratings ${NOTE_PEOPLE}
+    LEFT JOIN platform_people_feedback_details details ON details.note_id = note.id`;
+const ANONYMOUS_FEEDBACK = `SELECT feedback.id, feedback.recipient_id, recipient.name AS recipient_name, feedback.body,
+    feedback.description, feedback.ratings, feedback.created_at, feedback.sender_key = ? AS sent_by_me
+    FROM platform_people_anonymous_feedback feedback JOIN platform_users recipient ON recipient.id = feedback.recipient_id`;
+const REVIEWS = `SELECT ${NOTE_FIELDS}, assignment.note_id AS assignment_id, assignment.response, assignment.responded_at ${NOTE_PEOPLE}
+    LEFT JOIN platform_people_review_assignments assignment ON assignment.note_id = note.id`;
 const MEETINGS = `SELECT meeting.*, organizer.name AS organizer_name, participant.name AS participant_name FROM platform_people_meetings meeting
     JOIN platform_users organizer ON organizer.id = meeting.organizer_id JOIN platform_users participant ON participant.id = meeting.participant_id`;
 
@@ -101,10 +126,29 @@ function checkInRecord(row) {
 }
 
 function noteRecord(row) {
-  const from = { id: row.sender_id, name: row.sender_name };
   return {
     id: row.id, recipient: { id: row.recipient_id, name: row.recipient_name }, text: row.body, createdAt: iso(row.created_at),
-    ...(row.kind === 'review' ? { reviewer: from, title: row.title } : { sender: from }),
+  };
+}
+
+function feedbackRecord(row, userId, anonymous = false) {
+  const note = noteRecord(row);
+  const sent = anonymous ? Number(row.sent_by_me) === 1 : row.sender_id === userId;
+  // Show the local calendar date without exposing an anonymous sender's exact time of entry.
+  const createdAt = anonymous && !sent ? `${maxHubDay(new Date(note.createdAt))}T12:00:00.000Z` : note.createdAt;
+  return {
+    ...note, createdAt, anonymous, direction: sent ? 'sent' : 'received',
+    sender: anonymous ? null : { id: row.sender_id, name: row.sender_name },
+    description: row.description ?? '',
+    ratings: typeof row.ratings === 'string' ? JSON.parse(row.ratings) : row.ratings ?? {},
+  };
+}
+
+function reviewRecord(row) {
+  const response = row.responded_at ? { text: row.response, createdAt: iso(row.responded_at) } : null;
+  return {
+    ...noteRecord(row), reviewer: { id: row.sender_id, name: row.sender_name }, title: row.title,
+    status: (response && 'responded') || (row.assignment_id && 'pending') || 'recorded', response,
   };
 }
 
@@ -210,21 +254,79 @@ export class PeopleMySqlStore {
   }
 
   async listNotes(kind, userId, all = false) {
+    if (kind === 'feedback') {
+      const senderKey = this.#anonymousFeedbackKey(userId);
+      const [named, anonymous] = await Promise.all([
+        this.platformStore.rows(`${FEEDBACK} WHERE note.kind = 'feedback' AND (note.sender_id = ? OR note.recipient_id = ?)`,
+          [userId, userId]),
+        this.platformStore.rows(`${ANONYMOUS_FEEDBACK} WHERE feedback.recipient_id = ? OR feedback.sender_key = ?`,
+          [senderKey, userId, senderKey]),
+      ]);
+      return [...named.map(row => feedbackRecord(row, userId)), ...anonymous.map(row => feedbackRecord(row, userId, true))]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+    }
     const scope = all ? '' : ' AND (note.sender_id = ? OR note.recipient_id = ?)';
-    const rows = await this.platformStore.rows(`${NOTES} WHERE note.kind = ?${scope} ORDER BY note.created_at DESC, note.id`,
-      all ? [kind] : [kind, userId, userId]);
-    return rows.map(noteRecord);
+    const rows = await this.platformStore.rows(`${REVIEWS} WHERE note.kind = 'review'${scope} ORDER BY note.created_at DESC, note.id`,
+      all ? [] : [userId, userId]);
+    return rows.map(reviewRecord);
   }
 
-  async createNote(kind, userId, { recipientId, title = null, text }) {
+  #anonymousFeedbackKey(userId) {
+    return createHmac('sha256', this.#respondentSecret).update(`feedback-sender:${userId}`).digest();
+  }
+
+  async createNote(kind, userId, { recipientId, title = null, text, description = '', anonymous = false, ratings = {} }) {
     return this.platformStore.transaction(async connection => {
       await requireOtherParticipant(connection, userId, recipientId);
       const id = randomUUID();
+      const now = new Date();
+      if (kind === 'feedback' && anonymous) {
+        const senderKey = this.#anonymousFeedbackKey(userId);
+        await connection.execute(`INSERT INTO platform_people_anonymous_feedback
+          (id, sender_key, recipient_id, body, description, ratings, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [id, senderKey, recipientId, text, description, JSON.stringify(ratings), now]);
+        // A reward would identify the anonymous sender through changes in the shared ranking.
+        const [[row]] = await connection.execute(`${ANONYMOUS_FEEDBACK} WHERE feedback.id = ?`, [senderKey, id]);
+        return feedbackRecord(row, userId, true);
+      }
       await connection.execute(`INSERT INTO platform_people_notes (id, kind, sender_id, recipient_id, title, body, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`, [id, kind, userId, recipientId, title, text, new Date()]);
-      if (kind === 'feedback') await awardMaxcoin(connection, userId, 'feedback', id);
-      const [[row]] = await connection.execute(`${NOTES} WHERE note.id = ?`, [id]);
-      return noteRecord(row);
+        VALUES (?, ?, ?, ?, ?, ?, ?)`, [id, kind, userId, recipientId, title, text, now]);
+      if (kind === 'review') {
+        await connection.execute('INSERT INTO platform_people_review_assignments (note_id) VALUES (?)', [id]);
+        const [[row]] = await connection.execute(`${REVIEWS} WHERE note.id = ?`, [id]);
+        return reviewRecord(row);
+      }
+      if (description || Object.keys(ratings).length) {
+        await connection.execute('INSERT INTO platform_people_feedback_details (note_id, description, ratings) VALUES (?, ?, ?)',
+          [id, description, JSON.stringify(ratings)]);
+      }
+      await awardMaxcoin(connection, userId, 'feedback', id);
+      const [[row]] = await connection.execute(`${FEEDBACK} WHERE note.id = ?`, [id]);
+      return feedbackRecord(row, userId);
+    });
+  }
+
+  async listAvailableReviews(userId) {
+    const rows = await this.platformStore.rows(`${REVIEWS} WHERE note.kind = 'review' AND note.recipient_id = ?
+      AND assignment.note_id IS NOT NULL AND assignment.responded_at IS NULL ORDER BY note.created_at DESC, note.id`, [userId]);
+    return rows.map(reviewRecord);
+  }
+
+  async respondToReview(userId, id, { text }) {
+    return this.platformStore.transaction(async connection => {
+      const [[assignment]] = await connection.execute(`SELECT assignment.response, assignment.responded_at
+        FROM platform_people_review_assignments assignment
+        JOIN platform_people_notes note ON note.id = assignment.note_id
+        WHERE note.kind = 'review' AND note.recipient_id = ? AND assignment.note_id = ? FOR UPDATE`, [userId, id]);
+      if (!assignment) return null;
+      if (assignment.responded_at) {
+        if (assignment.response !== text) throw new ApiError(409, 'PEOPLE_REVIEW_RESPONDED', 'Esta avaliação já foi respondida.');
+      } else {
+        await connection.execute('UPDATE platform_people_review_assignments SET response = ?, responded_at = ? WHERE note_id = ?',
+          [text, new Date(), id]);
+      }
+      const [[row]] = await connection.execute(`${REVIEWS} WHERE note.id = ?`, [id]);
+      return reviewRecord(row);
     });
   }
 

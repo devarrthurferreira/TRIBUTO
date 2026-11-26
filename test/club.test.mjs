@@ -220,6 +220,63 @@ test('A visão de humor da equipe exige administrador e solicita apenas dias enc
   }, { clock: () => new Date('2026-11-27T02:59:59Z') });
 });
 
+test('Comentários anônimos usam a sessão, o dia de São Paulo e apenas semanas encerradas no painel do RH', async () => {
+  let employeeId;
+  let eligible = false;
+  let text;
+  let now = new Date('2026-11-30T02:59:59Z');
+  const weeks = [{ start: '2026-11-23', comments: ['Texto sem identificação'] }];
+  const store = {
+    async saveAnonymousMoodComment(userId, date, week, comment) {
+      assert.equal(userId, employeeId);
+      assert.equal(date, '2026-11-29');
+      assert.equal(week, '2026-11-23');
+      if (!eligible) throw new ApiError(409, 'CLUB_MOOD_COMMENT_UNAVAILABLE', 'Sem resposta triste.');
+      if (text) return false;
+      text = comment;
+      return true;
+    },
+    async getAnonymousMoodComments(first, current, minimum) {
+      assert.equal(minimum, 5);
+      if (now.getUTCHours() === 2) {
+        assert.equal(first, '2026-08-24');
+        assert.equal(current, '2026-11-23');
+        return [];
+      }
+      assert.equal(first, '2026-08-31');
+      assert.equal(current, '2026-11-30');
+      return weeks;
+    },
+  };
+  await withClubRoutes(store, async ({ request, member, memberSession, rhManagerSession, rhViewerSession, rhBlockedSession, adminSession }) => {
+    employeeId = member._id;
+    const path = '/check-in/anonymous-comments';
+    const submit = (comment, options) => request(path, memberSession, {
+      method: 'POST', input: { comment, author: 'Autor informado', week: '2026-11-30' }, ...options,
+    });
+
+    assert.equal((await request(path)).status, 401);
+    assert.equal((await request(path, undefined, { method: 'POST', input: { comment: 'Teste' } })).status, 401);
+    for (const session of [memberSession, rhViewerSession, rhBlockedSession]) {
+      assert.equal((await request(path, session)).status, 403);
+    }
+    assert.equal((await submit('Teste', { csrf: '' })).result.error, 'CSRF');
+    for (const comment of ['', '  ', null, {}, 'a'.repeat(1001)]) {
+      assert.equal((await submit(comment)).result.error, 'CLUB_INVALID_COMMENT');
+    }
+    assert.equal((await submit('Teste')).result.error, 'CLUB_MOOD_COMMENT_UNAVAILABLE');
+    eligible = true;
+    assert.deepEqual(await submit('  Texto sem identificação \n'), { status: 201, result: { submitted: true } });
+    assert.deepEqual(await submit('Outro texto'), { status: 200, result: { submitted: true } });
+    assert.equal(text, 'Texto sem identificação');
+    assert.deepEqual(await request(path, rhManagerSession), { status: 200, result: { weeks: [], minimum: 5 } });
+    now = new Date('2026-11-30T03:00:00Z');
+    assert.deepEqual(await request(`${path}?days=1&userId=${employeeId}`, adminSession), {
+      status: 200, result: { weeks, minimum: 5 },
+    });
+  }, { clock: () => now });
+});
+
 test('Favoritos do Clube exigem sessão e CSRF, são pessoais e omitem itens indisponíveis', async () => {
   const [visibleId, hiddenId] = [randomUUID(), randomUUID()];
   const visible = new Set([visibleId]);

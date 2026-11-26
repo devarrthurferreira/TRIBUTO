@@ -4,6 +4,10 @@ const GOAL_STATUSES = new Set(['planned', 'in_progress', 'done']);
 const SURVEY_KINDS = new Set(['engagement', 'satisfaction', 'quick_survey', 'super_survey']);
 const PLAN_STATUSES = new Set(['draft', 'active', 'completed']);
 const USER_ID = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i;
+const FEEDBACK_RATINGS = new Set([
+  'culture', 'customer', 'teamwork', 'communication',
+  'commitment', 'engagement', 'leadership', 'active_listening',
+]);
 
 function invalid(label) {
   throw new ApiError(400, 'PEOPLE_INVALID_INPUT', `Confira o campo ${label}.`);
@@ -90,11 +94,24 @@ export function goalCheckInFields(input) {
 
 export function noteFields(input, { review = false } = {}) {
   fieldsObject(input);
-  return {
+  const note = {
     recipientId: participant(input.recipientId, 'destinatário'),
     text: text(input.text, review ? 'avaliação' : 'feedback', 4000, true),
-    ...(review ? { title: text(input.title, 'título', 160, true) } : {}),
   };
+  if (review) return { ...note, title: text(input.title, 'título', 160, true) };
+
+  if (input.anonymous !== undefined && typeof input.anonymous !== 'boolean') invalid('envio anônimo');
+  const ratings = input.ratings === undefined ? {} : input.ratings;
+  if (!ratings || typeof ratings !== 'object' || Array.isArray(ratings)) invalid('itens da empresa');
+  for (const [criterion, rating] of Object.entries(ratings)) {
+    if (!FEEDBACK_RATINGS.has(criterion) || !Number.isInteger(rating) || rating < 1 || rating > 5) invalid('itens da empresa');
+  }
+  return { ...note, description: text(input.description ?? '', 'descrição', 4000), anonymous: input.anonymous ?? false, ratings };
+}
+
+export function reviewResponseFields(input) {
+  fieldsObject(input);
+  return { text: text(input.text, 'resposta', 4000, true) };
 }
 
 export function planFields(input, { partial = false } = {}) {

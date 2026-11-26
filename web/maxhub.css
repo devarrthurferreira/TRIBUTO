@@ -4,6 +4,14 @@
 .maxhub-menu-toggle { border-color: var(--portal-edge); background: var(--portal-hover); color: var(--blue); }
 .maxhub-subnav .sector-subnav-link { line-height: 1.35; }
 .maxhub-subnav .sector-subnav-link .bi { flex: none; }
+.maxhub-menu-group > .bi:last-child { margin-inline-start: auto; font-size: 10px; transition: transform .2s ease; }
+.maxhub-menu-group[aria-expanded="true"] > .bi:last-child { transform: rotate(180deg); }
+.maxhub-menu-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .24s ease; }
+.maxhub-menu-panel[data-expanded="true"] { grid-template-rows: 1fr; }
+.maxhub-menu-panel-body { min-height: 0; overflow: hidden; }
+.maxhub-menu-panel-body .sector-subnav-children { margin-bottom: 3px; }
+.maxhub-loading { display: grid; place-items: center; align-content: center; gap: 9px; min-height: 200px; color: var(--muted); font-size: 13px; }
+.maxhub-loading p { margin: 0; }
 
 .maxhub {
   --club-accent: var(--blue);
@@ -19,9 +27,13 @@
 }
 [data-theme="dark"] .maxhub { --club-success: #b2e4c7; --club-danger: #ffb4bd; }
 .maxhub-mood { margin-bottom: 22px; }
+.maxhub-mood:empty { display: none; }
 .maxhub-mood .club-checkin-retry { padding: 7px 11px; border: 1px solid var(--portal-edge); border-radius: 8px; background: var(--portal-surface); color: var(--blue); }
 .portal-avatar-image { width: 33px; height: 33px; border-radius: 50%; object-fit: cover; }
 .portal-popover-panel .portal-profile-link { display: flex; align-items: center; gap: 9px; padding: 10px; border-radius: 8px; color: var(--ink); font-size: 12px; text-decoration: none; }
 .portal-popover-panel .portal-profile-link:hover { background: var(--portal-hover); }
 
 @media (max-width: 700px) { .portal-avatar-image { width: 28px; height: 28px; } }
+@media (prefers-reduced-motion: reduce) {
+  .maxhub-menu-panel, .maxhub-menu-group > .bi:last-child { transition: none; }
+}

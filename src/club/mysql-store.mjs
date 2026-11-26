@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ApiError } from '../api/validation.mjs';
 import { applyClubFields, CLUB_COLLECTIONS } from './catalog.mjs';
 
@@ -25,6 +26,18 @@ const SCHEMAS = [`CREATE TABLE IF NOT EXISTS platform_club_catalog (
   KEY idx_club_rh_checkins_date (check_date),
   CONSTRAINT fk_club_rh_checkin FOREIGN KEY (user_id, check_date)
     REFERENCES platform_club_checkins (user_id, check_date) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+`CREATE TABLE IF NOT EXISTS platform_club_mood_comment_claims (
+  user_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  check_date DATE NOT NULL,
+  PRIMARY KEY (user_id, check_date),
+  KEY idx_club_mood_comment_claims_date (check_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+`CREATE TABLE IF NOT EXISTS platform_club_mood_comments (
+  id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+  week_start DATE NOT NULL,
+  comment_text VARCHAR(1000) NOT NULL,
+  KEY idx_club_mood_comments_week (week_start)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 `CREATE TABLE IF NOT EXISTS platform_club_saved (
   user_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -124,6 +137,45 @@ export class ClubMySqlStore {
       }
       if (mood !== null) await this.awardMood?.(connection, userId, 'mood', today);
     });
+  }
+
+  async saveAnonymousMoodComment(userId, today, weekStart, comment) {
+    return this.platformStore.transaction(async connection => {
+      const [[checkin]] = await connection.execute(`SELECT mood FROM platform_club_checkins
+        WHERE user_id = ? AND check_date = ? FOR UPDATE`, [userId, today]);
+      if (checkin?.mood !== 1 && checkin?.mood !== 2) {
+        throw new ApiError(409, 'CLUB_MOOD_COMMENT_UNAVAILABLE', 'O comentário está disponível após uma resposta triste no termômetro de hoje.');
+      }
+      try {
+        await connection.execute(`INSERT INTO platform_club_mood_comment_claims (user_id, check_date)
+          VALUES (?, ?)`, [userId, today]);
+      } catch (error) {
+        if (error.code === 'ER_DUP_ENTRY') return false;
+        throw error;
+      }
+      // O controle de duplicidade não referencia o texto. Só a semana é armazenada com a mensagem.
+      await connection.execute(`INSERT INTO platform_club_mood_comments (id, week_start, comment_text)
+        VALUES (?, ?, ?)`, [randomUUID(), weekStart, comment]);
+      return true;
+    });
+  }
+
+  async getAnonymousMoodComments(firstWeek, currentWeek, minimum) {
+    const [rows] = await this.platformStore.pool.execute(`SELECT message.week_start, message.comment_text
+      FROM platform_club_mood_comments message
+      JOIN (
+        SELECT DATE_SUB(check_date, INTERVAL WEEKDAY(check_date) DAY) AS week_start
+        FROM platform_club_mood_comment_claims
+        WHERE check_date >= ? AND check_date < ?
+        GROUP BY week_start HAVING COUNT(DISTINCT user_id) >= ?
+      ) released ON message.week_start = released.week_start
+      ORDER BY message.week_start DESC, message.id`, [firstWeek, currentWeek, minimum]);
+    const weeks = new Map();
+    for (const { week_start: start, comment_text: comment } of rows) {
+      if (!weeks.has(start)) weeks.set(start, { start, comments: [] });
+      weeks.get(start).comments.push(comment);
+    }
+    return [...weeks.values()];
   }
 
   async getRhMoodOverview(firstDay, today) {
