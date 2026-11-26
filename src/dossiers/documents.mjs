@@ -13,7 +13,7 @@ const documentStyle = `
   :root {
     color-scheme: light;
     color: #252024;
-    font: 15px/1.52 system-ui, -apple-system, "Segoe UI", sans-serif;
+    font: 13.5px/1.48 system-ui, -apple-system, "Segoe UI", sans-serif;
     --wine: #640c15;
     --line: #ebdfe1;
     --warm: #faf6f6;
@@ -42,9 +42,9 @@ const documentStyle = `
     border-radius: 5px;
   }
   .brand img { width: 260px; max-width: 76%; height: auto; display: block; }
-  .eyebrow { margin: 17px 0 4px; color: #f4cca6; font-size: .75rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-  h1 { margin: 0; font-size: clamp(1.26rem, 4vw, 1.85rem); line-height: 1.2; overflow-wrap: anywhere; }
-  .cover-meta { margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 2px 15px; color: #f8e8ea; font-size: .82rem; }
+  .eyebrow { margin: 17px 0 4px; color: #f4cca6; font-size: .8rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  h1 { margin: 0; font-size: clamp(1.28rem, 3.6vw, 1.78rem); line-height: 1.2; overflow-wrap: anywhere; }
+  .cover-meta { margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 2px 15px; color: #f8e8ea; font-size: .85rem; }
   .cover-meta span { overflow-wrap: anywhere; }
   article { padding: clamp(12px, 3.2vw, 27px); }
   section + section { margin-top: 23px; }
@@ -84,14 +84,14 @@ const documentStyle = `
   }
   @media print {
     @page { size: A4; margin: 12mm 13mm; }
-    :root { font-size: 10pt; line-height: 1.38; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    :root { font-size: 9.5pt; line-height: 1.38; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     body { padding: 0; background: #fff; }
     .sheet { max-width: none; border: 0; border-radius: 0; box-shadow: none; }
     .cover { padding: 12pt 15pt; break-inside: avoid; }
     .brand { padding: 8pt; }
     .brand img { width: 145pt; }
     .eyebrow { margin-top: 9pt; }
-    h1 { font-size: 17pt; }
+    h1 { font-size: 15pt; }
     article { padding: 12pt 0 0; }
     section + section { margin-top: 12pt; }
     h2, .detail-row { padding: 5pt 8pt; }
