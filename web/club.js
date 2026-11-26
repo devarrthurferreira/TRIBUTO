@@ -185,6 +185,9 @@ function formField(field, value, partners) {
 }
 
 export function mountClub(root, { request, onAuthError }) {
+  const subnav = document.getElementById('clubSubnav');
+  const menuButton = document.getElementById('clubMenuButton');
+  const narrowViewport = matchMedia('(max-width: 700px)');
   let opened = false;
   let isAdmin = false;
   let managing = false;
@@ -198,17 +201,12 @@ export function mountClub(root, { request, onAuthError }) {
 
   root.classList.add('club-shell');
   root.innerHTML = `
-    <nav class="club-navigation" aria-label="Navegação do Clube">
+    <header class="club-masthead">
       <a class="club-brand" href="${CLUB_PATHS.home}" aria-label="Clube Maximum, início">
         <span class="club-brand-icon"><i class="bi bi-gift" aria-hidden="true"></i></span>
         <span>Clube <strong>Maximum</strong></span>
       </a>
-      <div class="club-nav-links">
-        <a class="club-nav-link" href="${CLUB_PATHS.home}" data-club-page="home">Início</a>
-        ${Object.entries(sections).map(([key, { label }]) => `<a class="club-nav-link" href="${CLUB_PATHS[key]}" data-club-page="${key}">${label}</a>`).join('')}
-      </div>
-      <button type="button" class="club-button club-manage" data-club="manage" title="Gerenciar Clube" aria-label="Gerenciar Clube" hidden><i class="bi bi-gear" aria-hidden="true"></i><span>Gerenciar Clube</span></button>
-    </nav>
+    </header>
     <div class="club-admin-bar" data-club="adminBar" hidden>
       <span><i class="bi bi-gear" aria-hidden="true"></i> Gestão do catálogo</span>
       <button type="button" class="club-button" data-club="import"><i class="bi bi-upload" aria-hidden="true"></i> Importar catálogo</button>
@@ -230,8 +228,41 @@ export function mountClub(root, { request, onAuthError }) {
         </footer>
       </form>
     </dialog>`;
+  subnav.innerHTML = `
+    <div class="sector-subnav-list">
+      <a class="sector-subnav-link" href="${CLUB_PATHS.home}" data-club-page="home"><i class="bi bi-house-door" aria-hidden="true"></i>Início</a>
+      ${Object.entries(sections).map(([key, { label, icon: name }]) => `<a class="sector-subnav-link" href="${CLUB_PATHS[key]}" data-club-page="${key}"><i class="bi bi-${name}" aria-hidden="true"></i>${label}</a>`).join('')}
+    </div>
+    <button type="button" class="sector-subnav-link club-manage" hidden><i class="bi bi-gear" aria-hidden="true"></i><span>Gerenciar Clube</span></button>`;
   const ui = Object.fromEntries(Array.from(root.querySelectorAll('[data-club]'), (node) => [node.dataset.club, node]));
-  const navLinks = Array.from(root.querySelectorAll('.club-nav-link'));
+  ui.manage = subnav.querySelector('.club-manage');
+  const navLinks = Array.from(subnav.querySelectorAll('[data-club-page]'));
+
+  function showMenu(expanded) {
+    if (!expanded && subnav.contains(document.activeElement)) menuButton.focus({ preventScroll: true });
+    subnav.hidden = !expanded;
+    menuButton.setAttribute('aria-expanded', String(expanded));
+  }
+
+  menuButton.addEventListener('click', () => {
+    showMenu(subnav.hidden);
+    if (!subnav.hidden && narrowViewport.matches) subnav.querySelector('[aria-current="page"]').focus({ preventScroll: true });
+  });
+  function dismissOnEscape(event) {
+    if (event.key !== 'Escape' || subnav.hidden) return;
+    event.preventDefault();
+    showMenu(false);
+  }
+  subnav.addEventListener('keydown', dismissOnEscape);
+  menuButton.addEventListener('keydown', dismissOnEscape);
+  function dismissOnOutside(event) {
+    if (narrowViewport.matches && !subnav.hidden && !subnav.contains(event.target) && !menuButton.contains(event.target)) showMenu(false);
+  }
+  document.addEventListener('click', dismissOnOutside);
+  document.addEventListener('focusin', dismissOnOutside);
+  narrowViewport.addEventListener('change', ({ matches }) => {
+    if (opened) showMenu(!matches);
+  });
 
   function renderHomePage() {
     ui.content.innerHTML = `
@@ -516,6 +547,10 @@ export function mountClub(root, { request, onAuthError }) {
     rememberManagement(managing);
     showMessage('');
     render();
+    if (narrowViewport.matches) {
+      showMenu(false);
+      root.closest('main')?.focus({ preventScroll: true });
+    }
   });
   ui.import.addEventListener('click', openImport);
   ui.cancel.addEventListener('click', () => ui.dialog.close());
@@ -573,12 +608,16 @@ export function mountClub(root, { request, onAuthError }) {
     rememberManagement(managing);
     page = nextPage;
     renderPage();
+    menuButton.hidden = false;
+    showMenu(!narrowViewport.matches);
     void load();
   }
 
   function close() {
     if (!opened) return;
     opened = false;
+    showMenu(false);
+    menuButton.hidden = true;
     generation += 1;
     isAdmin = false;
     managing = false;

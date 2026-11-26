@@ -37,40 +37,32 @@
 [data-theme="dark"] .club-shell [data-section="advantages"] { --club-section-ink: #f5c9a5; --club-section-soft: #33251d; --club-section-fill: #463024; --club-section-line: #574032; }
 [data-theme="dark"] .club-shell [data-section="partners"] { --club-section-ink: #bbebdf; --club-section-soft: #1c302c; --club-section-fill: #25413a; --club-section-line: #37544e; }
 
-.club-shell .bi-geo-alt::before { content: "\f3e8"; }
+:is(.club-shell, .club-subnav) .bi-geo-alt::before { content: "\f3e8"; }
 .club-shell .bi-upload::before { content: "\f603"; }
 .club-shell .bi-arrow-right::before { content: "\f138"; }
 .club-shell .bi-plus-lg::before { content: "\f64d"; }
 
-.club-navigation {
-  position: sticky;
-  top: var(--portal-header-size);
-  z-index: 19;
+.app-shell[data-view="club"] #railClub { display: none; }
+.club-menu-toggle { border-color: var(--portal-edge); background: var(--portal-hover); color: var(--blue); }
+.club-subnav .club-manage {
+  margin-top: 14px;
+  color: var(--blue);
+}
+.club-subnav .club-manage[aria-pressed="true"] { background: var(--portal-hover); }
+
+.club-masthead {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px 16px;
-  min-width: 0;
+  justify-content: center;
   margin-bottom: clamp(14px, 2.2cqw, 24px);
-  padding: 8px clamp(8px, 1.4cqw, 19px);
-  border: 1px solid var(--club-edge);
-  border-radius: 17px;
-  background: var(--club-surface);
-  box-shadow: 0 5px 15px rgb(54 16 26 / 6%);
+  padding-block: 9px;
 }
 .club-brand {
   display: inline-flex;
   align-items: center;
-  justify-self: start;
-  gap: 9px;
-  min-width: 0;
-  min-height: 37px;
-  padding: 0;
-  border: 0;
+  gap: 11px;
   border-radius: 9px;
-  background: transparent;
   color: var(--ink);
-  font-size: clamp(12px, 1.6cqw, 17px);
+  font-size: clamp(16px, 2.3cqw, 25px);
   text-decoration: none;
   white-space: nowrap;
 }
@@ -79,32 +71,13 @@
   display: grid;
   flex: none;
   place-items: center;
-  width: clamp(30px, 4cqw, 39px);
+  width: clamp(34px, 4.5cqw, 46px);
   aspect-ratio: 1;
   border-radius: 10px;
   background: var(--club-primary);
   color: #fff;
-  font-size: clamp(13px, 1.9cqw, 18px);
+  font-size: clamp(16px, 2.2cqw, 21px);
 }
-.club-nav-links { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.club-nav-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 39px;
-  padding: 6px clamp(6px, 1.1cqw, 13px);
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--ink-soft);
-  font-size: clamp(11px, 1.26cqw, 13px);
-  font-weight: 600;
-  text-decoration: none;
-  white-space: nowrap;
-  transition: background-color .16s ease, color .16s ease;
-}
-.club-nav-link:hover, .club-nav-link[aria-current] { background: var(--club-tint); color: var(--club-accent); }
-.club-nav-link[aria-current] { border-color: var(--club-edge); }
 
 .club-hero {
   display: grid;
@@ -180,8 +153,6 @@
 .club-danger:hover:not(:disabled) { border-color: #721b29; background: #721b29; color: #fff; }
 .club-danger-link { color: var(--club-danger); }
 .club-icon-button { flex: none; width: 38px; min-height: 38px; padding: 4px; font-size: 15px; }
-.club-manage { flex: none; color: var(--club-accent); }
-.club-manage[aria-pressed="true"] { background: var(--club-tint); }
 
 .club-panel { min-width: 0; }
 .club-panel-head {
@@ -302,20 +273,12 @@
 .club-error { margin: 0; color: var(--club-danger); font-size: 12px; line-height: 1.5; }
 
 @container (max-width: 670px) {
-  .club-navigation { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 11px; }
-  .club-brand { grid-column: 1; grid-row: 1; }
-  .club-manage { grid-column: 2; grid-row: 1; justify-self: end; }
-  .club-nav-links { grid-column: 1 / -1; grid-row: 2; justify-content: space-between; }
   .club-hero { background-position: 65% 30%; }
   .club-home-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @container (max-width: 520px) {
-  .club-navigation { margin-bottom: 12px; border-radius: 13px; }
-  .club-nav-links { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; }
-  .club-nav-link { min-height: 40px; padding-inline: 1px; font-size: clamp(10px, 2.2cqw, 12px); }
-  .club-manage { width: 38px; min-height: 38px; padding: 4px; font-size: 15px; }
-  .club-manage > span { display: none; }
+  .club-masthead { margin-bottom: 12px; padding-block: 5px; }
   .club-button, .club-link { min-height: 42px; }
   .club-panel-head { align-items: flex-start; flex-direction: column; gap: 14px; }
   .club-filter { flex: 1 1 min(150px, 100%); }
@@ -332,6 +295,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .club-button, .club-link, .club-nav-link, .club-home-card, .club-card { transition: none; }
+  .club-button, .club-link, .club-home-card, .club-card { transition: none; }
   .club-home-card:hover { transform: none; }
 }
