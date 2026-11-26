@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import http from 'node:http';
 import test from 'node:test';
 import { sha256 } from '../src/api/validation.mjs';
-import { goalDetails, goalFields, surveyRating } from '../src/people/fields.mjs';
+import { goalDetails, goalFields, meetingFields, planFields, surveyFields, surveyRating } from '../src/people/fields.mjs';
 import { createPeopleRouter } from '../src/people/routes.mjs';
 import { createPlatformRouter } from '../src/platform/routes.mjs';
 
@@ -17,12 +17,19 @@ test('Pessoas normaliza progresso, valida datas e rejeita respostas fora da esca
   assert.throws(() => goalDetails(assigned, { status: 'in_progress', progress: 100 }), { code: 'PEOPLE_INVALID_INPUT' });
   assert.throws(() => surveyRating({ rating: '5' }), { code: 'PEOPLE_INVALID_INPUT' });
   assert.throws(() => surveyRating({ rating: 6 }), { code: 'PEOPLE_INVALID_INPUT' });
+  assert.equal(surveyFields({ title: 'Pesquisa', question: 'Como está o clima?' }).kind, 'engagement');
+  assert.throws(() => surveyFields({ title: 'Pesquisa', question: 'Como está o clima?', kind: 'other' }), { code: 'PEOPLE_INVALID_INPUT' });
+  assert.throws(() => planFields({ title: 'PDI', status: 'completed' }), { code: 'PEOPLE_INVALID_INPUT' });
+  assert.throws(() => meetingFields({ title: '1:1', participantId: randomUUID(), date: '2027-02-29', time: '10:00' }), { code: 'PEOPLE_INVALID_INPUT' });
 });
 
 test('Pessoas usa a sessão e o CSRF da Central, preserva o titular e protege a publicação de pesquisas', async () => {
-  const [person, admin] = ['member', 'admin'].map(role => ({ _id: randomUUID(), role, active: true }));
-  const sessions = [person, admin].map((user, index) => ({ user, userId: user._id, token: String(index + 1).repeat(64), csrfToken: `test-${user.role}` }));
-  const [personSession, adminSession] = sessions;
+  const [person, admin, rh, rhViewer] = [
+    { role: 'member' }, { role: 'admin' }, { role: 'member', moduleGrants: { rh: 'edit' } },
+    { role: 'member', moduleGrants: { rh: 'view' } },
+  ].map(user => ({ ...user, _id: randomUUID(), active: true }));
+  const sessions = [person, admin, rh, rhViewer].map((user, index) => ({ user, userId: user._id, token: String(index + 1).repeat(64), csrfToken: `test-${index}` }));
+  const [personSession, adminSession, rhSession, rhViewerSession] = sessions;
   const goalId = randomUUID();
   const surveyId = randomUUID();
   const calls = [];
@@ -31,6 +38,12 @@ test('Pessoas usa a sessão e o CSRF da Central, preserva o titular e protege a 
     async createGoal(owner, fields) { calls.push([owner, fields]); return { id: goalId, ...fields }; },
     async updateGoal(owner, id, fields) { return owner === person._id && id === goalId ? { id, ...fields } : null; },
     async removeGoal(owner, id) { return owner === person._id && id === goalId; },
+    async listGoalCheckIns(owner, id) { return owner === person._id && id === goalId ? [] : null; },
+    async checkInGoal(owner, id, fields) {
+      return owner === person._id && id === goalId ? { item: { id, progress: fields.progress }, checkIn: fields } : null;
+    },
+    async listNotes(kind, owner, all) { return [{ kind, owner, all }]; },
+    async createNote(kind, owner, fields) { return { kind, owner, ...fields }; },
     async listSurveys() { return []; },
     async createSurvey(actor, fields) { assert.equal(actor, admin._id); return { id: surveyId, ...fields, results: null }; },
     async closeSurvey(actor, id) { assert.equal(actor, admin._id); return { id, status: 'closed', results: null }; },
@@ -62,10 +75,28 @@ test('Pessoas usa a sessão e o CSRF da Central, preserva o titular e protege a 
     const privatePath = `/goals/${goalId}`;
     assert.equal((await request(privatePath, adminSession, { method: 'PATCH', body: { progress: 100 } })).status, 404);
     assert.equal((await request(privatePath, adminSession, { method: 'DELETE' })).status, 404);
+    assert.equal((await request(`${privatePath}/check-in`, adminSession)).status, 404);
+    assert.equal((await request(`${privatePath}/check-in`, personSession, { method: 'POST', body: { progress: 120 } })).status, 400);
+    assert.deepEqual((await request(`${privatePath}/check-in`, personSession, { method: 'POST', body: { progress: 80, notes: ' Etapa 2 ' } })).data,
+      { item: { id: goalId, progress: 80 }, checkIn: { progress: 80, notes: 'Etapa 2' } });
     assert.deepEqual((await request(privatePath, personSession, { method: 'DELETE' })).data, { removed: true });
+    const feedback = { recipientId: rh._id.toUpperCase(), text: ' Excelente parceria ' };
+    assert.equal((await request('/feedback', personSession, { method: 'POST', body: feedback, csrf: '' })).status, 403);
+    assert.deepEqual((await request('/feedback', personSession, { method: 'POST', body: feedback })).data.item,
+      { kind: 'feedback', owner: person._id, recipientId: rh._id, text: 'Excelente parceria' });
+    assert.deepEqual((await request('/feedback?scope=all', adminSession)).data.items, [{ kind: 'feedback', owner: admin._id, all: false }]);
+    const review = { recipientId: person._id, title: 'Desenvolvimento', text: 'Próximos passos' };
+    for (const session of [personSession, rhViewerSession]) {
+      assert.equal((await request('/reviews?scope=all', session)).status, 403);
+      assert.equal((await request('/reviews', session, { method: 'POST', body: review })).status, 403);
+    }
+    assert.equal((await request('/reviews', rhSession, { method: 'POST', body: review })).status, 201);
+    assert.deepEqual((await request('/reviews?scope=all', rhSession)).data.items, [{ kind: 'review', owner: rh._id, all: true }]);
+    assert.deepEqual((await request('/reviews', personSession)).data.items, [{ kind: 'review', owner: person._id, all: false }]);
     const survey = { title: 'Pesquisa da equipe', question: 'Como foi a semana?' };
     assert.equal((await request('/surveys', personSession, { method: 'POST', body: survey })).status, 403);
     assert.equal((await request('/surveys', adminSession, { method: 'POST', body: survey })).status, 201);
+    assert.equal((await request('/surveys', adminSession, { method: 'POST', body: { ...survey, kind: 'super_survey' } })).data.item.kind, 'super_survey');
     assert.equal((await request('/surveys', personSession)).data.minResponses, 3);
     const path = `/surveys/${surveyId}`;
     assert.equal((await request(`${path}/response`, personSession, { method: 'PUT', body: { rating: 4 } })).data.item.myRating, 4);

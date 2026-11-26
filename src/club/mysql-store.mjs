@@ -84,8 +84,9 @@ async function insertRecord(connection, collection, record, now) {
 }
 
 export class ClubMySqlStore {
-  constructor(platformStore) {
+  constructor(platformStore, { awardMood } = {}) {
     this.platformStore = platformStore;
+    this.awardMood = awardMood;
   }
 
   async initialize() {
@@ -121,6 +122,7 @@ export class ClubMySqlStore {
       } else {
         await connection.execute('DELETE FROM platform_club_rh_checkins WHERE user_id = ? AND check_date = ?', [userId, today]);
       }
+      if (mood !== null) await this.awardMood?.(connection, userId, 'mood', today);
     });
   }
 

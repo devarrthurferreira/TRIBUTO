@@ -16,6 +16,11 @@ import { readCrmMailConfig, startCrmDelivery } from '../marketing/delivery.mjs';
 import { createPublicCrmRouter } from '../marketing/public-crm.mjs';
 import { PeopleMySqlStore } from '../people/mysql-store.mjs';
 import { createPeopleRouter } from '../people/routes.mjs';
+import { MaxHubCoreStore } from '../maxhub/core-store.mjs';
+import { createMaxHubCoreRouter } from '../maxhub/core-routes.mjs';
+import { MaxHubFeedStore } from '../maxhub/feed-store.mjs';
+import { createMaxHubFeedRouter } from '../maxhub/feed-routes.mjs';
+import { awardMaxcoin } from '../maxhub/points.mjs';
 
 for (const key of ['MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE']) {
   if (!process.env[key]) throw new Error(`${key} obrigatória`);
@@ -35,7 +40,11 @@ const store = await MySqlStore.connect({
 const platformStore = new PlatformMySqlStore(store.pool);
 await platformStore.initialize();
 if (await platformStore.countUsers() === 0 && !bootstrapTokenSha256) throw new Error('Configure BOOTSTRAP_ADMIN_TOKEN_SHA256 para o primeiro administrador');
-const clubStore = new ClubMySqlStore(platformStore);
+const maxhubCore = new MaxHubCoreStore(platformStore);
+await maxhubCore.initialize();
+const maxhubFeed = new MaxHubFeedStore(platformStore);
+await maxhubFeed.initialize();
+const clubStore = new ClubMySqlStore(platformStore, { awardMood: awardMaxcoin });
 await clubStore.initialize();
 const crmMail = readCrmMailConfig();
 const marketingCrmStore = new MarketingCrmStore(platformStore, {
@@ -58,6 +67,7 @@ if (bridge) await bridge.initialize();
 const whatsapp = createWhatsAppService({ config: whatsappConfig, store: whatsappStore, bridge, workspace: whatsappWorkspace });
 const platformRouter = createPlatformRouter({ store: platformStore, chat, whatsapp, club: createClubRouter(clubStore),
   crm: createMarketingCrmRouter(marketingCrmStore), people: createPeopleRouter(peopleStore),
+  maxhubCore: createMaxHubCoreRouter(maxhubCore), maxhubFeed: createMaxHubFeedRouter(maxhubFeed),
   bootstrapTokenSha256, secureCookies: process.env.COOKIE_SECURE !== 'false' });
 const server = createApiServer({ store, agentRegistry: platformStore, platformRouter, whatsapp, publicCrm: createPublicCrmRouter(marketingCrmStore, crmMail) });
 const io = chat.attach(server);

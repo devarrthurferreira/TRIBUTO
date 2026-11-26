@@ -1,5 +1,4 @@
 import { CLUB_PATHS, clubPageFromPath } from './club-routes.js';
-import { mountClubCheckIn } from './club-check-in.js';
 
 const managementPreference = 'maximum.club.manager';
 
@@ -199,7 +198,6 @@ export function mountClub(root, { request, onAuthError }) {
   let editing = null;
   let page = 'home';
   let panel = null;
-  let cleanupCheckIn;
   let savedIds = null;
   let savedVersion = 0;
   const pendingSaved = new Set();
@@ -278,7 +276,6 @@ export function mountClub(root, { request, onAuthError }) {
           <a class="club-button club-hero-action" href="${CLUB_PATHS.benefits}">Explorar benefícios <i class="bi bi-arrow-right" aria-hidden="true"></i></a>
         </div>
       </header>
-      <div class="club-home-check-in"></div>
       <section class="club-home-directory" aria-labelledby="clubDirectoryTitle">
         <h2 id="clubDirectoryTitle">Explore o Clube</h2>
         <div class="club-home-grid">
@@ -293,7 +290,6 @@ export function mountClub(root, { request, onAuthError }) {
         </div>
       </section>`;
     ui.content.querySelector('.club-hero').after(ui.message, ui.loadState);
-    cleanupCheckIn = mountClubCheckIn(ui.content.querySelector('.club-home-check-in'), { request, onAuthError });
   }
 
   function renderCatalogPage(key) {
@@ -730,8 +726,6 @@ export function mountClub(root, { request, onAuthError }) {
     savedVersion += 1;
     savedIds = null;
     pendingSaved.clear();
-    cleanupCheckIn?.();
-    cleanupCheckIn = undefined;
     isAdmin = false;
     managing = false;
     rememberManagement(false);

@@ -9,7 +9,7 @@ import { mountCrmPageBuilder } from './crm-page-builder.js';
 import { mountClub } from './club.js';
 import { CLUB_PATHS, clubPageFromPath } from './club-routes.js';
 import { mountClubRhMood } from './club-rh-mood.js';
-import { mountPeople } from './people.js';
+import { MAXHUB_PATH, isMaxHubPath, legacyMaxHubUrl, mountMaxHub } from './maxhub.js';
 
 const API = '/v1/platform';
 const DASHBOARD_PATH = '/home';
@@ -35,12 +35,11 @@ const legacyModules = [
 const allModules = [...modules, ...legacyModules];
 const adminViews = new Set(['companies', 'users', 'agents']);
 const internalActivityModules = new Set(['tecnologia', 'sucesso-do-cliente']);
-const peopleViews = new Map([['desempenho', 'development'], ['engajamento', 'engagement']]);
 const viewLabels = {
   overview: 'Início', ...Object.fromEntries(allModules.map(({ id, label }) => [id, label])),
   companies: 'Empresas/Clientes', 'company-detail': 'Ficha fiscal da empresa', 'client-detail': 'Cadastro do cliente',
   users: 'Equipe e acessos', agents: 'Agentes de coleta',
-  desempenho: 'Desempenho e Desenvolvimento', engajamento: 'Clima e Engajamento',
+  maxhub: 'MaxHub',
 };
 const clubTitles = {
   home: 'Clube Maximum', benefits: 'Benefícios | Clube Maximum',
@@ -84,7 +83,7 @@ function appendEmpty(container, title, description, symbol = '◷') {
   container.append(empty);
 }
 function displayError(error) {
-  if (error?.status === 401) { showAuth(false, '', Boolean(clubPageFromPath(location.pathname)) || isRhMoodLink()); return; }
+  if (error?.status === 401) { showAuth(false, '', preservePortalLink()); return; }
   notice(error?.message || 'Não foi possível concluir a operação.', 'error');
 }
 let noticeTimer;
@@ -183,13 +182,16 @@ function isRecent(value) { return !!value && Number.isFinite(new Date(value).get
 function companyName(cnpj) { return state.companies.find((company) => company.cnpj === cnpj)?.name || cnpjLabel(cnpj); }
 
 function viewFromLocation() {
+  if (isMaxHubPath(location.pathname)) return 'maxhub';
   if (clubPageFromPath(location.pathname)) return 'club';
   if (location.pathname.startsWith(SECTOR_PREFIX)) return location.pathname.slice(SECTOR_PREFIX.length);
   const fragment = location.hash.slice(1);
+  if (legacyMaxHubUrl(fragment)) return 'maxhub';
   return fragment && fragment !== 'conteudo' ? fragment : 'overview';
 }
 
 function viewUrl(view) {
+  if (view === 'maxhub') return location.pathname === MAXHUB_PATH ? MAXHUB_PATH : legacyMaxHubUrl(location.hash.slice(1)) || MAXHUB_PATH;
   if (view === 'club') return CLUB_PATHS[clubPageFromPath(location.pathname) ?? 'home'];
   if (allModules.some(({ id }) => id === view)) return `${SECTOR_PREFIX}${view}`;
   return view === 'overview' ? DASHBOARD_PATH : `${DASHBOARD_PATH}#${view}`;
@@ -201,7 +203,7 @@ function setPortalContext(view) {
   const profileSector = assignedSectors.length === 1 ? assignedSectors[0].label
     : isAdmin() ? 'Administração'
       : assignedSectors.length > 1 ? 'Multissetorial' : 'Central Maximum';
-  const label = currentSector?.label || profileSector;
+  const label = view === 'maxhub' ? 'MaxHub' : currentSector?.label || profileSector;
   $('portalSector').textContent = label;
   $('portalSector').title = label;
   $('appView').dataset.view = view;
@@ -256,9 +258,13 @@ function isRhMoodLink(query = new URLSearchParams(location.search)) {
   return location.pathname === `${SECTOR_PREFIX}rh` && query.get('painel') === 'humor';
 }
 
+function preservePortalLink(query) {
+  return isMaxHubPath(location.pathname) || Boolean(clubPageFromPath(location.pathname)) || isRhMoodLink(query);
+}
+
 function showAuth(setupRequired, message = '', preserveRoute = false) {
   club.close();
-  people.close();
+  maxhub.close();
   destroyChat();
   sectorNavigation.leave();
   updateChatBadges();
@@ -268,8 +274,8 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   const query = new URLSearchParams(location.search);
   const preserveMarketingLink = preserveRoute && location.pathname === `${SECTOR_PREFIX}marketing`
     && (['tasks', 'metrics', 'crm'].includes(query.get('painel')) || query.has('atividade'));
-  const preserveClubOrRhLink = preserveRoute && (clubPageFromPath(location.pathname) || isRhMoodLink(query));
-  if (!preserveMarketingLink && !preserveClubOrRhLink && (location.pathname !== '/' || (!preserveRoute && location.hash))) {
+  const preserveDestination = preserveRoute && preservePortalLink(query);
+  if (!preserveMarketingLink && !preserveDestination && (location.pathname !== '/' || (!preserveRoute && location.hash))) {
     const fragment = preserveRoute && !location.pathname.startsWith(SECTOR_PREFIX) ? location.hash : '';
     history.replaceState(null, '', `/${fragment}`);
   }
@@ -298,11 +304,12 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
 function applySession(session) {
   if (!session?.user) { showAuth(!!session?.setupRequired, '', true); return; }
   const view = viewFromLocation();
-  const wantedPath = viewUrl(view).split('#')[0];
+  const target = viewUrl(view);
+  const wantedPath = target.split(/[?#]/)[0];
   if (location.pathname !== wantedPath) {
     if (view === 'club') history.replaceState(null, '', wantedPath);
     else {
-      location.replace(`${wantedPath}${wantedPath === DASHBOARD_PATH ? location.hash : ''}`);
+      location.replace(view === 'maxhub' ? target : `${wantedPath}${wantedPath === DASHBOARD_PATH ? location.hash : ''}`);
       return;
     }
   }
@@ -312,6 +319,8 @@ function applySession(session) {
   $('profileName').textContent = session.user.name || session.user.email;
   $('profileRole').textContent = isAdmin() ? 'Administrador' : 'Equipe';
   $('profileInitials').textContent = initials(session.user.name);
+  $('profileAvatar').hidden = true;
+  $('profileAvatar').removeAttribute('src');
   $('profileShortName').textContent = firstName(session.user.name);
   $('greetingName').textContent = firstName(session.user.name);
   $('todayLabel').textContent = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Sao_Paulo' }).format(new Date());
@@ -352,6 +361,12 @@ function applySession(session) {
   $('customerSuccessRestricted').hidden = canUse('sucesso-do-cliente', 'workItemRead');
   document.querySelector('[data-go="tecnologia"]').hidden = !canView('tecnologia');
   renderModuleCards();
+  void request('/maxhub/visit', { method: 'POST', body: {} }).then(({ awarded }) => {
+    if (awarded && state.session === session && state.view === 'maxhub') window.dispatchEvent(new Event('maxhub:points-change'));
+  }).catch(() => {});
+  void request('/maxhub/profile').then(profile => {
+    if (state.session === session) syncProfileAvatar(profile);
+  }).catch(() => {});
   void initialLoad();
   const surface = navigate(view, { replace: true });
   if (surface) {
@@ -406,11 +421,11 @@ function navigate(view, { replace = false } = {}) {
   const clientRoute = /^client-(\d{14})$/.exec(view);
   const detail = !!companyRoute && canUse('fiscal', 'fiscalDocumentsRead');
   const clientDetail = !!clientRoute && isAdmin();
-  const valid = detail || clientDetail || view === 'overview' || view === 'club' || peopleViews.has(view)
+  const valid = detail || clientDetail || view === 'overview' || view === 'club' || view === 'maxhub'
     || (adminViews.has(view) ? isAdmin() : allModules.some(({ id }) => id === view && canView(id)));
   const route = valid ? view : 'overview';
   const targetUrl = viewUrl(route);
-  if (location.pathname !== targetUrl.split('#')[0]) {
+  if (location.pathname !== targetUrl.split(/[?#]/)[0]) {
     if (replace) location.replace(targetUrl);
     else location.assign(targetUrl);
     return false;
@@ -433,8 +448,7 @@ function navigate(view, { replace = false } = {}) {
     updateCompanyHeading();
   }
   state.selectedClientCnpj = clientDetail ? clientRoute[1] : null;
-  const peopleArea = peopleViews.get(state.view);
-  const viewId = peopleArea ? 'view-people' : `view-${state.view}`;
+  const viewId = `view-${state.view}`;
   for (const section of document.querySelectorAll('.view')) section.hidden = section.id !== viewId;
   const activeView = state.view === 'client-detail' || (state.view === 'company-detail' && isAdmin()) ? 'companies'
     : state.view === 'company-detail' ? 'fiscal' : state.view;
@@ -444,7 +458,7 @@ function navigate(view, { replace = false } = {}) {
     if (current) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
   setPortalContext(state.view);
-  const railLinks = { railHome: 'overview', railClub: 'club', railCompanies: 'companies', railDevelopment: 'desempenho', railEngagement: 'engajamento' };
+  const railLinks = { railHome: 'overview', railClub: 'club', railCompanies: 'companies', railMaxHub: 'maxhub' };
   for (const [id, destination] of Object.entries(railLinks)) {
     const active = destination === activeView;
     if (active) $(id).setAttribute('aria-current', 'page');
@@ -463,11 +477,11 @@ function navigate(view, { replace = false } = {}) {
     onPanelChange: { marketing: showMarketingPanel, rh: showRhPanel }[sector.id],
   } : null, { home: state.view === 'overview' });
   $('conteudo').focus({ preventScroll: true });
-  if (previousView !== state.view && (peopleArea || state.view === 'club')) window.scrollTo({ top: 0, behavior: 'instant' });
+  if (previousView !== state.view && ['maxhub', 'club'].includes(state.view)) window.scrollTo({ top: 0, behavior: 'instant' });
   if (clubPage) void club.open({ isAdmin: isAdmin(), page: clubPage });
   else club.close();
-  if (peopleArea) void people.open({ area: peopleArea, isAdmin: isAdmin() });
-  else people.close();
+  if (state.view === 'maxhub') maxhub.open(state.session);
+  else maxhub.close();
   if (state.view === 'users') void loadUsers().catch(displayError);
   if (state.view === 'agents') void loadAgents().catch(displayError);
   if (state.view === 'companies') void loadCompanies().catch(displayError);
@@ -476,6 +490,15 @@ function navigate(view, { replace = false } = {}) {
   if (state.view === 'company-detail') void loadCompanyDetail().catch(displayError);
   if (state.view !== 'marketing' && canUse(state.view, 'workItemRead')) void loadWorkItems(state.view).catch(displayError);
   return surface;
+}
+
+function syncProfileAvatar(profile) {
+  const avatar = $('profileAvatar');
+  avatar.hidden = true;
+  $('profileInitials').hidden = false;
+  if (profile.hasAvatar && state.session?.user?.id) {
+    avatar.src = `${API}/maxhub/avatar/${encodeURIComponent(state.session.user.id)}?v=${Date.now()}`;
+  } else avatar.removeAttribute('src');
 }
 
 let rhMoodCleanup;
@@ -1499,6 +1522,10 @@ async function loadFiscalDocuments() {
 function setupEvents() {
   $('authForm').addEventListener('submit', handleAuth);
   $('logoutButton').addEventListener('click', logout);
+  $('profileAvatar').addEventListener('load', () => {
+    $('profileAvatar').hidden = false;
+    $('profileInitials').hidden = true;
+  });
   $('changePasswordButton').addEventListener('click', () => $('passwordDialog').showModal());
   $('openMenu').addEventListener('click', openMenu);
   $('closeMenu').addEventListener('click', closeMenu);
@@ -1582,10 +1609,10 @@ function setupEvents() {
 setupEvents();
 const sectorNavigation = mountSectorNavigation();
 const club = mountClub($('clubRoot'), { request, onAuthError: displayError });
-const people = mountPeople($('peopleRoot'), { request, onAuthError: displayError });
+const maxhub = mountMaxHub($('maxHubRoot'), { request, onAuthError: displayError, onProfileChange: syncProfileAvatar });
 mountPortal(() => {
   if (sectorNavigation.open('talk')) return;
   if (state.view === 'overview') openChat();
   else location.assign('/home?talk=1');
 }, () => sectorNavigation.open('whatsapp'));
-request('/session').then(applySession).catch((error) => showAuth(false, error.message, Boolean(clubPageFromPath(location.pathname)) || isRhMoodLink()));
+request('/session').then(applySession).catch((error) => showAuth(false, error.message, preservePortalLink()));

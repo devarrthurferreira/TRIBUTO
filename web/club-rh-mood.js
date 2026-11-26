@@ -213,7 +213,7 @@ export function mountClubRhMood(container, { request, onAuthError }) {
       <header class="club-rh-heading">
         <div class="club-rh-heading-content">
           <span class="club-rh-heading-mark" aria-hidden="true"><i class="bi bi-graph-up"></i></span>
-          <div><h1 id="clubRhMoodTitle">Humor e presença</h1><p>Acompanhe os check-ins do Clube que os colaboradores compartilharam com o RH.</p></div>
+          <div><h1 id="clubRhMoodTitle">Humor e presença</h1><p>Acompanhe as respostas do MaxHub compartilhadas com o RH.</p></div>
         </div>
         <div class="club-rh-toolbar">
           <label class="club-rh-field club-rh-period" for="clubRhPeriod">

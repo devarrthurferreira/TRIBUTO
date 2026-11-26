@@ -17,7 +17,7 @@ test('servidor entrega painel e API na mesma origem com headers de proteção', 
     assert.match(html.headers.get('content-type'), /text\/html/);
     assert.match(html.headers.get('content-security-policy'), /default-src 'self'/);
     assert.match(await html.text(), /<title>Central Maximum \| Maximum Contábil<\/title>/);
-    for (const path of ['/home', '/painel', '/setor/dp', '/setor/rh', '/setor/tecnologia', '/setor/marketing',
+    for (const path of ['/home', '/maxhub', '/maxhub/', '/painel', '/setor/dp', '/setor/rh', '/setor/tecnologia', '/setor/marketing',
       '/setor/societario', '/setor/contabil', '/setor/fiscal', '/setor/diretoria',
       '/clube', '/clube/check-in', '/clube/beneficios', '/clube/vantagens', '/clube/parceiros', '/clube/parceiros/']) {
       const dashboard = await fetch(`${origin}${path}`);
@@ -30,7 +30,8 @@ test('servidor entrega painel e API na mesma origem com headers de proteção', 
     assert.equal(await sectorHead.text(), '');
     assert.equal((await fetch(`${origin}/setor/inexistente`)).status, 404);
     assert.equal((await fetch(`${origin}/clube/inexistente`)).status, 404);
-    for (const asset of ['/styles.css', '/app.js', '/club-routes.js', '/club-check-in.js', '/club-check-in.css', '/club-rh-mood.js', '/club-rh-mood.css']) {
+    for (const asset of ['/styles.css', '/app.js', '/maxhub.js', '/maxhub.css', '/maxhub-social.js', '/maxhub-social.css',
+      '/maxhub-people.js', '/maxhub-people.css', '/club-routes.js', '/club-check-in.js', '/club-check-in.css', '/club-rh-mood.js', '/club-rh-mood.css']) {
       assert.equal((await fetch(`${origin}${asset}`)).status, 200);
     }
     for (const [asset, mime] of [['/maximum-logo.png', 'image/png'], ['/maximum-carreiras.webp', 'image/webp'],

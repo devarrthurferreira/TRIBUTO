@@ -51,7 +51,7 @@ function calendarCell(day, mood, today) {
   return cell;
 }
 
-export function mountClubCheckIn(container, { request, onAuthError }) {
+export function mountClubCheckIn(container, { request, onAuthError, onSubmitted }) {
   container.innerHTML = `
     <section class="club-checkin" aria-labelledby="clubCheckInTitle">
       <div class="club-checkin-card club-checkin-question">
@@ -146,6 +146,7 @@ export function mountClubCheckIn(container, { request, onAuthError }) {
       if (disposed) return;
       renderState(data);
       status('Resposta de hoje enviada ao RH.', 'success');
+      onSubmitted?.();
     } catch (error) {
       if (disposed) return;
       if (error.status === 401) { onAuthError(error); return; }

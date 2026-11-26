@@ -105,7 +105,6 @@
 .club-hero .club-hero-action:hover { border-color: #fff; background: #fff; color: #48101c; }
 .club-hero-action:focus-visible { outline-color: #fff; }
 
-.club-home-check-in { margin-top: clamp(23px, 3.2cqw, 39px); }
 .club-home-directory { margin-top: clamp(27px, 3.8cqw, 46px); }
 .club-home-directory h2 { margin: 0 0 14px; font-size: clamp(21px, 2.5cqw, 28px); line-height: 1.2; letter-spacing: -.035em; }
 .club-home-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(10px, 1.6cqw, 18px); }

@@ -1,0 +1,60 @@
+.maxhub-people { gap: 16px; max-width: none; }
+.maxhub-people .bi-plus-lg::before { content: "\f64d"; }
+
+.maxpeople-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 15px;
+  min-width: 0;
+  padding: clamp(15px, 3cqi, 25px);
+  border: 1px solid var(--people-edge);
+  border-radius: 16px;
+  background: linear-gradient(108deg, var(--people-surface), color-mix(in srgb, var(--people-hover) 36%, var(--people-surface)));
+}
+.maxpeople-heading-mark {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 13px;
+  background: var(--people-hover);
+  color: var(--people-accent);
+  font-size: 22px;
+}
+.maxpeople-heading h2 { margin: 0; color: var(--ink); font-size: clamp(21px, 3.5cqi, 30px); line-height: 1.18; letter-spacing: -.03em; overflow-wrap: anywhere; }
+.maxpeople-heading p { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.maxpeople-heading-action:empty { display: none; }
+.maxhub-people .people-button-primary { min-height: 42px; }
+.maxpeople-toolbar { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 12px; }
+.maxpeople-toolbar strong { color: var(--muted); font-size: 12px; font-weight: 600; }
+.maxpeople-filter select, .maxhub-people .people-field select {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid var(--people-edge);
+  border-radius: 8px;
+  background: var(--people-surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.maxhub-people .people-field select { width: 100%; }
+.maxpeople-filter select:focus-visible, .maxhub-people .people-field select:focus-visible { outline: 2px solid var(--people-accent); outline-offset: 3px; }
+.maxpeople-notice { justify-self: start; padding: 8px 11px; border-radius: 8px; background: #e1f3e8; color: #1d6040; font-size: 13px; font-weight: 600; }
+.maxhub-people .people-card { border-radius: 14px; }
+.maxhub-people .people-card-head { gap: 8px; }
+.maxhub-people .people-state[data-state="completed"] { background: #e1f3e8; color: #1d6040; }
+.maxhub-people .people-card-actions { gap: 8px; }
+.maxpeople-directory { display: grid; gap: 8px; padding: 0; border: 0; margin: 0; min-width: 0; }
+.maxpeople-directory p:empty { display: none; }
+.maxpeople-checkins { display: grid; gap: 12px; padding: 0; margin: 0; list-style: none; }
+.maxpeople-checkins li { display: grid; gap: 6px; min-width: 0; padding: 11px 14px; border: 1px solid var(--people-edge); border-radius: 10px; }
+.maxpeople-score-choices { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; margin-bottom: 9px; }
+
+@container (max-width: 560px) {
+  .maxpeople-heading { grid-template-columns: auto minmax(0, 1fr); }
+  .maxpeople-heading-action { grid-column: 1 / -1; margin-top: 5px; }
+  .maxpeople-heading-action:not(:empty) > button { width: 100%; }
+}

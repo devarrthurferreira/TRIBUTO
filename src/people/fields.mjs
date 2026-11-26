@@ -1,6 +1,9 @@
 import { ApiError } from '../api/validation.mjs';
 
 const GOAL_STATUSES = new Set(['planned', 'in_progress', 'done']);
+const SURVEY_KINDS = new Set(['engagement', 'satisfaction', 'quick_survey', 'super_survey']);
+const PLAN_STATUSES = new Set(['draft', 'active', 'completed']);
+const USER_ID = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i;
 
 function invalid(label) {
   throw new ApiError(400, 'PEOPLE_INVALID_INPUT', `Confira o campo ${label}.`);
@@ -12,23 +15,35 @@ function text(value, label, max, required = false) {
   return result;
 }
 
-function dueDate(value) {
+function dateField(value, label = 'prazo') {
   if (value === null || value === '') return null;
-  if (typeof value !== 'string' || !/^[1-9]\d{3}-\d{2}-\d{2}$/.test(value)) invalid('prazo');
+  if (typeof value !== 'string' || !/^[1-9]\d{3}-\d{2}-\d{2}$/.test(value)) invalid(label);
   const date = new Date(`${value}T00:00:00Z`);
-  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) invalid('prazo');
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) invalid(label);
   return value;
 }
 
+function fieldsObject(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('dados do registro');
+}
+
+function progress(value) {
+  if (!Number.isInteger(value) || value < 0 || value > 100) invalid('progresso');
+  return value;
+}
+
+function participant(value, label) {
+  if (typeof value !== 'string' || !USER_ID.test(value)) invalid(label);
+  return value.toLowerCase();
+}
+
 export function goalFields(input, { partial = false } = {}) {
+  fieldsObject(input);
   const changes = {};
   if (!partial || input.title !== undefined) changes.title = text(input.title, 'título', 160, true);
   if (input.description !== undefined) changes.description = text(input.description, 'descrição', 2000);
-  if (input.dueAt !== undefined) changes.dueAt = dueDate(input.dueAt);
-  if (input.progress !== undefined) {
-    if (!Number.isInteger(input.progress) || input.progress < 0 || input.progress > 100) invalid('progresso');
-    changes.progress = input.progress;
-  }
+  if (input.dueAt !== undefined) changes.dueAt = dateField(input.dueAt);
+  if (input.progress !== undefined) changes.progress = progress(input.progress);
   if (input.status !== undefined) {
     if (!GOAL_STATUSES.has(input.status)) invalid('status');
     changes.status = input.status;
@@ -51,14 +66,64 @@ export function goalDetails(current, changes) {
 }
 
 export function surveyFields(input) {
-  return { title: text(input.title, 'título', 160, true), question: text(input.question, 'pergunta', 300, true) };
+  fieldsObject(input);
+  const kind = input.kind === undefined ? 'engagement' : input.kind;
+  if (!SURVEY_KINDS.has(kind)) invalid('tipo de pesquisa');
+  return { title: text(input.title, 'título', 160, true), question: text(input.question, 'pergunta', 300, true), kind };
 }
 
 export function closeSurveyFields(input) {
+  fieldsObject(input);
   if (input.status !== 'closed') invalid('encerramento da pesquisa');
 }
 
 export function surveyRating(input) {
+  fieldsObject(input);
   if (!Number.isInteger(input.rating) || input.rating < 1 || input.rating > 5) invalid('resposta de 1 a 5');
   return input.rating;
+}
+
+export function goalCheckInFields(input) {
+  fieldsObject(input);
+  return { progress: progress(input.progress), notes: text(input.notes ?? '', 'observações', 2000) };
+}
+
+export function noteFields(input, { review = false } = {}) {
+  fieldsObject(input);
+  return {
+    recipientId: participant(input.recipientId, 'destinatário'),
+    text: text(input.text, review ? 'avaliação' : 'feedback', 4000, true),
+    ...(review ? { title: text(input.title, 'título', 160, true) } : {}),
+  };
+}
+
+export function planFields(input, { partial = false } = {}) {
+  fieldsObject(input);
+  const changes = partial ? {} : { description: '', dueAt: null, status: 'draft' };
+  if (!partial || input.title !== undefined) changes.title = text(input.title, 'título', 160, true);
+  if (input.description !== undefined) changes.description = text(input.description, 'descrição', 3000);
+  if (input.dueAt !== undefined) changes.dueAt = dateField(input.dueAt);
+  if (input.status !== undefined) {
+    if (!PLAN_STATUSES.has(input.status) || (!partial && input.status === 'completed')) invalid('status do plano');
+    changes.status = input.status;
+  }
+  if (!Object.keys(changes).length) invalid('alterações');
+  return changes;
+}
+
+export function meetingFields(input) {
+  fieldsObject(input);
+  const date = dateField(input.date, 'data da reunião');
+  if (!date) invalid('data da reunião');
+  const time = input.time === '' ? null : input.time ?? null;
+  if (time !== null && (typeof time !== 'string' || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time))) invalid('horário');
+  return {
+    participantId: participant(input.participantId, 'participante'),
+    title: text(input.title, 'assunto', 160, true), notes: text(input.notes ?? '', 'observações', 3000), date, time,
+  };
+}
+
+export function completeMeetingFields(input) {
+  fieldsObject(input);
+  if (input.status !== 'completed') invalid('encerramento da reunião');
 }
