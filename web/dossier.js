@@ -133,11 +133,10 @@ export function mountDossierAdmin(root, {
     setNotice(panelStatus, '');
   }
 
-  function showPanel(title, opener, { left = false, fees = false } = {}) {
+  function showPanel(title, opener, { fees = false } = {}) {
     const alreadyOpen = dialog.open;
     if (!alreadyOpen) returnFocus = opener || document.activeElement;
     wipePanel();
-    dialog.classList.toggle('dossier-dialog-left', left);
     feeStep = fees;
     panelTitle.textContent = title;
     dialog.setAttribute('aria-label', title);
@@ -216,7 +215,7 @@ export function mountDossierAdmin(root, {
 
   function openForm(dossier, opener) {
     const title = dossier ? 'Editar dossiê' : 'Novo dossiê';
-    const version = showPanel(title, opener, { left: true });
+    const version = showPanel(title, opener);
     panelCleanup = mountDossierForm(panel, {
       initial: dossier,
       lockCompany: Boolean(dossier),
@@ -236,7 +235,7 @@ export function mountDossierAdmin(root, {
       },
       onSuccess(result) {
         void loadList(dossier ? currentPage : 1);
-        const next = { left: true, fees: !dossier && canFees };
+        const next = { fees: !dossier && canFees };
         const message = dossier ? 'Alterações salvas.'
           : next.fees ? 'Dossiê salvo. Cadastre os honorários quando estiver pronto.' : 'Dossiê salvo.';
         if (result.dossier?.id) {
@@ -298,7 +297,7 @@ export function mountDossierAdmin(root, {
     if (['queued', 'sending', 'uncertain', 'sent', 'failed'].includes(status)) {
       const refresh = button('Atualizar situação');
       refresh.addEventListener('click', () => {
-        void openDetail(dossier.id, undefined, { left: dialog.classList.contains('dossier-dialog-left'), fees: feeStep });
+        void openDetail(dossier.id, undefined, { fees: feeStep });
       });
       section.append(refresh);
     }
@@ -423,8 +422,8 @@ export function mountDossierAdmin(root, {
     }
   }
 
-  async function openDetail(id, opener, { message = '', ...layout } = {}) {
-    const version = showPanel('Dossiê', opener, layout);
+  async function openDetail(id, opener, { message = '', fees = false } = {}) {
+    const version = showPanel('Dossiê', opener, { fees });
     setNotice(panelStatus, 'Carregando dossiê…');
     try {
       const { dossier } = await request('/dossiers/' + encodeURIComponent(id));
