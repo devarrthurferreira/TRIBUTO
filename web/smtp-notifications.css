@@ -1,0 +1,40 @@
+.smtp-panel { display: grid; gap: 18px; margin-top: 16px; }
+.smtp-panel [hidden] { display: none !important; }
+.smtp-heading { display: flex; align-items: center; gap: 14px; }
+.smtp-heading-icon {
+  width: 42px; height: 42px; flex: 0 0 42px; display: grid; place-items: center;
+  border-radius: 12px; color: var(--blue); background: var(--portal-hover); font-size: 19px;
+}
+.smtp-heading h2, .smtp-card h3 { margin: 0; color: var(--ink); }
+.smtp-heading h2 { font-size: clamp(21px, 3vw, 29px); }
+.smtp-heading p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+.smtp-content { display: grid; grid-template-columns: minmax(0, 1.42fr) minmax(260px, 1fr); gap: 16px; align-items: start; }
+.smtp-card { min-width: 0; display: grid; gap: 15px; padding: clamp(13px, 2.5vw, 25px); }
+.smtp-card h3 { font-size: 16px; }
+.smtp-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.smtp-fields .field { min-width: 0; margin: 0; }
+.smtp-fields .field > span, .smtp-toggle { color: var(--ink); font-size: 13px; font-weight: 650; }
+.smtp-fields .field small { color: var(--muted); }
+.smtp-toggle { display: flex; gap: 8px; align-items: center; width: fit-content; }
+.smtp-toggle input { accent-color: var(--blue); cursor: pointer; }
+.smtp-actions, .smtp-queue-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.smtp-queue-head { justify-content: space-between; }
+.smtp-card .button { white-space: normal; text-align: center; }
+.smtp-side { display: grid; gap: 16px; }
+.smtp-recipients, .smtp-queue { display: grid; gap: 0; margin: 0; padding: 0; }
+.smtp-recipients { list-style: none; }
+.smtp-recipients li, .smtp-queue div { min-width: 0; padding: 8px 0; border-bottom: 1px solid var(--portal-edge); }
+.smtp-recipients li:last-child, .smtp-queue div:last-child { border-bottom: 0; }
+.smtp-recipients li { display: grid; gap: 2px; overflow-wrap: anywhere; }
+.smtp-recipients strong, .smtp-queue div { color: var(--ink); font-size: 13px; }
+.smtp-recipients span, .smtp-queue dt { color: var(--muted); font-size: 12px; }
+.smtp-queue div { display: flex; justify-content: space-between; gap: 10px; }
+.smtp-queue dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.smtp-feedback, .smtp-loading { margin: 0; color: var(--muted); font-size: 13px; }
+.smtp-feedback[data-error="true"] { color: var(--danger, #a52432); }
+.smtp-panel > .button { width: fit-content; }
+@media (max-width: 1100px) { .smtp-content { grid-template-columns: 1fr; } }
+@media (max-width: 540px) {
+  .smtp-fields { grid-template-columns: 1fr; }
+  .smtp-actions .button { flex: 1 1 125px; }
+}

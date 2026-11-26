@@ -248,7 +248,7 @@ async function validateTaskAssignee(store, assigneeId, module, companyCnpj) {
   }
 }
 
-export function createPlatformRouter({ store, chat, whatsapp, club, crm, people, maxhubCore, maxhubFeed, clientAdmin, bootstrapTokenSha256, secureCookies = true, logger = console }) {
+export function createPlatformRouter({ store, chat, whatsapp, club, crm, people, maxhubCore, maxhubFeed, clientAdmin, dossierRouter, smtpNotifications, bootstrapTokenSha256, secureCookies = true, logger = console }) {
   function loginKey(req, address) { return sha256(`${req.socket.remoteAddress || 'unknown'}:${address}`); }
   async function startSession(res, user) {
     const token = newSecret();
@@ -300,6 +300,12 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
         requireAdmin(user);
         const cep = new URL(req.url, 'http://localhost').searchParams.get('cep');
         return send(res, 200, await lookupCep(cep));
+      }
+      if (dossierRouter && (route === '/dossiers' || route.startsWith('/dossiers/'))) {
+        return await dossierRouter.handleHttp({ req, res, route, user, send, readBody: body, logger });
+      }
+      if (smtpNotifications && (route === '/notifications/smtp' || route === '/notifications/smtp/verify')) {
+        return await smtpNotifications.handleHttp({ req, res, route, user, send, readBody: body, logger });
       }
       if (clientAdmin && (route === '/clients' || route.startsWith('/clients/'))) {
         return await clientAdmin.handleHttp({ req, res, route, user, send, readBody: body, requireAdmin, logger });

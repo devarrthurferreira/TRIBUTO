@@ -5,7 +5,7 @@ import { setWhatsAppNotification } from './portal.js';
 const get = (id) => document.getElementById(id);
 const areas = ['setor', 'talk', 'whatsapp'];
 const titles = { setor: 'Setor', talk: 'Talk', whatsapp: 'WhatsApp' };
-const icons = { overview: 'grid', activities: 'list-task', tasks: 'list-task', metrics: 'graph-up', crm: 'envelope', humor: 'graph-up', fiscal: 'receipt', users: 'people', agents: 'broadcast' };
+const icons = { overview: 'grid', activities: 'list-task', tasks: 'list-task', metrics: 'graph-up', crm: 'envelope', humor: 'graph-up', fiscal: 'receipt', users: 'people', agents: 'broadcast', dossier: 'folder2-open', notifications: 'envelope' };
 const crmSections = [
   { key: 'subscribers', slug: 'contatos', label: 'Contatos', icon: 'people' },
   { key: 'campaigns', slug: 'campanhas', label: 'Campanhas', icon: 'envelope' },
@@ -38,6 +38,8 @@ function sectionOptions(sector) {
   }
   if (sector.clubMood) options.push({ id: 'humor', label: 'Humor e presença' });
   if (sector.fiscalDocuments) options.push({ id: 'fiscal', label: 'Documentos fiscais' });
+  if (sector.dossier) options.push({ id: 'dossier', label: 'Dossiê' });
+  if (sector.notifications) options.push({ id: 'notifications', label: 'Notificações e envios' });
   if (sector.admin && sector.id === 'tecnologia') {
     options.push({ id: 'users', label: 'Equipe e acessos', href: '/home#users' });
     options.push({ id: 'agents', label: 'Agentes de coleta', href: '/home#agents' });
@@ -228,7 +230,7 @@ export function mountSectorNavigation() {
     selectedPanel = sectionOptions(context).some(({ id, href }) => id === candidate && !href) ? candidate : 'overview';
     selectedCrmSection = crmSectionFromQuery(query).section;
     const area = urlArea();
-    if (['crm', 'humor'].includes(selectedPanel) && area === 'setor' && (priorPanel !== selectedPanel || activeArea !== 'setor')
+    if (['crm', 'humor', 'dossier', 'notifications'].includes(selectedPanel) && area === 'setor' && (priorPanel !== selectedPanel || activeArea !== 'setor')
       && !narrowViewport.matches) expanded = true;
     app.dataset.sectorPanel = selectedPanel;
     renderSubnav();
@@ -286,7 +288,7 @@ export function mountSectorNavigation() {
     buttons.setor.focus();
   });
   narrowViewport.addEventListener('change', ({ matches }) => {
-    if (activeArea !== 'setor' || !['crm', 'humor'].includes(selectedPanel)) return;
+    if (activeArea !== 'setor' || !['crm', 'humor', 'dossier', 'notifications'].includes(selectedPanel)) return;
     expanded = !matches;
     showArea(activeArea);
   });

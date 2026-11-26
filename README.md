@@ -40,3 +40,11 @@ O número de empresas não determina sozinho o espaço necessário: importam o n
 Para desenvolvimento local, configure `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`, `BOOTSTRAP_ADMIN_TOKEN_SHA256`, `COOKIE_SECURE=false`, `HOST` e `PORT` no ambiente do processo. O Node não carrega `.env` automaticamente. Execute `npm ci`, `npm test` e `npm start`. O esquema é criado pelo aplicativo com `CREATE TABLE IF NOT EXISTS`; em produção, o usuário do banco precisa dessa permissão na inicialização inicial. Depois de criado o esquema, pode-se restringi-la conforme a operação.
 
 Leia [docs/API.md](docs/API.md) para o contrato de lotes e [docs/AGENT.md](docs/AGENT.md) para o serviço Windows. Nenhum segredo ou nota real acompanha o código.
+
+## Dossiê e honorários
+
+Em **Sucesso do Cliente → Dossiê**, a equipe autorizada cadastra, consulta e imprime os dossiês da sua carteira. O link de preenchimento usa uma credencial temporária de uso único. O cliente recebe o protocolo após concluir o formulário. As fichas e o histórico ficam nas tabelas de dossiê do MySQL da Central.
+
+A equipe cadastra os honorários e aciona o envio na própria ficha. A fila salva o resultado de cada destinatário para que a equipe acompanhe a aceitação pelo SMTP e possa reenviar somente o que ficou pendente. O e-mail inclui a identificação do cliente e as condições financeiras. O dossiê completo fica na Central.
+
+Em **Tecnologia → Notificações e envios**, configure e verifique a conexão SMTP. A verificação autentica a conta junto ao servidor SMTP. Salve a configuração para habilitar o envio de honorários. A senha é cifrada com uma chave derivada de `CLIENT_CERT_ENCRYPTION_KEY`, exclusiva para SMTP.

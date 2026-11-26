@@ -4,6 +4,7 @@ for (const file of ['../web/index.html', '../web/styles.css', '../web/app.js', '
   '../web/club-check-in.js', '../web/club-check-in.css', '../web/club-rh-mood.js', '../web/club-rh-mood.css',
   '../web/maxhub.js', '../web/maxhub.css', '../web/maxhub-social.js', '../web/maxhub-social.css', '../web/maxhub-people.js', '../web/maxhub-people.css',
   '../web/client-wizard.js', '../web/client-wizard.css', '../web/client-portal.html', '../web/client-portal.js', '../web/client-portal.css',
+  '../web/dossier-form.js', '../web/dossier.js', '../web/dossier.css', '../web/dossier-public.html', '../web/dossier-public.js', '../web/smtp-notifications.js', '../web/smtp-notifications.css',
   '../web/maxhub-profile.js', '../web/maxhub-profile.css',
   '../web/marketing-tasks.js', '../web/marketing-tasks.css', '../web/marketing-metrics.js', '../web/marketing-metrics.css',
   '../web/marketing-crm.js', '../web/marketing-crm.css', '../web/crm-page-builder.js', '../web/crm-page-builder.css',

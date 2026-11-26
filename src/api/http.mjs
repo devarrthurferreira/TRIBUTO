@@ -47,7 +47,7 @@ function permitted(agent, companyCnpj, source) {
   if (!agent.companies.includes(companyCnpj) || !agent.sources.includes(source)) throw new ApiError(403, 'FORBIDDEN_SCOPE', 'CNPJ ou fonte fora do escopo do agente');
 }
 
-export function createApiServer({ store, agents, jobs = [], agentRegistry, platformRouter, whatsapp, publicCrm, clientPortal, clientSchedules, logger = console }) {
+export function createApiServer({ store, agents, jobs = [], agentRegistry, platformRouter, whatsapp, publicCrm, clientPortal, publicDossier, clientSchedules, logger = console }) {
   if (agentRegistry) {
     if (agents) throw new Error('Escolha agentRegistry ou agents estáticos');
   } else validateConfig(agents, jobs);
@@ -58,6 +58,7 @@ export function createApiServer({ store, agents, jobs = [], agentRegistry, platf
       if (whatsapp && await whatsapp.handleWebhook(req, res, pathname)) return;
       if (publicCrm && await publicCrm(req, res, pathname)) return;
       if (clientPortal && await clientPortal(req, res, pathname)) return;
+      if (publicDossier && await publicDossier(req, res, pathname)) return;
       if (platformRouter && pathname.startsWith('/v1/platform/')) {
         await platformRouter(req, res, pathname);
         return;

@@ -13,6 +13,8 @@ import { MAXHUB_PATH, isMaxHubPath, legacyMaxHubUrl, mountMaxHub } from './maxhu
 
 import { appendPersonName } from './person-name.js';
 import { mountClientWizard, renderClientProfile } from './client-wizard.js';
+import { mountDossierAdmin } from './dossier.js';
+import { mountSmtpNotifications } from './smtp-notifications.js';
 
 const API = '/v1/platform';
 const DASHBOARD_PATH = '/home';
@@ -61,13 +63,20 @@ const actionLabels = {
   marketingCrmRead: 'Consultar contatos e campanhas do CRM',
   marketingCrmManage: 'Gerenciar contatos e campanhas do CRM',
   clubMoodRead: 'Consultar check-ins compartilhados com o RH',
+  dossierRead: 'Consultar dossiês da carteira',
+  dossierCreate: 'Cadastrar e editar dossiês',
+  dossierLink: 'Gerar e revogar links de dossiê',
+  dossierFees: 'Gerenciar e enviar honorários',
+  smtpManage: 'Configurar e verificar o SMTP',
 };
 const actionDependencies = {
   workItemCreate: 'workItemRead', workItemUpdate: 'workItemRead',
   sectorTalkSend: 'sectorTalkRead', whatsappReply: 'whatsappRead', whatsappTicketUpdate: 'whatsappRead',
   marketingCrmManage: 'marketingCrmRead',
+  dossierCreate: 'dossierRead', dossierLink: 'dossierRead', dossierFees: 'dossierRead',
 };
-const editLevelActions = new Set(['workItemCreate', 'workItemUpdate', 'whatsappReply', 'whatsappTicketUpdate', 'marketingCrmRead', 'marketingCrmManage']);
+const editLevelActions = new Set(['workItemCreate', 'workItemUpdate', 'whatsappReply', 'whatsappTicketUpdate', 'marketingCrmRead', 'marketingCrmManage', 'dossierCreate', 'dossierLink', 'dossierFees']);
+const manageLevelActions = new Set(['clubMoodRead', 'smtpManage']);
 const taskStatusLabels = { open: 'Aberta', in_progress: 'Em andamento', done: 'Concluída' };
 const state = { session: null, view: 'overview', companies: [], clients: null, users: [], agents: [], selectedCompanyCnpj: null, nfsePage: 1, nfseHasMore: false, nfseRequest: 0 };
 
@@ -262,8 +271,11 @@ function isRhMoodLink(query = new URLSearchParams(location.search)) {
   return location.pathname === `${SECTOR_PREFIX}rh` && query.get('painel') === 'humor';
 }
 
-function preservePortalLink(query) {
-  return isMaxHubPath(location.pathname) || Boolean(clubPageFromPath(location.pathname)) || isRhMoodLink(query);
+function preservePortalLink(query = new URLSearchParams(location.search)) {
+  const panel = query.get('painel');
+  return isMaxHubPath(location.pathname) || Boolean(clubPageFromPath(location.pathname)) || isRhMoodLink(query)
+    || (location.pathname === `${SECTOR_PREFIX}sucesso-do-cliente` && panel === 'dossier')
+    || (location.pathname === `${SECTOR_PREFIX}tecnologia` && panel === 'notifications');
 }
 
 function showAuth(setupRequired, message = '', preserveRoute = false) {
@@ -370,16 +382,12 @@ function applySession(session) {
   $('dashboardWorkMetric').hidden = !canReadWorkItems;
   $('homeAlerts').hidden = !canReadWorkItems;
   $('fiscalDocumentTools').hidden = !canReadFiscalDocuments;
-  $('technologyOverview').hidden = !canUse('tecnologia', 'workItemRead');
-  $('technologyRestricted').hidden = canUse('tecnologia', 'workItemRead');
   const marketingTasksAllowed = canUse('marketing', 'workItemRead');
   $('marketingTasksSummary').hidden = !marketingTasksAllowed;
   $('marketingMetricsSummary').hidden = !marketingTasksAllowed;
   $('marketingRecent').hidden = !marketingTasksAllowed;
   $('marketingCrmSummary').hidden = !canUse('marketing', 'marketingCrmRead');
   $('rhMoodShortcut').hidden = !canUse('rh', 'clubMoodRead');
-  $('customerSuccessOverview').hidden = !canUse('sucesso-do-cliente', 'workItemRead');
-  $('customerSuccessRestricted').hidden = canUse('sucesso-do-cliente', 'workItemRead');
   document.querySelector('[data-go="tecnologia"]').hidden = !canView('tecnologia');
   renderModuleCards();
   void request('/maxhub/visit', { method: 'POST', body: {} }).then(({ awarded }) => {
@@ -501,8 +509,11 @@ function navigate(view, { replace = false } = {}) {
     crm: sector.id === 'marketing' && canUse('marketing', 'marketingCrmRead'),
     clubMood: sector.id === 'rh' && canUse('rh', 'clubMoodRead'),
     fiscalDocuments: sector.id === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead'),
+    dossier: sector.id === 'sucesso-do-cliente' && canUse('sucesso-do-cliente', 'dossierRead'),
+    notifications: sector.id === 'tecnologia' && canUse('tecnologia', 'smtpManage'),
     talk: canUse(sector.id, 'sectorTalkRead'), whatsapp: canUse(sector.id, 'whatsappRead'),
-    onPanelChange: { marketing: showMarketingPanel, rh: showRhPanel }[sector.id],
+    onPanelChange: { marketing: showMarketingPanel, rh: showRhPanel, 'sucesso-do-cliente': showCustomerSuccessPanel,
+      tecnologia: showTechnologyPanel }[sector.id],
   } : null, { home: state.view === 'overview' });
   $('conteudo').focus({ preventScroll: true });
   if (previousView !== state.view && ['maxhub', 'club'].includes(state.view)) window.scrollTo({ top: 0, behavior: 'instant' });
@@ -527,6 +538,52 @@ function syncProfileAvatar(profile) {
   if (profile.hasAvatar && state.session?.user?.id) {
     avatar.src = `${API}/maxhub/avatar/${encodeURIComponent(state.session.user.id)}?v=${Date.now()}`;
   } else avatar.removeAttribute('src');
+}
+
+let dossierCleanup;
+let smtpWorkspace;
+
+function showCustomerSuccessPanel(panel) {
+  const module = 'sucesso-do-cliente';
+  const active = panel === 'dossier' && canUse(module, 'dossierRead');
+  const overview = panel === 'overview';
+  $('customerSuccessHeading').hidden = active;
+  $('customerSuccessOverview').hidden = !overview || !canUse(module, 'workItemRead');
+  $('customerSuccessRestricted').hidden = !overview || canUse(module, 'workItemRead');
+  $('dossierShortcut').hidden = !overview || !canUse(module, 'dossierRead');
+  const root = $('dossierPanel');
+  root.hidden = !active;
+  if (active) {
+    document.title = 'Dossiê | Sucesso do Cliente';
+    dossierCleanup ??= mountDossierAdmin(root, {
+      request, onAuthError: displayError, companies: () => state.companies, allowUnboundLinks: isAdmin(),
+      canCreate: canUse(module, 'dossierCreate'), canLink: canUse(module, 'dossierLink'), canFees: canUse(module, 'dossierFees'),
+    });
+  } else {
+    dossierCleanup?.();
+    dossierCleanup = undefined;
+  }
+}
+
+function showTechnologyPanel(panel) {
+  const active = panel === 'notifications' && canUse('tecnologia', 'smtpManage');
+  const overview = panel === 'overview';
+  $('technologyHeading').hidden = active;
+  $('technologyOverview').hidden = !overview || !canUse('tecnologia', 'workItemRead');
+  $('technologyRestricted').hidden = !overview || canUse('tecnologia', 'workItemRead');
+  $('smtpShortcut').hidden = !overview || !canUse('tecnologia', 'smtpManage');
+  const root = $('smtpNotifications');
+  root.hidden = !active;
+  if (active) {
+    document.title = 'Notificações e envios | Tecnologia';
+    if (!smtpWorkspace) {
+      smtpWorkspace = mountSmtpNotifications(root, { request, onAuthError: displayError });
+      smtpWorkspace.open();
+    }
+  } else if (smtpWorkspace) {
+    smtpWorkspace.close();
+    smtpWorkspace = undefined;
+  }
 }
 
 let rhMoodCleanup;
@@ -1045,6 +1102,8 @@ function renderUserGrants(user, target = $('userGrantOptions')) {
       if (action === 'fiscalDocumentsRead' && id !== 'fiscal') continue;
       if (action.startsWith('marketingCrm') && id !== 'marketing') continue;
       if (action === 'clubMoodRead' && id !== 'rh') continue;
+      if (action.startsWith('dossier') && id !== 'sucesso-do-cliente') continue;
+      if (action === 'smtpManage' && id !== 'tecnologia') continue;
       if (legacyModules.some(module => module.id === id) && /^(sectorTalk|whatsapp)/.test(action)) continue;
       const input = node('input');
       input.type = 'checkbox';
@@ -1059,7 +1118,7 @@ function renderUserGrants(user, target = $('userGrantOptions')) {
       for (const action of actions.querySelectorAll('input')) {
         const dependsOn = actionDependencies[action.value];
         action.disabled = (editLevelActions.has(action.value) && level.value === 'view')
-          || (action.value === 'clubMoodRead' && level.value !== 'manage')
+          || (manageLevelActions.has(action.value) && level.value !== 'manage')
           || Boolean(dependsOn && !actions.querySelector(`input[value="${dependsOn}"]`).checked);
       }
     };
@@ -1586,6 +1645,8 @@ function setupEvents() {
     control.addEventListener('click', () => sectorNavigation.selectPanel(control.dataset.marketingGo));
   }
   $('openCustomerSuccessActivities').addEventListener('click', () => sectorNavigation.selectPanel('activities'));
+  $('openDossier').addEventListener('click', () => sectorNavigation.selectPanel('dossier'));
+  $('openSmtpNotifications').addEventListener('click', () => sectorNavigation.selectPanel('notifications'));
   $('openRhMood').addEventListener('click', () => sectorNavigation.selectPanel('humor'));
   $('fiscalCompanyLookup').addEventListener('input', renderFiscalCompanyQuickList);
   $('fiscalCompanyFilter').addEventListener('change', () => void loadFiscalDocuments().catch(displayError));

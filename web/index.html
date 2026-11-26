@@ -14,6 +14,8 @@
   <link rel="stylesheet" href="/sector-whatsapp.css">
   <link rel="stylesheet" href="/user-wizard.css">
   <link rel="stylesheet" href="/client-wizard.css">
+  <link rel="stylesheet" href="/dossier.css">
+  <link rel="stylesheet" href="/smtp-notifications.css">
   <link rel="stylesheet" href="/marketing-tasks.css">
   <link rel="stylesheet" href="/marketing.css">
   <link rel="stylesheet" href="/marketing-metrics.css">
@@ -269,13 +271,20 @@
         </section>
 
         <section class="view" id="view-tecnologia" aria-labelledby="technologyTitle" hidden>
-          <div class="page-heading"><div><h1 id="technologyTitle">Tecnologia</h1><p>Acompanhe as atividades e os prazos do setor.</p></div></div>
+          <div id="technologyHeading" class="page-heading"><div><h1 id="technologyTitle">Tecnologia</h1><p>Acompanhe as atividades e os prazos do setor.</p></div></div>
           <div id="technologyOverview" class="stats-grid technology-overview" aria-label="Atividades por situação">
             <article class="stat-card"><strong id="technologyOpen">—</strong><span>Abertas</span></article>
             <article class="stat-card"><strong id="technologyInProgress">—</strong><span>Em andamento</span></article>
             <article class="stat-card"><strong id="technologyDone">—</strong><span>Concluídas</span></article>
           </div>
           <div id="technologyRestricted" class="module-message" hidden><span aria-hidden="true">⌘</span><div><strong>Atividades com acesso restrito</strong><p>Seu perfil pode acessar Tecnologia. A visualização das atividades é liberada em Equipe e acessos.</p></div></div>
+          <article id="smtpShortcut" class="module-message" hidden>
+            <span aria-hidden="true"><i class="bi bi-envelope"></i></span>
+            <div><strong>Notificações e envios</strong><p>Configure o SMTP para o envio de honorários.</p>
+              <button id="openSmtpNotifications" type="button" class="button button-quiet">Configurar envios</button>
+            </div>
+          </article>
+          <div id="smtpNotifications" hidden></div>
         </section>
 
         <section class="view" id="view-rh" aria-label="Recursos Humanos" hidden>
@@ -329,7 +338,7 @@
         </section>
 
         <section class="view" id="view-sucesso-do-cliente" aria-labelledby="customerSuccessTitle" hidden>
-          <div class="page-heading"><div><h1 id="customerSuccessTitle">Sucesso do Cliente</h1><p>Acompanhe a integração, os retornos e as demandas de cada cliente.</p></div></div>
+          <div id="customerSuccessHeading" class="page-heading"><div><h1 id="customerSuccessTitle">Sucesso do Cliente</h1><p>Acompanhe a integração, os retornos e as demandas de cada cliente.</p></div></div>
           <div id="customerSuccessOverview" class="feature-grid" hidden>
             <article class="feature-card">
               <span class="feature-icon blue"><i class="bi bi-person-badge" aria-hidden="true"></i></span>
@@ -339,6 +348,13 @@
             </article>
           </div>
           <div id="customerSuccessRestricted" class="module-message" hidden><div><strong>Atividades com acesso restrito</strong><p>A consulta da carteira depende da permissão do setor.</p></div></div>
+          <article id="dossierShortcut" class="module-message" hidden>
+            <span aria-hidden="true"><i class="bi bi-folder2-open"></i></span>
+            <div><strong>Dossiê</strong><p>Cadastros de integração, links de preenchimento e honorários.</p>
+              <button id="openDossier" class="button button-quiet" type="button">Abrir Dossiê</button>
+            </div>
+          </article>
+          <div id="dossierPanel" hidden></div>
         </section>
 
         <section class="view" id="view-diretoria" aria-labelledby="diretoriaTitle" hidden>

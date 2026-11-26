@@ -16,6 +16,14 @@ const ALLOWED = new Map([
   ['/client-portal.css', ['client-portal.css', 'text/css; charset=utf-8']],
   ['/client-wizard.js', ['client-wizard.js', 'text/javascript; charset=utf-8']],
   ['/client-wizard.css', ['client-wizard.css', 'text/css; charset=utf-8']],
+  ['/dossie', ['dossier-public.html', 'text/html; charset=utf-8']],
+  ['/dossie/', ['dossier-public.html', 'text/html; charset=utf-8']],
+  ['/dossier-form.js', ['dossier-form.js', 'text/javascript; charset=utf-8']],
+  ['/dossier.js', ['dossier.js', 'text/javascript; charset=utf-8']],
+  ['/dossier.css', ['dossier.css', 'text/css; charset=utf-8']],
+  ['/dossier-public.js', ['dossier-public.js', 'text/javascript; charset=utf-8']],
+  ['/smtp-notifications.js', ['smtp-notifications.js', 'text/javascript; charset=utf-8']],
+  ['/smtp-notifications.css', ['smtp-notifications.css', 'text/css; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ...MODULES.map(({ id }) => [`/setor/${id}`, ['index.html', 'text/html; charset=utf-8']]),
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
@@ -80,7 +88,7 @@ export async function serveStatic(req, res, pathname) {
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
       'x-frame-options': 'DENY',
-      'referrer-policy': 'same-origin',
+      'referrer-policy': asset[0] === 'dossier-public.html' ? 'no-referrer' : 'same-origin',
       'content-security-policy': `default-src 'self'; script-src 'self'; style-src 'self'; img-src ${images}; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`
     });
     res.end(req.method === 'HEAD' ? undefined : data);
