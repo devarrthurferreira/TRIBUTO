@@ -1,9 +1,12 @@
 import { ApiError, sha256 } from '../api/validation.mjs';
 import { hashPassword, newSecret, safeEqualHex, verifyPassword } from '../platform/auth.mjs';
 import { clientAccessView, clientLoginAttemptKey, prepareClientActivation } from './access-store.mjs';
+import { grantedClientModules } from './profile-fields.mjs';
 
 const PREFIX = '/v1/client/';
 const ADMIN_ACCESS = /^\/clients\/([a-f0-9-]{36}|\d{11}|[A-Za-z0-9]{12}\d{2})\/access(\/reset)?$/i;
+const PORTAL_MODULE = /^modules\/([a-z]+)$/;
+const DOCUMENTS_PER_PAGE = 25;
 const PASSWORD_MIN = 15;
 const SHORT_SESSION_MS = 20 * 60_000;
 const FULL_SESSION_MS = 8 * 60 * 60_000;
@@ -62,9 +65,53 @@ function send(res, status, data) {
 }
 
 function sessionView(client, session) {
+  const mustChangePassword = session.purpose === 'activation';
   return {
     client: { id: client.id, name: client.nickname || client.name, username: client.document },
-    csrfToken: session.csrfToken, mustChangePassword: session.purpose === 'activation',
+    csrfToken: session.csrfToken, mustChangePassword,
+    ...(mustChangePassword ? {} : { modules: grantedClientModules(client) }),
+  };
+}
+
+function documentPage(req) {
+  const query = new URL(req.url, 'http://localhost').searchParams;
+  const page = Number(query.get('page') ?? 1);
+  if ([...query.keys()].some(key => key !== 'page') || query.getAll('page').length > 1
+    || !Number.isSafeInteger(page) || page < 1 || page > 1000) {
+    fail(400, 'CLIENT_MODULE_FILTER', 'Revise a página solicitada.');
+  }
+  return page;
+}
+
+function portalIdentity(client) {
+  return {
+    type: client.type, document: client.document, nickname: client.nickname, legalName: client.legalName,
+    tradeName: client.tradeName, state: client.state,
+    contacts: client.contacts?.map(({ name, role, phone, email }) => ({ name, role, phone, email })) ?? [],
+  };
+}
+
+function portalDocumentView(document, cnpj) {
+  const { number, issuedAt, competence, status, amountCents } = document;
+  const direction = document.providerCnpj === cnpj ? 'issued' : document.recipientCnpj === cnpj ? 'received' : null;
+  return { number, issuedAt, competence, status, amountCents, direction };
+}
+
+async function moduleData(req, clientStore, client, id) {
+  if (id === 'cadastro') return portalIdentity(client);
+  if (id === 'societario') return {
+    stateRegistrations: client.stateRegistrations ?? [], municipalRegistrations: client.municipalRegistrations ?? [],
+  };
+  if (id === 'contabil') return { taxRegime: client.taxRegime, cnae: client.cnae };
+  const source = id === 'fiscal' ? 'NFE' : 'NFSE';
+  const schedule = (id === 'fiscal' ? client.invoiceSchedule : client.serviceInvoiceSchedule) ?? { period: 'disabled', time: null };
+  const page = documentPage(req);
+  const collectionAvailable = client.fiscalEligible === true && /^\d{14}$/.test(client.cnpj);
+  if (!collectionAvailable) return { collectionAvailable, schedule, documents: [], hasMore: false, page };
+  const result = await clientStore.listPortalDocuments(client.cnpj, source, page, DOCUMENTS_PER_PAGE);
+  return {
+    collectionAvailable, schedule, page, hasMore: page < 1000 && result.hasMore,
+    documents: result.documents.map(document => portalDocumentView(document, client.cnpj)),
   };
 }
 
@@ -178,6 +225,14 @@ export function createClientPortalRouter({ accessStore, clientStore, secureCooki
     if (req.method === 'GET' && route === 'session') {
       const auth = await currentSession(req);
       return send(res, 200, auth ? sessionView(auth.client, auth.session) : NO_SESSION);
+    }
+    const moduleRoute = PORTAL_MODULE.exec(route);
+    if (req.method === 'GET' && moduleRoute) {
+      const auth = await currentSession(req);
+      if (!auth) noSession();
+      const module = auth.session.purpose === 'active' && grantedClientModules(auth.client).find(item => item.id === moduleRoute[1]);
+      if (!module) fail(403, 'CLIENT_MODULE_FORBIDDEN', 'Este módulo não está disponível para o seu acesso.');
+      return send(res, 200, { module, data: await moduleData(req, clientStore, auth.client, module.id) });
     }
     if (req.method === 'POST' && (route === 'change-password' || route === 'logout')) {
       const auth = await currentSession(req);

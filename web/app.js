@@ -939,7 +939,7 @@ function renderClientHeading(client) {
   $('clientFiscalLink').hidden = !fiscal;
   $('clientStaffPortfolio').hidden = !fiscal;
   $('clientFiscalLink').href = fiscal ? viewUrl(`company-${fiscal}`) : '/setor/fiscal';
-  renderClientProfile($('clientProfile'), client, { modules });
+  renderClientProfile($('clientProfile'), client);
 }
 
 function renderClientAccessCount() {
@@ -1730,7 +1730,7 @@ function setupEvents() {
 }
 
 const clientWizard = mountClientWizard({
-  request, modules, onError: displayError,
+  request, onError: displayError,
   onSaved(client, { mode } = {}) {
     notice(mode === 'edit' ? 'Cadastro atualizado.' : 'Cliente cadastrado.');
     if (activeClient?.client.id === client.id) void loadClientDetail(activeClient.key);

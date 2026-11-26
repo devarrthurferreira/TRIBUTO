@@ -19,22 +19,54 @@ function toIso(value) {
   return value instanceof Date ? value.toISOString() : value.replace(' ', 'T') + 'Z';
 }
 
-function certificateExpiresAt(pfx, passphrase) {
+function certificateValidity(pfx, passphrase) {
   let socket;
+  let certificate;
   try {
     const secureContext = createSecureContext({ pfx, passphrase });
     socket = new TLSSocket(new PassThrough(), { secureContext, isServer: true });
     // A local, unconnected socket provides the standard X.509 accessor.
-    const certificate = socket.getX509Certificate();
-    const expiresAt = new Date(certificate?.validTo);
-    const year = expiresAt.getUTCFullYear();
-    if (year >= 1000 && year <= 9999) return expiresAt;
-  } catch {
-    // Do not relay diagnostics from the private key parser.
+    certificate = socket.getX509Certificate();
+  } catch (error) {
+    if (error.message === 'mac verify failure') {
+      throw new ApiError(400, 'CLIENT_CERTIFICATE_INVALID', 'A senha não abriu este certificado. Confira a senha e o arquivo.');
+    }
   } finally {
     socket?.destroy();
   }
-  throw new ApiError(400, 'CLIENT_CERTIFICATE_INVALID', 'Não foi possível abrir o certificado A1. Confira o arquivo .pfx ou .p12, a chave privada e a senha.');
+  const validFrom = new Date(certificate?.validFrom);
+  const expiresAt = new Date(certificate?.validTo);
+  if (!Number.isFinite(validFrom.getTime()) || !(expiresAt.getUTCFullYear() >= 1000 && expiresAt.getUTCFullYear() <= 9999)) {
+    throw new ApiError(400, 'CLIENT_CERTIFICATE_INVALID', 'Não foi possível abrir o certificado A1. Confira o arquivo .pfx ou .p12, a chave privada e a senha.');
+  }
+  const now = Date.now();
+  if (expiresAt.getTime() <= now) {
+    throw new ApiError(400, 'CLIENT_CERTIFICATE_EXPIRED', 'A senha abriu o certificado, mas ele está vencido. Selecione um certificado vigente.');
+  }
+  if (validFrom.getTime() > now) {
+    throw new ApiError(400, 'CLIENT_CERTIFICATE_NOT_YET_VALID', 'A senha abriu o certificado, mas a validade ainda não começou.');
+  }
+  return { validFrom, expiresAt };
+}
+
+function withCertificateFile(input, use) {
+  const { fileName, data, password } = input ?? {};
+  const name = typeof fileName === 'string' ? fileName.trim().normalize('NFC') : '';
+  if (!FILE_NAME.test(name) || typeof data !== 'string' || !data.length || data.length > MAX_BASE64_LENGTH) {
+    throw new ApiError(400, 'CLIENT_CERTIFICATE_FILE', 'Selecione um arquivo .pfx ou .p12 de até 512 KB.');
+  }
+  if (typeof password !== 'string' || !password.length || password.length > 256 || password.includes('\0')) {
+    throw new ApiError(400, 'CLIENT_CERTIFICATE_PASSWORD', 'Informe a senha do certificado A1 com até 256 caracteres.');
+  }
+  const pfx = Buffer.from(data, 'base64');
+  try {
+    if (pfx.length > MAX_PFX_BYTES || pfx.toString('base64') !== data) {
+      throw new ApiError(400, 'CLIENT_CERTIFICATE_FILE', 'Selecione um arquivo .pfx ou .p12 de até 512 KB.');
+    }
+    return use({ fileName: name, pfx, password, ...certificateValidity(pfx, password) });
+  } finally {
+    pfx.fill(0);
+  }
 }
 
 function sealCertificate(key, clientId, pfx, password) {
@@ -65,29 +97,21 @@ export class ClientCertificateStore {
 
   initialize() { return this.pool.query(SCHEMA); }
 
+  verify(input) {
+    return withCertificateFile(input, ({ validFrom, expiresAt }) => ({
+      validFrom: validFrom.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+    }));
+  }
+
   prepare(input, clientId) {
     if (input === undefined || input === null) return input;
     if (!this.#key) {
       throw new ApiError(503, 'CLIENT_CERTIFICATE_UNAVAILABLE', 'O armazenamento de certificados A1 precisa ser configurado no servidor.');
     }
-    const { fileName, data, password } = input;
-    const name = typeof fileName === 'string' ? fileName.trim().normalize('NFC') : '';
-    if (!FILE_NAME.test(name) || typeof data !== 'string' || !data.length || data.length > MAX_BASE64_LENGTH) {
-      throw new ApiError(400, 'CLIENT_CERTIFICATE_FILE', 'Selecione um arquivo .pfx ou .p12 de até 512 KB.');
-    }
-    if (typeof password !== 'string' || !password.length || password.length > 256 || password.includes('\0')) {
-      throw new ApiError(400, 'CLIENT_CERTIFICATE_PASSWORD', 'Informe a senha do certificado A1 com até 256 caracteres.');
-    }
-    const pfx = Buffer.from(data, 'base64');
-    try {
-      if (pfx.length > MAX_PFX_BYTES || pfx.toString('base64') !== data) {
-        throw new ApiError(400, 'CLIENT_CERTIFICATE_FILE', 'Selecione um arquivo .pfx ou .p12 de até 512 KB.');
-      }
-      const expiresAt = certificateExpiresAt(pfx, password);
-      return { fileName: name, expiresAt, encrypted: sealCertificate(this.#key, clientId, pfx, password) };
-    } finally {
-      pfx.fill(0);
-    }
+    return withCertificateFile(input, ({ fileName, pfx, password, expiresAt }) => ({
+      fileName, expiresAt, encrypted: sealCertificate(this.#key, clientId, pfx, password),
+    }));
   }
 
   async save(connection, clientId, prepared) {

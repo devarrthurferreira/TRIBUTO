@@ -2,10 +2,14 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createDecipheriv } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { sha256 } from '../src/api/validation.mjs';
+import { createClientAdminRouter } from '../src/clients/admin-routes.mjs';
 import { ClientCertificateStore } from '../src/clients/certificates.mjs';
+import { createPlatformRouter } from '../src/platform/routes.mjs';
 
 const firstClient = 'fffeee00-78b3-4af5-aa12-fbcfa12fd3a4';
 const anotherClient = 'dfffedc0-78b3-4af5-aa12-fbcfa12fd3a4';
@@ -68,6 +72,56 @@ test('validates a real PKCS12 key and its password before sealing both for one c
   assert.throws(() => decryptForTest(tampered, firstClient));
   assert.throws(() => store.prepare({ ...upload, password: 'outra-senha' }, firstClient), { code: 'CLIENT_CERTIFICATE_INVALID' });
   assert.throws(() => store.prepare({ ...upload, data: certificateOnly.toString('base64') }, firstClient), { code: 'CLIENT_CERTIFICATE_INVALID' });
+});
+
+test('certificate preview needs admin and CSRF, reads just the validity dates, and rejects an expired key', { skip: !availableOpenSsl }, async t => {
+  const { pfx } = testCertificate();
+  const upload = { fileName: 'teste.pfx', data: pfx.toString('base64'), password: testPassword };
+  const certificates = new ClientCertificateStore({}, { encryptionKey });
+  const adminToken = '1'.repeat(64);
+  const memberToken = '2'.repeat(64);
+  const csrfToken = 'test-csrf-token';
+  const sessions = new Map([
+    [sha256(adminToken), { userId: 'admin', csrfToken }],
+    [sha256(memberToken), { userId: 'member', csrfToken }],
+  ]);
+  const store = {
+    async findSession(hash) { return sessions.get(hash); },
+    async findUserById(role) { return { role, active: true }; },
+  };
+  const router = createPlatformRouter({ store, clientAdmin: createClientAdminRouter({ certificates }) });
+  const server = createServer((req, res) => { void router(req, res, req.url); });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const url = `http://127.0.0.1:${server.address().port}/v1/platform/clients/certificate/verify`;
+  const verify = (body, token, csrf) => fetch(url, {
+    method: 'POST', body: JSON.stringify(body),
+    headers: {
+      'content-type': 'application/json',
+      ...(token && { cookie: 'tributo_session=' + token }),
+      ...(csrf && { 'x-csrf-token': csrf }),
+    },
+  });
+  assert.equal((await verify(upload)).status, 401);
+  assert.equal((await verify(upload, memberToken, csrfToken)).status, 403);
+  const missingCsrf = await verify(upload, adminToken);
+  assert.equal(missingCsrf.status, 403);
+  assert.equal((await missingCsrf.json()).error, 'CSRF');
+  const wrongPassword = await verify({ ...upload, password: 'outra-senha' }, adminToken, csrfToken);
+  assert.equal(wrongPassword.status, 400);
+  assert.equal((await wrongPassword.json()).error, 'CLIENT_CERTIFICATE_INVALID');
+  const verified = await verify(upload, adminToken, csrfToken);
+  assert.equal(verified.status, 200);
+  assert.equal(verified.headers.get('cache-control'), 'no-store');
+  const { certificate, ...additional } = await verified.json();
+  assert.deepEqual(additional, {});
+  assert.deepEqual(Object.keys(certificate), ['validFrom', 'expiresAt']);
+  assert.ok(Date.parse(certificate.validFrom) <= Date.now() && Date.parse(certificate.expiresAt) > Date.now());
+  t.mock.method(Date, 'now', () => Date.parse(certificate.expiresAt));
+  const expired = await verify(upload, adminToken, csrfToken);
+  assert.equal(expired.status, 400);
+  assert.equal((await expired.json()).error, 'CLIENT_CERTIFICATE_EXPIRED');
+  assert.throws(() => certificates.prepare(upload, firstClient), { code: 'CLIENT_CERTIFICATE_EXPIRED' });
 });
 
 test('checks the filename, strict encoding and size without returning certificate material', () => {

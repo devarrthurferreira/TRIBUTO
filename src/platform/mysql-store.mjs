@@ -504,11 +504,12 @@ export class PlatformMySqlStore {
     return { companies, users, documents, workItemsOpen, agentsOnline };
   }
 
-  async listFiscalDocuments(allowedCnpjs, companyCnpj, page, limit) {
+  async listFiscalDocuments(allowedCnpjs, companyCnpj, page, limit, { source } = {}) {
     if (companyCnpj && allowedCnpjs !== null && !allowedCnpjs.includes(companyCnpj)) return { documents: [], page, hasMore: false };
     const params = [];
     const predicate = companyCnpj ? (params.push(companyCnpj), 'company_cnpj = ?') : scope('company_cnpj', allowedCnpjs, params);
-    const rows = await this.rows(`SELECT * FROM documents WHERE ${predicate} AND issued_at IS NOT NULL
+    if (source) params.push(source);
+    const rows = await this.rows(`SELECT * FROM documents WHERE ${predicate} AND issued_at IS NOT NULL${source ? ' AND source = ?' : ''}
       ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`, [...params, limit + 1, (page - 1) * limit]);
     return { documents: rows.slice(0, limit).map((row) => this.mapFiscalDocument(row)), page, hasMore: rows.length > limit };
   }

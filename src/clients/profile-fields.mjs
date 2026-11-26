@@ -1,10 +1,10 @@
 import { ApiError } from '../api/validation.mjs';
 import { validCnpj, validCpf } from '../platform/brazilian-documents.mjs';
-import { MODULES } from '../platform/policy.mjs';
+import { CLIENT_MODULES } from '../../web/client-modules.js';
 
 export const CLIENT_STATES = Object.freeze('AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' '));
 export const CLIENT_TAX_REGIMES = Object.freeze(['simples-nacional', 'mei', 'lucro-presumido', 'lucro-real', 'lucro-arbitrado', 'imune-isenta', 'outro']);
-const clientModules = new Set(MODULES.map(module => module.id));
+const clientModules = new Set(CLIENT_MODULES.map(module => module.id));
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const clockPattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const states = new Set(CLIENT_STATES);
@@ -104,6 +104,11 @@ function modules(value) {
   const ids = list(value, { max: clientModules.size, message: 'Revise os módulos de acesso do cliente.' });
   check(ids.every(id => clientModules.has(id)) && new Set(ids).size === ids.length, 'Revise os módulos de acesso do cliente.');
   return ids;
+}
+
+export function grantedClientModules(client) {
+  const granted = Array.isArray(client.modules) ? client.modules : [];
+  return CLIENT_MODULES.filter(module => granted.includes(module.id));
 }
 
 function schedule(value, name) {

@@ -1,3 +1,5 @@
+import { CLIENT_MODULES } from './client-modules.js';
+
 const states = new Map([
   ['AC', 'Acre'], ['AL', 'Alagoas'], ['AP', 'Amapá'], ['AM', 'Amazonas'], ['BA', 'Bahia'], ['CE', 'Ceará'],
   ['DF', 'Distrito Federal'], ['ES', 'Espírito Santo'], ['GO', 'Goiás'], ['MA', 'Maranhão'], ['MT', 'Mato Grosso'],
@@ -132,11 +134,12 @@ function scheduleSummary(schedule) {
   return schedule?.period !== 'disabled' && schedule?.time ? label + ' às ' + schedule.time : label;
 }
 
-export function renderClientProfile(target, client, { modules = [] } = {}) {
+export function renderClientProfile(target, client, { modules = CLIENT_MODULES } = {}) {
   target.replaceChildren();
   if (!client) return;
   const details = el('dl', 'client-wizard-record');
   const type = client.type === 'pf' ? 'Pessoa física' : 'Pessoa jurídica';
+  const enabledModules = modules.filter(({ id }) => client.modules?.includes(id)).map(({ label }) => label);
   appendDetails(details, [
     ['Tipo de cliente', type], ['Apelido', client.nickname], ['Nome fantasia', client.tradeName],
     [client.type === 'pf' ? 'Nome completo' : 'Razão social', client.legalName],
@@ -145,7 +148,7 @@ export function renderClientProfile(target, client, { modules = [] } = {}) {
     ['Inscrições estaduais', (client.stateRegistrations || []).map(({ number, state }) => [number, state].filter(Boolean).join(' · ')).join(', ')],
     ['Inscrições municipais', (client.municipalRegistrations || []).map(({ number, municipality }) => [number, municipality].filter(Boolean).join(' · ')).join(', ')],
     ['Certificado A1', client.certificate?.fileName || 'Não cadastrado'],
-    ['Módulos do cliente', (client.modules || []).map(id => modules.find(module => module.id === id)?.label || id).join(', ') || 'Nenhum módulo selecionado'],
+    ['Módulos no Portal do Cliente', enabledModules.join(', ') || 'Nenhum módulo liberado'],
     ['Consultas de NF', scheduleSummary(client.invoiceSchedule)], ['Notas de serviço', scheduleSummary(client.serviceInvoiceSchedule)],
   ]);
   target.append(details);
@@ -167,7 +170,7 @@ export function renderClientProfile(target, client, { modules = [] } = {}) {
 
 function drawerMarkup() {
   return '<form class="client-wizard-form" novalidate>' +
-    '<header class="client-wizard-header"><div><h2 id="clientWizardTitle">Adicionar Cliente</h2><p data-client="subtitle"></p></div>' +
+    '<header class="client-wizard-header"><div class="client-wizard-header-label"><span class="client-wizard-header-icon" aria-hidden="true"><i class="bi bi-person-badge"></i></span><div><h2 id="clientWizardTitle">Adicionar Cliente</h2><p data-client="subtitle"></p></div></div>' +
     '<button type="button" class="icon-button" data-client="close" aria-label="Fechar"><i class="bi bi-x-lg" aria-hidden="true"></i></button></header>' +
     '<div class="client-wizard-layout"><nav class="client-wizard-nav" data-client="nav" aria-label="Etapas do cadastro"><ol></ol></nav>' +
     '<div class="client-wizard-scroll" data-client="scroll"><div class="client-wizard-panels" data-client="panels"></div>' +
@@ -284,7 +287,7 @@ function repeatedSection({ title, empty, addLabel, limit, build }) {
   return { group, set, add, rows, values: () => rows.map(row => row.read()) };
 }
 
-export function mountClientWizard({ request, modules = [], onSaved, onError }) {
+export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, onError }) {
   const dialog = el('dialog', 'client-wizard');
   dialog.id = 'clientWizardDialog';
   dialog.setAttribute('aria-labelledby', 'clientWizardTitle');
@@ -303,7 +306,7 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
     panel.setAttribute('aria-labelledby', panel.id + 'Heading');
     heading.id = panel.id + 'Heading';
     const item = el('li');
-    const link = button('', { glyph });
+    const link = button('');
     link.setAttribute('aria-controls', panel.id);
     link.append(el('span', 'client-wizard-number', String(index + 1)), el('span', 'client-wizard-step-label', label));
     link.addEventListener('click', () => {
@@ -311,7 +314,9 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
     });
     item.append(link);
     stepList.append(item);
-    panel.append(heading);
+    const panelHeading = el('div', 'client-wizard-panel-heading');
+    panelHeading.append(icon(glyph), heading);
+    panel.append(panelHeading);
     refs.panels.append(panel);
     return panel;
   });
@@ -403,21 +408,54 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
   certPasswordField.hidden = true;
   const certificateGrid = el('div', 'client-wizard-fields');
   certificateGrid.append(certFileField, certPasswordField);
+  const certificateCheck = button('', { glyph: 'shield-check' });
+  const certificateCheckLabel = el('span', '', 'Verificar certificado');
+  certificateCheck.append(certificateCheckLabel);
+  const clearCert = button('Limpar arquivo');
   const removeCert = button('Remover certificado');
+  const certificateActions = el('div', 'client-wizard-certificate-actions');
+  certificateActions.append(certificateCheck, clearCert, removeCert);
+  const certificateFeedback = el('p', 'client-wizard-certificate-feedback');
+  certificateFeedback.setAttribute('role', 'status');
+  const certificateFeedbackIcon = icon('info-circle');
+  const certificateFeedbackMessage = el('span');
+  certificateFeedback.append(certificateFeedbackIcon, certificateFeedbackMessage);
+  const certificateBox = el('div', 'client-wizard-certificate');
+  certificateBox.append(currentCertificate, certificateGrid, certificateActions, certificateFeedback);
   const configNotice = el('p', 'client-wizard-note', 'O armazenamento de certificados aguarda configuração da Tecnologia.');
   configNotice.hidden = true;
-  panels[1].append(el('p', 'client-wizard-description', 'Anexe um certificado digital A1 (.pfx ou .p12, até 512 KB) e informe a senha. Este passo é opcional.'),
-    currentCertificate, certificateGrid, removeCert, configNotice);
+  panels[1].append(el('p', 'client-wizard-description', 'Se tiver um certificado A1, anexe o arquivo .pfx ou .p12 de até 512 KB e verifique a senha.'),
+    certificateBox, configNotice);
 
+  const moduleHeader = el('div', 'client-wizard-module-header');
+  const moduleCount = el('p', 'client-wizard-module-count');
+  moduleCount.setAttribute('role', 'status');
+  moduleHeader.append(el('p', 'client-wizard-description', 'Escolha quais áreas o cliente poderá abrir no próprio portal.'), moduleCount);
   const availableModules = el('div', 'client-wizard-module-list');
-  const moduleInputs = modules.map(({ id, label, icon: glyph }) => {
+  const moduleInputs = modules.map(({ id, label, icon: glyph, description }) => {
     const control = input('module', { type: 'checkbox', value: id });
-    const option = el('label', 'client-wizard-choice');
-    option.append(control, icon(glyph || 'grid'), el('span', '', label));
+    const option = el('label', 'client-wizard-module');
+    const text = el('span', 'client-wizard-module-text');
+    const moduleName = el('strong', '', label);
+    moduleName.id = 'clientWizardModule' + ++fieldCount;
+    control.setAttribute('aria-labelledby', moduleName.id);
+    text.append(moduleName);
+    if (description) {
+      const details = el('span', '', description);
+      details.id = moduleName.id + 'Details';
+      control.setAttribute('aria-describedby', details.id);
+      text.append(details);
+    }
+    option.append(icon(glyph || 'grid'), text, control);
     availableModules.append(option);
     return control;
   });
-  panels[2].append(el('p', 'client-wizard-description', 'Selecione os módulos previstos para o aplicativo do cliente.'), availableModules);
+  function updateModuleCount() {
+    const active = moduleInputs.filter(module => module.checked).length;
+    moduleCount.textContent = active === 1 ? '1 módulo liberado' : active + ' módulos liberados';
+  }
+  availableModules.addEventListener('change', updateModuleCount);
+  panels[2].append(moduleHeader, availableModules);
 
   const invoice = schedulePanel(0);
   const serviceInvoice = schedulePanel(1);
@@ -435,6 +473,8 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
   let client;
   let removedCertificate = false;
   let certificateConfigured;
+  let certificateController;
+  let certificateVerification;
   let saving = false;
   let accessMode = false;
   let accessVersion = 0;
@@ -477,13 +517,32 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
     configNotice.hidden = certificateConfigured !== false;
     currentCertificate.dataset.warning = String(Boolean(kept && expired));
     certificateStatus.textContent = file ? file.name : kept ? existing.fileName : 'Nenhum certificado anexado';
-    certificateCaption.textContent = file ? 'Será salvo com o cadastro.' : kept && expiry
+    certificateCaption.textContent = file ? 'O certificado será guardado ao salvar o cliente.' : kept && expiry
       ? (expired ? 'Vencido em ' : 'Válido até ') + expiry : removedCertificate ? 'A remoção será aplicada ao salvar.' : '';
     certPasswordField.hidden = !file;
     certificatePassword.required = Boolean(file);
     if (!file) certificatePassword.value = '';
-    removeCert.hidden = !existing;
+    removeCert.hidden = !existing || Boolean(file);
     removeCert.textContent = removedCertificate ? 'Desfazer remoção' : 'Remover certificado';
+    certificateCheck.hidden = clearCert.hidden = !file;
+    certificateCheck.disabled = !certificatePassword.value || Boolean(certificateController) || hasVerifiedCertificate();
+    certificateCheckLabel.textContent = certificateController ? 'Verificando…' : 'Verificar certificado';
+    const state = certificateVerification?.state || '';
+    certificateFeedback.hidden = !state;
+    certificateFeedback.dataset.state = state;
+    const feedbackIcon = state === 'checking' ? 'hourglass-split' : state === 'valid' ? 'check-circle' : 'exclamation-circle';
+    certificateFeedbackIcon.className = 'bi bi-' + feedbackIcon;
+    certificateFeedbackMessage.textContent = certificateVerification?.message || '';
+  }
+
+  function resetCertificateVerification() {
+    certificateController?.abort();
+    certificateController = undefined;
+    certificateVerification = undefined;
+  }
+
+  function hasVerifiedCertificate() {
+    return certificateVerification?.state === 'valid' && Date.parse(certificateVerification.expiresAt) > Date.now();
   }
 
   function showStep(index, focus = true) {
@@ -529,6 +588,7 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
     step = furthest = 0;
     removedCertificate = false;
     certificateConfigured = undefined;
+    resetCertificateVerification();
     company.control.checked = record?.type !== 'pf';
     person.control.checked = record?.type === 'pf';
     company.control.disabled = person.control.disabled = Boolean(record);
@@ -548,6 +608,7 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
     invoice.set(record?.invoiceSchedule || undefined);
     serviceInvoice.set(record?.serviceInvoiceSchedule || undefined);
     for (const module of moduleInputs) module.checked = Boolean(record?.modules?.includes(module.value));
+    updateModuleCount();
     updateType();
     updateCertificate();
     title.textContent = record ? 'Editar cliente' : 'Adicionar Cliente';
@@ -558,7 +619,10 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
     void request('/clients/config').then(result => {
       if (!isCurrent(version) || accessMode) return;
       certificateConfigured = result.certificateUploadConfigured;
-      if (certificateConfigured === false) certificateFile.value = '';
+      if (certificateConfigured === false) {
+        certificateFile.value = '';
+        resetCertificateVerification();
+      }
       updateCertificate();
     }).catch(error => { if (isCurrent(version) && error.status === 401) onError?.(error); });
   }
@@ -600,13 +664,64 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
     return true;
   }
 
-  function validateCertificate() {
+  function validateCertificateInput() {
     const file = certificateFile.files[0];
     if (!file) return true;
     if (!/\.(?:pfx|p12)$/i.test(file.name) || !file.size || file.size > maxCertificateBytes) {
       return showControlError(certificateFile, 'Escolha um arquivo .pfx ou .p12 válido de até 512 KB.');
     }
     return certificatePassword.reportValidity();
+  }
+
+  function validateCertificate() {
+    if (!certificateFile.files[0]) return true;
+    if (!validateCertificateInput()) return false;
+    if (hasVerifiedCertificate()) return true;
+    if (certificateController) {
+      showError('Aguarde a verificação do certificado.');
+    } else {
+      if (certificateVerification?.state !== 'error') {
+        certificateVerification = { state: 'error', message: 'Verifique o certificado antes de continuar.' };
+      }
+      updateCertificate();
+      certificateCheck.focus();
+    }
+    return false;
+  }
+
+  async function verifyCertificate() {
+    const file = certificateFile.files[0];
+    if (!file || certificateController || !validateCertificateInput()) return;
+    const version = accessVersion;
+    const controller = new AbortController();
+    const stillCurrent = () => isCurrent(version) && certificateController === controller;
+    certificateController = controller;
+    certificateVerification = { state: 'checking', message: 'Abrindo o certificado com a senha informada…' };
+    showError();
+    updateCertificate();
+    try {
+      const password = certificatePassword.value;
+      const data = await readCertificate(file);
+      if (!stillCurrent()) return;
+      const { certificate } = await request('/clients/certificate/verify', {
+        method: 'POST', signal: controller.signal, body: { fileName: file.name, data, password },
+      });
+      if (!stillCurrent()) return;
+      const expiry = formatTime(certificate?.expiresAt);
+      if (!expiry || Date.parse(certificate.expiresAt) <= Date.now()) throw new Error('Não foi possível confirmar a validade do certificado.');
+      certificateVerification = { state: 'valid', expiresAt: certificate.expiresAt,
+        message: 'Senha confirmada. Certificado válido até ' + expiry + '.' };
+    } catch (error) {
+      if (!stillCurrent()) return;
+      if (error.status === 401 && onError) { onError(error); return; }
+      certificateVerification = { state: 'error', message: error.message || 'Não foi possível verificar o certificado.' };
+    } finally {
+      if (stillCurrent()) {
+        certificateController = undefined;
+        if (step === 1) showError();
+        updateCertificate();
+      }
+    }
   }
 
   function validateStep(index) {
@@ -784,7 +899,11 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
     } catch (error) {
       if (!isCurrent(version)) return;
       setBusy(false);
-      if (/CERTIFICATE|CERTIFICADO/i.test(error.code || '')) showStep(1);
+      if (/CERTIFICATE|CERTIFICADO/i.test(error.code || '')) {
+        resetCertificateVerification();
+        updateCertificate();
+        showStep(1);
+      }
       if (/DOCUMENT|DUPLICATE|CLIENT_EXISTS/i.test(error.code || '')) showStep(0);
       receiveError(error);
       return;
@@ -792,6 +911,7 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
     if (!isCurrent(version)) return;
     setBusy(false);
     client = response.client;
+    resetCertificateVerification();
     certificatePassword.value = certificateFile.value = '';
     if (response.activationCode) {
       const previousFocus = opener;
@@ -809,12 +929,20 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
     if (step + 1 < steps.length) {
       furthest = Math.max(furthest, step + 1);
       showStep(step + 1);
-    } else void save();
+    } else {
+      if (certificateFile.files[0] && !hasVerifiedCertificate()) {
+        showStep(1);
+        validateCertificate();
+        return;
+      }
+      void save();
+    }
   });
   refs.back.addEventListener('click', () => showStep(step - 1));
   function clearDialog() {
     accessVersion++;
     setBusy(false);
+    resetCertificateVerification();
     form.reset();
     refs.accessPanel.replaceChildren();
     stateRegistrations.set([]);
@@ -843,11 +971,29 @@ export function mountClientWizard({ request, modules = [], onSaved, onError }) {
   cnae.addEventListener('input', () => replaceValue(cnae, cnaeLabel(cnae.value)));
   certificateFile.addEventListener('change', () => {
     if (certificateFile.files[0]) removedCertificate = false;
+    certificatePassword.value = '';
+    resetCertificateVerification();
+    showError();
     updateCertificate();
+  });
+  certificatePassword.addEventListener('input', () => {
+    resetCertificateVerification();
+    showError();
+    updateCertificate();
+  });
+  certificateCheck.addEventListener('click', () => { void verifyCertificate(); });
+  clearCert.addEventListener('click', () => {
+    certificateFile.value = '';
+    resetCertificateVerification();
+    showError();
+    updateCertificate();
+    certificateFile.focus();
   });
   removeCert.addEventListener('click', () => {
     certificateFile.value = '';
     removedCertificate = !removedCertificate;
+    resetCertificateVerification();
+    showError();
     updateCertificate();
   });
   return { open, openAccess, close };

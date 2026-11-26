@@ -14,6 +14,7 @@ const ALLOWED = new Map([
   ['/cliente/', ['client-portal.html', 'text/html; charset=utf-8']],
   ['/client-portal.js', ['client-portal.js', 'text/javascript; charset=utf-8']],
   ['/client-portal.css', ['client-portal.css', 'text/css; charset=utf-8']],
+  ['/client-modules.js', ['client-modules.js', 'text/javascript; charset=utf-8']],
   ['/client-wizard.js', ['client-wizard.js', 'text/javascript; charset=utf-8']],
   ['/client-wizard.css', ['client-wizard.css', 'text/css; charset=utf-8']],
   ['/dossie', ['dossier-public.html', 'text/html; charset=utf-8']],

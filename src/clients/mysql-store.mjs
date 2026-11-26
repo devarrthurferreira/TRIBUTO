@@ -80,6 +80,10 @@ export class ClientMySqlStore {
     return rows.map(clientSummary);
   }
 
+  listPortalDocuments(cnpj, source, page, limit) {
+    return this.platformStore.listFiscalDocuments([cnpj], cnpj, page, limit, { source });
+  }
+
   async get(key, executor = this.pool) {
     if (typeof key !== 'string') return null;
     const identifier = key.trim();
@@ -143,7 +147,10 @@ export class ClientMySqlStore {
       if ((fields.type !== undefined && fields.type !== previous.type) || (fields.document !== undefined && fields.document !== previous.document)) {
         throw new ApiError(409, 'CLIENT_DOCUMENT_FIXED', 'O tipo e o documento do cliente são fixos após o cadastro.');
       }
-      const data = clientFields({ ...previous, ...fields });
+      const { modules: storedModules, ...profile } = previous;
+      const data = clientFields({ ...profile, ...fields });
+      // A profile-only PATCH leaves the client's existing selections intact.
+      if (!Object.hasOwn(fields, 'modules')) data.modules = storedModules;
       const now = new Date();
       if (previous.cnpj) {
         await connection.execute('UPDATE platform_companies SET name = ?, active = ? WHERE cnpj = ?', [

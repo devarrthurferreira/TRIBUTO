@@ -24,6 +24,10 @@ export function createClientAdminRouter({ clients, certificates, accessStore, ac
         if (method === 'GET' && route === '/clients/config') {
           return send(res, 200, { certificateUploadConfigured: certificates.configured });
         }
+        if (method === 'POST' && route === '/clients/certificate/verify') {
+          const certificate = certificates.verify(await readBody(req, 710_000));
+          return send(res, 200, { certificate });
+        }
         if (route === '/clients') {
           if (method === 'GET') return send(res, 200, { clients: await clients.list() });
           if (method === 'POST') {

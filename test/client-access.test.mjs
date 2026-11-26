@@ -63,15 +63,27 @@ function send(res, code, body) {
   return true;
 }
 
-async function harness(t, secureCookies = false) {
+async function harness(t, secureCookies = false, profile = {}) {
   const accessStore = new MemoryAccess();
-  const clientStore = { async get(key) { return [client.id, client.document].includes(key) ? client : null; } };
+  const record = { ...client, ...profile };
+  const documentReads = [];
+  const clientStore = {
+    async get(key) { return [record.id, record.document].includes(key) ? record : null; },
+    async listPortalDocuments(cnpj, source, page, limit) {
+      documentReads.push({ cnpj, source, page, limit });
+      return {
+        documents: [{ number: '501', providerCnpj: record.cnpj, recipientCnpj: '11222333000181',
+          documentKey: 'masked-key', sha256: 'internal-value', amountCents: '12099', status: 'active',
+          issuedAt: '2026-11-20T12:00:00.000Z', competence: '2026-11' }], page, hasMore: false,
+      };
+    },
+  };
   let currentTime = Date.now();
   const portal = createClientPortalRouter({ accessStore, clientStore, secureCookies, clock: () => currentTime });
   const internal = createClientAccessAdminRouter({ accessStore, clientStore });
   const server = http.createServer(async (req, res) => {
     try {
-      if (await portal(req, res, req.url)) return;
+      if (await portal(req, res, new URL(req.url, 'http://localhost').pathname)) return;
       const user = req.headers['test-admin'] === '1' ? admin : { role: 'member' };
       if (await internal.handleHttp({
         req, res, route: req.url, user, send,
@@ -86,6 +98,7 @@ async function harness(t, secureCookies = false) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   return {
+    record, documentReads,
     advance(ms) { currentTime += ms; },
     async request(path, { method = 'GET', body, headers = {} } = {}) {
       const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`, {
@@ -162,4 +175,54 @@ test('limita tentativas e trata código expirado como credencial inválida', asy
     const reply = await request('/v1/client/login', { method: 'POST', body: { username: client.document, password: issued.activationCode } });
     assert.equal(reply.status, attempt < 5 ? 401 : 429);
   }
+});
+
+test('portal autoriza apenas os módulos atuais do próprio cliente e de sessões ativas', async t => {
+  const cnpj = '13304979000140';
+  const { request, record, documentReads } = await harness(t, false, {
+    document: cnpj, cnpj, fiscalEligible: true, type: 'pj', nickname: 'Cliente',
+    contacts: [{ name: 'Responsável', email: 'client@example.test', phone: null, role: 'Financeiro' }],
+    modules: ['cadastro', 'fiscal', 'tecnologia'],
+    invoiceSchedule: { period: 'night', time: '20:30' },
+    serviceInvoiceSchedule: { period: 'day', time: '09:00' },
+    certificate: { password: 'apenas-interno' },
+  });
+  const module = id => '/v1/client/modules/' + id;
+  const url = '/v1/client/login';
+  const password = 'uma senha pessoal longa 123';
+  assert.equal((await request(module('cadastro'))).status, 401);
+  const issued = await request(`/clients/${record.id}/access/reset`, { method: 'POST', headers: { 'test-admin': '1' } });
+  const first = await request(url, { method: 'POST', body: { username: cnpj, password: issued.data.activationCode } });
+  const activationHeaders = { cookie: first.cookie.split(';')[0], 'x-csrf-token': first.data.csrfToken };
+  assert.equal(first.data.modules, undefined);
+  assert.equal((await request(module('cadastro'), { headers: activationHeaders })).status, 403);
+  assert.equal((await request('/v1/client/change-password', { headers: activationHeaders, method: 'POST', body: { newPassword: password } })).status, 200);
+  const active = await request(url, { method: 'POST', body: { username: cnpj, password } });
+  const headers = { cookie: active.cookie.split(';')[0] };
+  assert.deepEqual(active.data.modules.map(item => item.id), ['cadastro', 'fiscal']);
+  for (const denied of ['contabil', 'tecnologia', 'nfse']) {
+    assert.equal((await request(module(denied), { headers })).status, 403);
+  }
+  const cadastro = await request(module('cadastro'), { headers });
+  assert.equal(cadastro.data.data.contacts[0].email, 'client@example.test');
+  assert.equal('certificate' in cadastro.data.data, false);
+  assert.equal((await request(module('fiscal') + '?companyCnpj=11222333000181', { headers })).status, 400);
+  const fiscal = await request(module('fiscal') + '?page=2', { headers });
+  assert.deepEqual(documentReads, [{ cnpj, source: 'NFE', page: 2, limit: 25 }]);
+  assert.deepEqual(fiscal.data.data.schedule, record.invoiceSchedule);
+  assert.deepEqual(fiscal.data.data.documents[0], {
+    number: '501', direction: 'issued', amountCents: '12099', status: 'active',
+    issuedAt: '2026-11-20T12:00:00.000Z', competence: '2026-11',
+  });
+  record.modules = ['nfse'];
+  assert.equal((await request(module('fiscal'), { headers })).status, 403);
+  assert.deepEqual((await request('/v1/client/session', { headers })).data.modules.map(item => item.id), ['nfse']);
+  const notas = await request(module('nfse'), { headers });
+  assert.deepEqual(notas.data.data.schedule, record.serviceInvoiceSchedule);
+  assert.deepEqual(documentReads.at(-1), { cnpj, source: 'NFSE', page: 1, limit: 25 });
+  record.fiscalEligible = false;
+  const unavailable = await request(module('nfse'), { headers });
+  assert.equal(unavailable.data.data.collectionAvailable, false);
+  assert.deepEqual(unavailable.data.data.documents, []);
+  assert.equal(documentReads.length, 2);
 });
