@@ -37,7 +37,7 @@ node src/agent/agent.mjs --enqueue caminho/para/lote.json
 1. Instale Node.js 20+, crie um agente no painel e copie o token exibido uma vez.
 2. Execute o instalador em [WINDOWS-INSTALL.md](WINDOWS-INSTALL.md), informando o endereço HTTPS e digitando o token quando solicitado. Ele testa o acesso, instala os arquivos em `C:\ProgramData\TRIBUTO` e cria tarefas para inicialização/reinício.
 3. O token fica protegido com DPAPI e ACL NTFS; fila, checkpoints e logs permanecem fora do código. Restrinja acesso à pasta, faça backup e monitore disco, fila e comunicação no painel.
-4. O instalador atual usa `LocalService` para **transporte**. Antes de liberar acesso a certificado A1, utilize conta de serviço dedicada e conceda somente à identidade correta acesso à chave privada. A senha e o PFX não pertencem ao Web App, MySQL ou repositório.
+4. O instalador atual usa `LocalService` para **transporte**. Antes de liberar acesso a certificado A1, utilize conta de serviço dedicada e conceda somente à identidade correta acesso à chave privada. Mantenha o PFX e a senha usados pelo agente sob a conta de serviço. O cofre A1 do cadastro de clientes é independente da execução do agente.
 
 O arquivo `.env.example` é apenas ilustrativo; o instalador guarda o token conforme o guia Windows. O conector ADN tem configuração separada e só deve operar após os testes/homologação indicados em [ADN.md](ADN.md).
 

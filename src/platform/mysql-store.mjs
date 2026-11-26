@@ -395,12 +395,13 @@ export class PlatformMySqlStore {
     });
   }
 
-  async updateCompany(cnpj, changes, actorId) {
+  async updateCompany(cnpj, changes, actorId, { onDisabled } = {}) {
     return this.transaction(async connection => {
       const [[row]] = await connection.execute('SELECT * FROM platform_companies WHERE cnpj = ? FOR UPDATE', [cnpj]);
       if (!row) return null;
       const updated = { ...company(row), ...changes };
       await connection.execute('UPDATE platform_companies SET name = ?, active = ? WHERE cnpj = ?', [updated.name, Number(updated.active), cnpj]);
+      if (Number(row.active) === 1 && !updated.active) await onDisabled?.(connection, updated._id);
       await this.insertAudit(connection, 'company.update', actorId, cnpj, { fields: Object.keys(changes) });
       return updated;
     });

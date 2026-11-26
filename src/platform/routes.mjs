@@ -3,13 +3,13 @@ import { ApiError, sha256 } from '../api/validation.mjs';
 import { hashPassword, verifyPassword, newSecret, safeEqualHex } from './auth.mjs';
 import { lookupCep } from './cep.mjs';
 import { saoPauloDate } from './employment.mjs';
+import { validCpf, validNumericCnpj as validCnpj } from './brazilian-documents.mjs';
 import { handleMarketingMetrics, socialMetricsFields } from '../marketing/metrics-routes.mjs';
 import { INTERNAL_WORK_ITEM_MODULES, MODULES, LEVELS, capabilitiesFor, permissionsFor, canAccess, canAccessCompany, canAccessWorkItemCompany, canPerform, hasLoginCredentials, publicUser } from './policy.mjs';
 
 const COOKIE = 'tributo_session';
 const SESSION_MS = 12 * 60 * 60_000;
 const SETUP_PASSWORD_MIN_LENGTH = 10;
-const CNPJ = /^\d{14}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USERNAME = /^[a-z0-9]{1,35}\.[a-z0-9]{1,38}$/;
 const NSU = /^(0|[1-9]\d{0,14})$/;
@@ -70,10 +70,7 @@ function dateField(value, name) {
 }
 function cpfNumber(value) {
   const cpf = field(value, 'CPF', 11, 20).replace(/[.\s-]/g, '');
-  check(/^\d{11}$/.test(cpf) && !/^(\d)\1{10}$/.test(cpf), 'CPF');
-  const digits = [...cpf].map(Number);
-  const cpfDigit = (length) => digits.slice(0, length).reduce((sum, digit, index) => sum + digit * (length + 1 - index), 0) * 10 % 11 % 10;
-  check(digits[9] === cpfDigit(9) && digits[10] === cpfDigit(10), 'CPF');
+  check(validCpf(cpf), 'CPF');
   return cpf;
 }
 function dateOfBirth(value) {
@@ -121,12 +118,6 @@ function usernameFor({ firstName, lastName } = {}) {
 function accessPassword(value) {
   check(typeof value === 'string' && value.length >= 12 && value.length <= 128, 'senha de 12 a 128 caracteres');
   return value;
-}
-function validCnpj(value) {
-  if (typeof value !== 'string' || !CNPJ.test(value) || /^(\d)\1{13}$/.test(value)) return false;
-  const digits = [...value].map(Number);
-  const checksum = (length, weights) => { const rest = digits.slice(0, length).reduce((sum, digit, index) => sum + digit * weights[index], 0) % 11; return rest < 2 ? 0 : 11 - rest; };
-  return digits[12] === checksum(12, [5,4,3,2,9,8,7,6,5,4,3,2]) && digits[13] === checksum(13, [6,5,4,3,2,9,8,7,6,5,4,3,2]);
 }
 function cnpj(value) { check(validCnpj(value), 'cnpj'); return value; }
 function companyView({ cnpj, name, active, createdAt }) { return { cnpj, name, active, createdAt }; }
@@ -257,7 +248,7 @@ async function validateTaskAssignee(store, assigneeId, module, companyCnpj) {
   }
 }
 
-export function createPlatformRouter({ store, chat, whatsapp, club, crm, people, maxhubCore, maxhubFeed, bootstrapTokenSha256, secureCookies = true, logger = console }) {
+export function createPlatformRouter({ store, chat, whatsapp, club, crm, people, maxhubCore, maxhubFeed, clientAdmin, bootstrapTokenSha256, secureCookies = true, logger = console }) {
   function loginKey(req, address) { return sha256(`${req.socket.remoteAddress || 'unknown'}:${address}`); }
   async function startSession(res, user) {
     const token = newSecret();
@@ -309,6 +300,9 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
         requireAdmin(user);
         const cep = new URL(req.url, 'http://localhost').searchParams.get('cep');
         return send(res, 200, await lookupCep(cep));
+      }
+      if (clientAdmin && (route === '/clients' || route.startsWith('/clients/'))) {
+        return await clientAdmin.handleHttp({ req, res, route, user, send, readBody: body, requireAdmin, logger });
       }
       if (chat && (route === '/chat' || route.startsWith('/chat/'))) {
         return await chat.handleHttp({ req, res, route, user, send, readBody: body });
@@ -420,7 +414,9 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
         if (input.name !== undefined) changes.name = field(input.name, 'name', 2, 160);
         if (input.active !== undefined) { check(typeof input.active === 'boolean', 'active'); changes.active = input.active; }
         check(Object.keys(changes).length > 0, 'changes');
-        const company = await store.updateCompany(key, changes, user._id);
+        const company = await store.updateCompany(key, changes, user._id, {
+          onDisabled: clientAdmin ? (connection, id) => clientAdmin.disableAccess(connection, id, user._id) : undefined,
+        });
         if (!company) fail(404, 'NOT_FOUND', 'Empresa não cadastrada');
         return send(res, 200, { company: companyView(company) });
       }

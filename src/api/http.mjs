@@ -2,6 +2,7 @@ import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { ApiError, sha256, validateBatch, validateHeartbeat, validateConfig } from './validation.mjs';
 import { serveStatic } from './static.mjs';
+import { scheduleAgentJob } from '../clients/agent-schedule.mjs';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -46,7 +47,7 @@ function permitted(agent, companyCnpj, source) {
   if (!agent.companies.includes(companyCnpj) || !agent.sources.includes(source)) throw new ApiError(403, 'FORBIDDEN_SCOPE', 'CNPJ ou fonte fora do escopo do agente');
 }
 
-export function createApiServer({ store, agents, jobs = [], agentRegistry, platformRouter, whatsapp, publicCrm, logger = console }) {
+export function createApiServer({ store, agents, jobs = [], agentRegistry, platformRouter, whatsapp, publicCrm, clientPortal, clientSchedules, logger = console }) {
   if (agentRegistry) {
     if (agents) throw new Error('Escolha agentRegistry ou agents estáticos');
   } else validateConfig(agents, jobs);
@@ -56,6 +57,7 @@ export function createApiServer({ store, agents, jobs = [], agentRegistry, platf
       if (req.method === 'GET' && pathname === '/healthz') return send(res, 200, { ok: true, service: 'tributo-api' });
       if (whatsapp && await whatsapp.handleWebhook(req, res, pathname)) return;
       if (publicCrm && await publicCrm(req, res, pathname)) return;
+      if (clientPortal && await clientPortal(req, res, pathname)) return;
       if (platformRouter && pathname.startsWith('/v1/platform/')) {
         await platformRouter(req, res, pathname);
         return;
@@ -68,7 +70,10 @@ export function createApiServer({ store, agents, jobs = [], agentRegistry, platf
       if (req.method === 'GET' && pathname === '/v1/agent/jobs') {
         const allowed = assignedJobs.filter(job => job.enabled && (!agents || (agent.companies.includes(job.companyCnpj) && agent.sources.includes(job.source))));
         const result = agentRegistry ? allowed : await Promise.all(allowed.map(async job => ({ ...job, lastCommittedNsu: await store.getCheckpoint(job.companyCnpj, job.source) ?? job.startNsu })));
-        return send(res, 200, { jobs: result });
+        if (!clientSchedules || !result.length) return send(res, 200, { jobs: result });
+        const schedules = await clientSchedules([...new Set(result.map(({ companyCnpj }) => companyCnpj))]);
+        const now = new Date();
+        return send(res, 200, { jobs: result.map(job => scheduleAgentJob(job, schedules.get(job.companyCnpj), now)) });
       }
       if (req.method === 'POST' && pathname === '/v1/agent/heartbeat') {
         const heartbeat = validateHeartbeat(await readJson(req));

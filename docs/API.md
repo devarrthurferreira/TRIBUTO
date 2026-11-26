@@ -1,6 +1,6 @@
 # API do painel e do agente
 
-O agente no Windows abre conexões **HTTPS de saída** para a API do Web App Node.js. O painel consulta o MySQL da Hostinger por meio dessa API; a nuvem não inicia conexão ao Windows. O contrato recebe **somente chave e metadados estruturados**. XML, PDF, PFX, senha de certificado e URLs para buscar documentos não são aceitos nos lotes nem persistidos no MySQL.
+O agente no Windows abre conexões **HTTPS de saída** para a API do Web App Node.js. O painel consulta o MySQL da Hostinger por meio dessa API; a nuvem não inicia conexão ao Windows. O contrato recebe **somente chave e metadados estruturados**. Os lotes aceitam somente os metadados fiscais definidos neste contrato. O cofre A1 do cadastro de clientes é independente desta API.
 
 ## Autenticação e escopo
 
@@ -13,7 +13,7 @@ Cada rota de NFS-e por empresa exige login, permissão no módulo Fiscal **e** a
 | Método e rota | Resposta / corpo | Uso |
 | --- | --- | --- |
 | `GET /healthz` | `{ "ok": true }` | Saúde básica da aplicação. |
-| `GET /v1/agent/jobs` | `{ "jobs": [{ "id", "companyCnpj", "source", "startNsu", "lastCommittedNsu", "enabled" }] }` | Vínculos de coleta autorizados. Não são comandos arbitrários. |
+| `GET /v1/agent/jobs` | `{ "jobs": [{ "id", "companyCnpj", "source", "startNsu", "lastCommittedNsu", "enabled" }] }` | Vínculos de coleta autorizados. O cadastro de clientes pode acrescentar `schedule` e `inCollectionWindow` por fonte no fuso de São Paulo. |
 | `POST /v1/agent/heartbeat` | `{ "hostname", "version", "queuedBatches" }` | Último sinal e tamanho da fila. |
 | `POST /v1/agent/batches` | Lote abaixo → `{ "ok", "batchId", "committedThroughNsu" }` | Transação MySQL que grava metadados, eventos, lote e checkpoint. `201` novo, `200` reenvio idêntico. |
 

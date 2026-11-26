@@ -21,6 +21,11 @@ import { createMaxHubCoreRouter } from '../maxhub/core-routes.mjs';
 import { MaxHubFeedStore } from '../maxhub/feed-store.mjs';
 import { createMaxHubFeedRouter } from '../maxhub/feed-routes.mjs';
 import { awardMaxcoin } from '../maxhub/points.mjs';
+import { ClientMySqlStore } from '../clients/mysql-store.mjs';
+import { ClientCertificateStore } from '../clients/certificates.mjs';
+import { ClientAccessStore } from '../clients/access-store.mjs';
+import { createClientAccessAdminRouter, createClientPortalRouter } from '../clients/access-routes.mjs';
+import { createClientAdminRouter } from '../clients/admin-routes.mjs';
 
 for (const key of ['MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE']) {
   if (!process.env[key]) throw new Error(`${key} obrigatória`);
@@ -39,6 +44,14 @@ const store = await MySqlStore.connect({
 });
 const platformStore = new PlatformMySqlStore(store.pool);
 await platformStore.initialize();
+const clients = new ClientMySqlStore(platformStore);
+const certificates = new ClientCertificateStore(store.pool);
+const accessStore = new ClientAccessStore(platformStore);
+await Promise.all([clients.initialize(), certificates.initialize(), accessStore.initialize()]);
+const secureCookies = process.env.COOKIE_SECURE !== 'false';
+const accessAdmin = createClientAccessAdminRouter({ accessStore, clientStore: clients });
+const clientAdmin = createClientAdminRouter({ clients, certificates, accessStore, accessAdmin });
+const clientPortal = createClientPortalRouter({ accessStore, clientStore: clients, secureCookies });
 if (await platformStore.countUsers() === 0 && !bootstrapTokenSha256) throw new Error('Configure BOOTSTRAP_ADMIN_TOKEN_SHA256 para o primeiro administrador');
 const maxhubCore = new MaxHubCoreStore(platformStore);
 await maxhubCore.initialize();
@@ -68,8 +81,10 @@ const whatsapp = createWhatsAppService({ config: whatsappConfig, store: whatsapp
 const platformRouter = createPlatformRouter({ store: platformStore, chat, whatsapp, club: createClubRouter(clubStore),
   crm: createMarketingCrmRouter(marketingCrmStore), people: createPeopleRouter(peopleStore),
   maxhubCore: createMaxHubCoreRouter(maxhubCore), maxhubFeed: createMaxHubFeedRouter(maxhubFeed),
-  bootstrapTokenSha256, secureCookies: process.env.COOKIE_SECURE !== 'false' });
-const server = createApiServer({ store, agentRegistry: platformStore, platformRouter, whatsapp, publicCrm: createPublicCrmRouter(marketingCrmStore, crmMail) });
+  bootstrapTokenSha256, secureCookies, clientAdmin });
+const server = createApiServer({ store, agentRegistry: platformStore, platformRouter, whatsapp,
+  publicCrm: createPublicCrmRouter(marketingCrmStore, crmMail), clientPortal,
+  clientSchedules: documents => clients.collectionSchedules(documents) });
 const io = chat.attach(server);
 const stopCrmDelivery = startCrmDelivery(marketingCrmStore, crmMail);
 server.listen(port, host, () => console.log(`TRIBUTO API ouvindo em ${host}:${port}`));

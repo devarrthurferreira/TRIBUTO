@@ -1,0 +1,22 @@
+.client-access-card [hidden] { display: none; }
+.client-access-card form { display: grid; gap: 16px; }
+.client-access-card .client-access-notice {
+  margin-block: 0 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #e7f5eb;
+  color: #164f2d;
+}
+.client-access-card .form-message { margin-block: 0 16px; }
+.client-access-details { margin: 0 0 24px; display: grid; gap: 12px; }
+.client-access-details div {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid #eee5e6;
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+}
+.client-access-details dt { color: var(--muted); font-size: 12px; }
+.client-access-details dd { margin: 0; font-weight: 650; }
+.client-access-actions { display: flex; flex-wrap: wrap; gap: 10px; }

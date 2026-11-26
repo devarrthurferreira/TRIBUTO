@@ -1,6 +1,6 @@
 # Publicar o painel e a API na Hostinger Web Apps
 
-O TRIBUTO usa **um único Web App Node.js** para o painel e a API. O agente permanece no servidor Windows da Maximum e conecta-se à API por HTTPS de saída. Dados do painel e **metadados fiscais** ficam no **MySQL criado no hPanel da própria Hostinger**. O banco não armazena XML/PDF, PFX, senha do certificado ou fila do agente.
+O TRIBUTO usa **um único Web App Node.js** para o painel e a API. O agente permanece no servidor Windows da Maximum e conecta-se à API por HTTPS de saída. Dados do painel e **metadados fiscais** ficam no **MySQL criado no hPanel da própria Hostinger**. Os lotes fiscais armazenam somente metadados. O cadastro de clientes pode guardar PFX e senha cifrados em um cofre separado do transporte do agente.
 
 ## Pré-requisitos
 
@@ -63,3 +63,7 @@ No painel, um administrador vincula um agente aos CNPJs/fontes permitidos. O tok
 **50 GB de armazenamento do site não são 50 GB de MySQL.** Na oferta atual do plano Unlimited, o limite de banco informado é **3 GB**; confirme a cota efetiva da sua contratação no hPanel, inclusive se é por banco ou agregada. Com 500 empresas, o tamanho depende do total de notas, eventos, índices e período retido. Exemplo apenas para ordem de grandeza: 500 × 100 notas/mês × 12 meses × 1 KB por registro ≈ 600 MB de dados brutos por ano, **sem** índices, eventos e auditoria. Com 500 notas/mês por empresa seriam ≈ 3 GB brutos por ano, antes desses adicionais. Faça um piloto, acompanhe crescimento real e estabeleça uma margem de segurança; não prometa capacidade por número de empresas isolado.
 
 Configure backup periódico do MySQL e teste a restauração. Monitore espaço, disponibilidade da API, última comunicação do agente e checkpoints por CNPJ. Arquivos de publicação podem ser substituídos em novos deploys: não guarde XML, PDF, certificado nem fila nessas pastas. A Hostinger Web Apps hospeda o painel/API; o processo de coleta contínua roda no Windows 24 horas.
+
+### Cofre de certificados A1
+
+Configure `CLIENT_CERT_ENCRYPTION_KEY` nas variáveis de ambiente do Web App para habilitar uploads. Use 32 bytes aleatórios em hexadecimal (`openssl rand -hex 32`) e guarde uma cópia no gerenciador de segredos usado pela operação. A chave precisa permanecer a mesma entre implantações para os certificados existentes.

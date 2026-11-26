@@ -12,6 +12,7 @@ import { mountClubRhMood } from './club-rh-mood.js';
 import { MAXHUB_PATH, isMaxHubPath, legacyMaxHubUrl, mountMaxHub } from './maxhub.js';
 
 import { appendPersonName } from './person-name.js';
+import { mountClientWizard, renderClientProfile } from './client-wizard.js';
 
 const API = '/v1/platform';
 const DASHBOARD_PATH = '/home';
@@ -68,7 +69,7 @@ const actionDependencies = {
 };
 const editLevelActions = new Set(['workItemCreate', 'workItemUpdate', 'whatsappReply', 'whatsappTicketUpdate', 'marketingCrmRead', 'marketingCrmManage']);
 const taskStatusLabels = { open: 'Aberta', in_progress: 'Em andamento', done: 'Concluída' };
-const state = { session: null, view: 'overview', companies: [], users: [], agents: [], selectedCompanyCnpj: null, nfsePage: 1, nfseHasMore: false, nfseRequest: 0 };
+const state = { session: null, view: 'overview', companies: [], clients: null, users: [], agents: [], selectedCompanyCnpj: null, nfsePage: 1, nfseHasMore: false, nfseRequest: 0 };
 
 function node(tag, className, value) {
   const element = document.createElement(tag);
@@ -127,6 +128,7 @@ async function request(path, { method = 'GET', body, signal } = {}) {
   if (!response.ok) {
     const error = new Error(data.message || data.error || `Erro HTTP ${response.status}`);
     error.status = response.status;
+    error.code = data.error;
     throw error;
   }
   return data;
@@ -272,7 +274,13 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   updateChatBadges();
   state.session = null;
   state.selectedCompanyCnpj = null;
-  state.selectedClientCnpj = null;
+  state.selectedClientKey = null;
+  state.clients = null;
+  activeClient = undefined;
+  $('clientProfile').replaceChildren();
+  $('companiesList').replaceChildren();
+  $('companiesCount').textContent = '— clientes';
+  clientWizard.close();
   const query = new URLSearchParams(location.search);
   const preserveMarketingLink = preserveRoute && location.pathname === `${SECTOR_PREFIX}marketing`
     && (['tasks', 'metrics', 'crm'].includes(query.get('painel')) || query.has('atividade'));
@@ -438,7 +446,7 @@ async function logout() {
 function navigate(view, { replace = false } = {}) {
   const previousView = state.view;
   const companyRoute = /^company-(\d{14})$/.exec(view);
-  const clientRoute = /^client-(\d{14})$/.exec(view);
+  const clientRoute = /^client-([a-z\d]{11,14}|[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})$/i.exec(view);
   const detail = !!companyRoute && canUse('fiscal', 'fiscalDocumentsRead');
   const clientDetail = !!clientRoute && isAdmin();
   const valid = detail || clientDetail || view === 'overview' || view === 'club' || view === 'maxhub'
@@ -467,7 +475,7 @@ function navigate(view, { replace = false } = {}) {
     state.selectedCompanyCnpj = companyRoute[1];
     updateCompanyHeading();
   }
-  state.selectedClientCnpj = clientDetail ? clientRoute[1] : null;
+  state.selectedClientKey = clientDetail ? clientRoute[1] : null;
   const viewId = `view-${state.view}`;
   for (const section of document.querySelectorAll('.view')) section.hidden = section.id !== viewId;
   const activeView = state.view === 'client-detail' || (state.view === 'company-detail' && isAdmin()) ? 'companies'
@@ -504,8 +512,8 @@ function navigate(view, { replace = false } = {}) {
   else maxhub.close();
   if (state.view === 'users') void loadUsers().catch(displayError);
   if (state.view === 'agents') void loadAgents().catch(displayError);
-  if (state.view === 'companies') void loadCompanies().catch(displayError);
-  if (state.view === 'client-detail') void loadClientDetail(state.selectedClientCnpj).catch(displayError);
+  if (state.view === 'companies') void loadClients().catch(displayError);
+  if (state.view === 'client-detail') void loadClientDetail(state.selectedClientKey).catch(displayError);
   if (state.view === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead')) void loadFiscalDocuments().catch(displayError);
   if (state.view === 'company-detail') void loadCompanyDetail().catch(displayError);
   if (state.view !== 'marketing' && canUse(state.view, 'workItemRead')) void loadWorkItems(state.view).catch(displayError);
@@ -744,7 +752,6 @@ function updateAgentPairCount() {
 async function loadCompanies() {
   const data = await request('/companies');
   state.companies = Array.isArray(data.companies) ? data.companies : [];
-  renderCompanies();
   renderFiscalCompanyQuickList();
   if (state.view === 'company-detail') {
     if (!state.companies.some((company) => company.cnpj === state.selectedCompanyCnpj)) navigate(isAdmin() ? 'companies' : 'fiscal');
@@ -760,29 +767,61 @@ async function loadCompanies() {
   fillAgentCompanyOptions();
   for (const select of document.querySelectorAll('.work-company-filter')) fillCompanySelect(select, true);
 }
+function clientDocumentLabel(document) {
+  const value = String(document || '');
+  return value.length === 11
+    ? value.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
+    : value.replace(/^([A-Z0-9]{2})([A-Z0-9]{3})([A-Z0-9]{3})([A-Z0-9]{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+}
+function fiscalCnpj(client) {
+  return /^\d{14}$/.test(client?.document ?? '') ? client.document : null;
+}
+function normalizedClientSearch(value = '') {
+  return value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+}
+let clientListRequest = 0;
+async function loadClients() {
+  const current = state.session;
+  const serial = ++clientListRequest;
+  try {
+    const data = await request('/clients');
+    if (current !== state.session || serial !== clientListRequest) return;
+    state.clients = data.clients;
+    formError('clientListError', '');
+    renderCompanies();
+  } catch (error) {
+    if (current !== state.session || serial !== clientListRequest || state.view !== 'companies') return;
+    if (error.status === 401) displayError(error);
+    else {
+      formError('clientListError', error.message);
+      $('clientListRetry').hidden = false;
+    }
+  }
+}
 function renderCompanies() {
-  const filter = $('companySearch').value.trim().toLocaleLowerCase('pt-BR').replace(/\D/g, '');
-  const text = $('companySearch').value.trim().toLocaleLowerCase('pt-BR');
-  const companies = state.companies.filter((company) => !text || company.name.toLocaleLowerCase('pt-BR').includes(text) || (filter && company.cnpj.includes(filter)));
-  $('companiesCount').textContent = `${state.companies.length} ${state.companies.length === 1 ? 'empresa' : 'empresas'}`;
+  const base = state.clients;
+  if (!base) return;
+  $('clientListRetry').hidden = true;
+  const text = normalizedClientSearch($('companySearch').value.trim());
+  const document = text.replace(/[.\s/-]/g, '');
+  const clients = base.filter(client => [client.name, client.nickname, client.legalName, client.tradeName].some(name =>
+    normalizedClientSearch(name || '').includes(text)) || (document && client.document.toLowerCase().includes(document)));
+  $('companiesCount').textContent = `${base.length} ${base.length === 1 ? 'cliente' : 'clientes'}`;
   const target = $('companiesList');
   target.replaceChildren();
-  if (!companies.length) return appendEmpty(target, state.companies.length ? 'Nenhuma empresa encontrada' : 'Nenhuma empresa cadastrada', state.companies.length ? 'Tente outra busca.' : 'Cadastre a primeira empresa para organizar a carteira.', '▥');
-  for (const company of companies) {
+  if (!clients.length) return appendEmpty(target, base.length ? 'Nenhum cliente encontrado' : 'Nenhum cliente cadastrado',
+    base.length ? 'Tente outra busca.' : 'Adicione o primeiro cliente à carteira.', '▥');
+  for (const client of clients) {
     const row = node('div', 'list-row');
     const main = node('div', 'list-row-main');
-    const avatar = node('span', 'row-avatar', initials(company.name));
     const info = node('div');
-    info.append(node('strong', '', company.name), node('small', '', cnpjLabel(company.cnpj)));
-    main.append(avatar, info);
-    const aside = node('span', 'status-pill ' + (company.active === false ? 'status-warning' : 'status-ok'), company.active === false ? 'Inativa' : 'Ativa');
+    info.append(node('strong', '', client.name), node('small', '', `${client.type === 'pf' ? 'CPF' : 'CNPJ'} ${clientDocumentLabel(client.document)}`));
+    main.append(node('span', 'row-avatar', initials(client.name)), info);
     const actions = node('div', 'company-row-actions');
-    actions.append(aside);
-    if (isAdmin()) {
-      const open = node('a', 'button button-quiet company-open', 'Abrir ficha ↗');
-      open.href = viewUrl(`client-${company.cnpj}`);
-      actions.append(open);
-    }
+    const status = client.active === false ? ['status-warning', 'Inativo'] : ['status-ok', 'Ativo'];
+    const open = node('a', 'button button-quiet company-open', 'Abrir ficha ↗');
+    open.href = viewUrl(`client-${client.id}`);
+    actions.append(node('span', `status-pill ${status[0]}`, status[1]), open);
     row.append(main, actions);
     target.append(row);
   }
@@ -810,72 +849,29 @@ function renderFiscalCompanyQuickList() {
   }
   if (companies.length > 12) target.append(node('p', 'pagination-note', `Exibindo 12 de ${companies.length} empresas. Refine a busca para localizar uma empresa.`));
 }
-function openCompanyDialog(company) {
-  if (!isAdmin()) return;
-  const dialog = $('companyDialog');
-  if (dialog.open) return;
-  const form = $('companyForm');
-  form.reset();
-  form.dataset.company = company?.cnpj || '';
-  dialog.classList.toggle('company-create-drawer', !company);
-  $('companyDialogTitle').textContent = company ? 'Editar empresa' : 'Adicionar Cliente';
-  $('companySaveButton').textContent = company ? 'Salvar alterações' : 'Salvar cliente';
-  $('companyName').value = company?.name || '';
-  $('companyCnpj').value = company ? cnpjLabel(company.cnpj) : '';
-  $('companyCnpj').readOnly = Boolean(company);
-  $('companyStatusField').hidden = !company;
-  $('companyStatus').value = String(company?.active !== false);
-  formError('companyError', '');
-  dialog.showModal();
-}
-
-async function createCompany(event) {
-  event.preventDefault();
-  const button = $('companySaveButton');
-  if (!isAdmin() || button.disabled) return;
-  const dialog = $('companyDialog');
-  const closeButtons = dialog.querySelectorAll('.close-dialog');
-  formError('companyError', '');
-  const editCnpj = $('companyForm').dataset.company;
-  withBusy(button, true, 'Salvando…');
-  for (const closeButton of closeButtons) closeButton.disabled = true;
-  try {
-    const name = $('companyName').value.trim();
-    const companyResult = await request(editCnpj ? `/companies/${editCnpj}` : '/companies', editCnpj
-      ? { method: 'PATCH', body: { name, active: $('companyStatus').value === 'true' } }
-      : { method: 'POST', body: { name, cnpj: $('companyCnpj').value.replace(/\D/g, '') } });
-    if (editCnpj && activeClient?.company.cnpj === editCnpj) {
-      activeClient.company = companyResult.company;
-      renderClientHeading(activeClient.company);
-    }
-  } catch (error) {
-    formError('companyError', error.message);
-    return;
-  } finally {
-    withBusy(button, false);
-    for (const closeButton of closeButtons) closeButton.disabled = false;
-  }
-  dialog.close();
-  notice(editCnpj ? 'Cadastro atualizado.' : 'Cliente cadastrado.');
-  void Promise.all([loadCompanies(), loadDashboard()]).catch(displayError);
-}
-
 let activeClient;
 let clientRequest = 0;
-const clientIsVisible = (cnpj) => isAdmin() && state.view === 'client-detail' && state.selectedClientCnpj === cnpj;
+const clientIsVisible = (key) => isAdmin() && state.view === 'client-detail' && state.selectedClientKey === key;
 
-function renderClientHeading(company) {
-  $('clientDetailTitle').textContent = company?.name || 'Ficha da empresa';
-  $('clientDetailCnpj').textContent = company ? `CNPJ ${cnpjLabel(company.cnpj)}` : '';
-  $('clientDetailCnpj').hidden = !company;
-  $('clientDetailActions').hidden = !company;
-  $('clientDetailContent').hidden = !company;
-  if (!company) return;
-  $('clientRecordCnpj').textContent = cnpjLabel(company.cnpj);
-  $('clientRecordSince').textContent = company.createdAt ? dateLabel(company.createdAt) : 'Não informada';
-  $('clientDetailStatus').className = `status-pill ${company.active === false ? 'status-warning' : 'status-ok'}`;
-  $('clientDetailStatus').textContent = company.active === false ? 'Inativa' : 'Ativa';
-  $('clientFiscalLink').href = viewUrl(`company-${company.cnpj}`);
+function renderClientHeading(client) {
+  const fiscal = fiscalCnpj(client);
+  const kind = client?.type === 'pf' ? 'CPF' : 'CNPJ';
+  $('clientDetailTitle').textContent = client?.name || 'Ficha do cliente';
+  $('clientDetailCnpj').textContent = client ? `${kind} ${clientDocumentLabel(client.document)}` : '';
+  $('clientDetailCnpj').hidden = !client;
+  $('clientDetailActions').hidden = !client;
+  $('clientDetailContent').hidden = !client;
+  $('clientProfile').replaceChildren();
+  if (!client) return;
+  $('clientRecordDocumentLabel').textContent = kind;
+  $('clientRecordCnpj').textContent = clientDocumentLabel(client.document);
+  $('clientRecordSince').textContent = client.createdAt ? dateLabel(client.createdAt) : 'Não informada';
+  $('clientDetailStatus').className = `status-pill ${client.active === false ? 'status-warning' : 'status-ok'}`;
+  $('clientDetailStatus').textContent = client.active === false ? 'Inativo' : 'Ativo';
+  $('clientFiscalLink').hidden = !fiscal;
+  $('clientStaffPortfolio').hidden = !fiscal;
+  $('clientFiscalLink').href = fiscal ? viewUrl(`company-${fiscal}`) : '/setor/fiscal';
+  renderClientProfile($('clientProfile'), client, { modules });
 }
 
 function renderClientAccessCount() {
@@ -888,7 +884,8 @@ function renderClientAccess() {
   target.replaceChildren();
   const empty = $('clientAccessEmpty');
   if (!activeClient) { empty.hidden = true; return; }
-  const { company, members } = activeClient;
+  const { fiscal, key, members } = activeClient;
+  if (!fiscal) { empty.hidden = true; return; }
   const filter = $('clientAccessSearch').value.trim().toLocaleLowerCase('pt-BR');
   const eligible = members.filter(member => member.active || member.hasAccess);
   const visible = eligible.filter(member => `${member.name} ${member.email || ''}`.toLocaleLowerCase('pt-BR').includes(filter));
@@ -912,13 +909,13 @@ function renderClientAccess() {
     updateActionLabel();
     action.addEventListener('click', async () => {
       const entry = activeClient;
-      if (!clientIsVisible(company.cnpj) || !entry?.members.includes(member) || member.busy) return;
+      if (!clientIsVisible(key) || !entry?.members.includes(member) || member.busy) return;
       member.busy = true;
       withBusy(action, true, 'Salvando…');
       try {
-        const data = await request(`/companies/${company.cnpj}/access/${member.id}`, { method: 'PATCH', body: { hasAccess: !member.hasAccess } });
+        const data = await request(`/companies/${fiscal}/access/${member.id}`, { method: 'PATCH', body: { hasAccess: !member.hasAccess } });
         member.hasAccess = data.hasAccess;
-        if (clientIsVisible(company.cnpj) && activeClient === entry) {
+        if (clientIsVisible(key) && activeClient === entry) {
           $('clientAccessFeedback').textContent = `${member.hasAccess ? 'Acesso concedido a' : 'Acesso revogado de'} ${member.name}.`;
         }
       } catch (error) { displayError(error); }
@@ -926,7 +923,7 @@ function renderClientAccess() {
         member.busy = false;
         withBusy(action, false);
         updateActionLabel();
-        if (clientIsVisible(company.cnpj) && activeClient === entry) {
+        if (clientIsVisible(key) && activeClient === entry) {
           if (!action.isConnected || !member.active) renderClientAccess();
           else renderClientAccessCount();
         }
@@ -938,7 +935,7 @@ function renderClientAccess() {
   }
 }
 
-async function loadClientDetail(cnpj) {
+async function loadClientDetail(key) {
   const serial = ++clientRequest;
   activeClient = undefined;
   $('clientAccessSearch').value = '';
@@ -946,30 +943,39 @@ async function loadClientDetail(cnpj) {
   $('clientLinkValue').value = '';
   $('clientLinkButton').setAttribute('aria-expanded', 'false');
   $('clientAccessFeedback').textContent = '';
+  $('clientDetailLoading').hidden = false;
   formError('clientDetailError', '');
   renderClientHeading();
   try {
-    const data = await request(`/companies/${cnpj}`);
-    if (serial !== clientRequest || !clientIsVisible(cnpj)) return;
-    activeClient = { company: data.company, members: data.members };
-    renderClientHeading(activeClient.company);
-    renderClientAccess();
+    const { client } = await request(`/clients/${encodeURIComponent(key)}`);
+    if (serial !== clientRequest || !clientIsVisible(key)) return;
+    const fiscal = fiscalCnpj(client);
+    activeClient = { client, fiscal, key, members: [] };
+    renderClientHeading(client);
+    if (fiscal) {
+      const { members } = await request(`/companies/${fiscal}`);
+      if (serial !== clientRequest || !clientIsVisible(key)) return;
+      activeClient.members = members;
+      renderClientAccess();
+    }
   } catch (error) {
-    if (serial === clientRequest && clientIsVisible(cnpj)) {
+    if (serial === clientRequest && clientIsVisible(key)) {
       if (error.status === 401) displayError(error);
       else formError('clientDetailError', error.message);
     }
+  } finally {
+    if (serial === clientRequest) $('clientDetailLoading').hidden = true;
   }
 }
 
 function showClientLink() {
-  const cnpj = activeClient?.company.cnpj;
-  if (!cnpj || !clientIsVisible(cnpj)) return;
+  const entry = activeClient;
+  if (!entry || !clientIsVisible(entry.key)) return;
   const panel = $('clientLinkPanel');
   panel.hidden = !panel.hidden;
   $('clientLinkButton').setAttribute('aria-expanded', String(!panel.hidden));
   if (!panel.hidden) {
-    $('clientLinkValue').value = new URL(viewUrl(`client-${cnpj}`), location.origin).href;
+    $('clientLinkValue').value = new URL(viewUrl(`client-${entry.client.id}`), location.origin).href;
     $('clientLinkValue').focus();
     $('clientLinkValue').select();
   }
@@ -979,7 +985,7 @@ async function copyClientLink() {
   const input = $('clientLinkValue');
   try {
     await navigator.clipboard.writeText(input.value);
-    notice('Link da empresa copiado.');
+    notice('Link do cadastro copiado.');
   } catch {
     input.focus();
     input.select();
@@ -1575,6 +1581,7 @@ function setupEvents() {
   for (const button of document.querySelectorAll('button.nav-link')) button.addEventListener('click', () => navigate(button.dataset.view));
   for (const button of document.querySelectorAll('button[data-go]')) button.addEventListener('click', () => navigate(button.dataset.go));
   $('companySearch').addEventListener('input', renderCompanies);
+  $('clientListRetry').addEventListener('click', () => void loadClients());
   for (const control of $('view-marketing').querySelectorAll('[data-marketing-go]')) {
     control.addEventListener('click', () => sectorNavigation.selectPanel(control.dataset.marketingGo));
   }
@@ -1603,8 +1610,9 @@ function setupEvents() {
     state.nfsePage += 1;
     void loadCompanyDocuments(state.selectedCompanyCnpj).catch(displayError);
   });
-  $('newCompanyButton').addEventListener('click', () => openCompanyDialog());
-  $('clientEditButton').addEventListener('click', () => { if (activeClient) openCompanyDialog(activeClient.company); });
+  $('newCompanyButton').addEventListener('click', () => { if (isAdmin()) clientWizard.open(); });
+  $('clientEditButton').addEventListener('click', () => { if (activeClient) clientWizard.open(activeClient.client); });
+  $('clientPortalAccessButton').addEventListener('click', () => { if (activeClient) clientWizard.openAccess(activeClient.client); });
   $('clientAccessSearch').addEventListener('input', renderClientAccess);
   $('clientLinkButton').addEventListener('click', showClientLink);
   $('clientCopyLink').addEventListener('click', () => void copyClientLink());
@@ -1622,10 +1630,6 @@ function setupEvents() {
   });
   $('newUserButton').addEventListener('click', openUserWizard);
   $('newAgentButton').addEventListener('click', () => $('agentDialog').showModal());
-  $('companyForm').addEventListener('submit', createCompany);
-  $('companyDialog').addEventListener('cancel', event => {
-    if ($('companySaveButton').disabled) event.preventDefault();
-  });
   $('userForm').addEventListener('submit', saveUserAccess);
   $('userDialog').addEventListener('close', () => { $('userPendingPassword').value = ''; });
   $('userRole').addEventListener('change', updateGrantEditorRole);
@@ -1651,6 +1655,14 @@ function setupEvents() {
   });
 }
 
+const clientWizard = mountClientWizard({
+  request, modules, onError: displayError,
+  onSaved(client, { mode } = {}) {
+    notice(mode === 'edit' ? 'Cadastro atualizado.' : 'Cliente cadastrado.');
+    if (activeClient?.client.id === client.id) void loadClientDetail(activeClient.key);
+    void Promise.all([loadClients(), loadCompanies(), loadDashboard()]).catch(displayError);
+  },
+});
 setupEvents();
 const sectorNavigation = mountSectorNavigation();
 const club = mountClub($('clubRoot'), { request, onAuthError: displayError });

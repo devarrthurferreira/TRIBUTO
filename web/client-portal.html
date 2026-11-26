@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#790e16">
+  <title>Portal do Cliente | Maximum Contábil</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/client-portal.css">
+  <script type="module" src="/client-portal.js"></script>
+</head>
+<body>
+  <main class="auth-screen" aria-label="Portal do Cliente Maximum">
+    <a class="skip-link" href="#clientContent">Pular para o conteúdo</a>
+    <div class="auth-layout">
+      <div class="auth-intro">
+        <img class="auth-logo" src="/maximum-logo.png" width="512" height="107" alt="Maximum Assessoria Contábil">
+        <div class="auth-intro-copy">
+          <h1>Portal do Cliente</h1>
+        </div>
+      </div>
+      <div id="clientContent" class="auth-panel" tabindex="-1">
+        <section class="auth-card client-access-card" aria-labelledby="clientTitle">
+          <h2 id="clientTitle" tabindex="-1">Portal do Cliente</h2>
+          <p id="clientDescription" class="muted">Verificando seu acesso…</p>
+          <p id="clientNotice" class="client-access-notice" role="status" hidden></p>
+          <p id="clientError" class="form-message" role="alert" hidden></p>
+          <button id="clientRetry" class="button button-quiet" type="button" hidden>Tentar novamente</button>
+          <form id="clientLogin" method="post" action="/v1/client/login" hidden>
+            <div class="field">
+              <label for="clientUsername">CPF ou CNPJ</label>
+              <input id="clientUsername" name="username" type="text" required autocomplete="username" autocapitalize="characters" spellcheck="false" maxlength="18" placeholder="Sem pontos, barras ou traços">
+            </div>
+            <div class="field">
+              <label for="clientPassword">Senha ou código temporário</label>
+              <input id="clientPassword" name="password" type="password" required maxlength="128" autocomplete="current-password">
+            </div>
+            <button class="button button-primary button-full" type="submit">Entrar</button>
+          </form>
+          <form id="clientChange" method="post" action="/v1/client/change-password" hidden>
+            <div id="clientCurrentField" class="field">
+              <label for="clientCurrentPassword">Senha atual</label>
+              <input id="clientCurrentPassword" name="currentPassword" type="password" maxlength="128" autocomplete="current-password">
+            </div>
+            <div class="field">
+              <label for="clientNewPassword">Nova senha</label>
+              <input id="clientNewPassword" name="newPassword" type="password" required minlength="15" maxlength="128" autocomplete="new-password" aria-describedby="clientPasswordHelp">
+              <small id="clientPasswordHelp">Use pelo menos 15 caracteres. Uma frase longa também funciona.</small>
+            </div>
+            <div class="field">
+              <label for="clientConfirmPassword">Confirmar nova senha</label>
+              <input id="clientConfirmPassword" type="password" required minlength="15" maxlength="128" autocomplete="new-password">
+            </div>
+            <button class="button button-primary button-full" type="submit">Salvar senha</button>
+          </form>
+          <dl id="clientAccount" class="client-access-details" hidden>
+            <div><dt>Cliente</dt><dd id="clientName"></dd></div>
+            <div><dt>Usuário de acesso</dt><dd id="clientDocument"></dd></div>
+          </dl>
+          <div id="clientActions" class="client-access-actions" hidden>
+            <button id="clientEditPassword" class="button button-quiet" type="button">Alterar senha</button>
+            <button id="clientLogout" class="button button-quiet" type="button">Sair</button>
+          </div>
+          <noscript><p>Ative o JavaScript para acessar o portal.</p></noscript>
+        </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,13 +1,13 @@
 # TRIBUTO · Maximum Contábil
 
-Painel consultivo em **Hostinger Web Apps (Node.js)**, API e agente para o servidor Windows 24 horas da Maximum. O sistema organiza empresas, equipe e permissões por módulo/CNPJ. A área Fiscal oferece uma ficha por empresa com NFS-e prestadas e tomadas, filtros, totais por competência e indicação do último lote recebido. Os registros são **metadados** no MySQL criado na própria Hostinger; XML, PDF e certificado A1 não são enviados ao banco.
+Painel consultivo em **Hostinger Web Apps (Node.js)**, API e agente para o servidor Windows 24 horas da Maximum. O sistema organiza empresas, equipe e permissões por módulo/CNPJ. A área Fiscal oferece uma ficha por empresa com NFS-e prestadas e tomadas, filtros, totais por competência e indicação do último lote recebido. Os registros fiscais no MySQL da Hostinger armazenam metadados. O cadastro de clientes mantém certificados A1 em um cofre cifrado separado.
 
 ## Estado das funcionalidades
 
 | Área | Implementado | Ainda necessário |
 | --- | --- | --- |
 | Acesso | Primeiro administrador, login, sessões, troca de senha, permissões por módulo e empresa, trilha de auditoria. | Processo de convites/recuperação, se desejado. |
-| Empresas | Cadastro e ficha individual com acesso controlado. | Importação da carteira atual. |
+| Empresas e clientes | Cadastro PJ/PF em seis etapas, contatos, inscrições, cofre A1, módulos, janelas fiscais e ativação individual em `/cliente`. | Importação da carteira e implementação dos módulos do Portal do Cliente. |
 | Fiscal | API de metadados com checkpoint e histórico de eventos; listagem de NFS-e por empresa; resumo mensal de prestadas/tomadas, valores e cancelamentos; sinal de cobertura. | Homologar conector de coleta autorizado, conciliação com fonte independente, fluxos de solicitação de cancelamento e análise IBS/CBS. |
 | DP, Contábil, Societário, Financeiro e Gestão | Espaços, atividades e permissões separados. | Fluxos específicos de cada departamento. |
 | Agente | Token revogável, heartbeat, fila local, retransmissão idempotente e confirmação de lotes. | Ativação homologada da coleta com A1/procuração para cada fonte. |
@@ -23,7 +23,7 @@ flowchart LR
   W -.->|"Conector habilitado após homologação"| F["Fonte fiscal autorizada"]
 ```
 
-O painel e a API usam o mesmo processo Node.js. O banco guarda usuários, empresas, atividades e **chave/dados mínimos de cada nota e evento**, separados por CNPJ e fonte; o agente mantém sua fila no Windows até a confirmação do banco. A1 e senha permanecem no servidor Windows, com acesso restrito à conta de serviço apropriada. Não use pastas da publicação para arquivos persistentes.
+O painel e a API usam o mesmo processo Node.js. O banco guarda usuários, empresas, atividades e **chave/dados mínimos de cada nota e evento**, separados por CNPJ e fonte; o agente mantém sua fila no Windows até a confirmação do banco. O agente mantém seu A1 e a senha no Windows, com acesso restrito à conta de serviço. O cofre A1 da Central usa `CLIENT_CERT_ENCRYPTION_KEY` e mantém o cadastro separado da coleta fiscal. As janelas diurna e noturna chegam à API de trabalhos do agente, que atualmente transmite lotes preparados localmente.
 
 ## Capacidade: 500 empresas e 50 GB
 

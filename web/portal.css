@@ -120,44 +120,7 @@
 .portal-profile-name { max-width: 110px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 600; }
 .portal-profile .bi { font-size: 10px; }
 
-.company-create-drawer {
-  position: fixed;
-  inset: 0 auto 0 0;
-  width: 85vw;
-  height: 100dvh;
-  max-width: none;
-  max-height: none;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  border-right: 1px solid var(--portal-edge);
-  border-radius: 0 18px 18px 0;
-  background: var(--portal-surface);
-}
-.company-create-drawer > form {
-  --company-drawer-padding: clamp(16px, 4vw, 60px);
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  height: 100%;
-}
-.company-create-drawer :is(.dialog-header, .company-form-content, .dialog-actions) { padding: 18px var(--company-drawer-padding); }
-.company-create-drawer .dialog-header { align-items: center; gap: 12px; border-bottom: 1px solid var(--portal-edge); }
-.company-create-drawer .dialog-header .eyebrow { margin: 0; }
-.company-create-drawer .dialog-header h2 { font-size: clamp(20px, 3vw, 30px); }
-.company-create-drawer .company-form-content { overflow-y: auto; overscroll-behavior: contain; }
-.company-create-drawer .dialog-description { margin-top: 0; color: var(--muted); font-size: 13px; }
-.company-create-drawer .company-form-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
-  gap: 16px;
-  max-width: 740px;
-}
-.company-create-drawer .field { margin: 0; }
-.company-create-drawer .dialog-actions { flex-wrap: wrap; margin: 0; border-top: 1px solid var(--portal-edge); }
-@media (prefers-reduced-motion: no-preference) {
-  .company-create-drawer[open] { animation: company-drawer-entry .22s ease-out; }
-  @keyframes company-drawer-entry { from { transform: translateX(-100%); } to { transform: translateX(0); } }
-}
+.auth-client-entry { margin: 16px 0 0; font-size: 13px; }
 
 .app-shell .sidebar { top: var(--portal-header-size); height: calc(100dvh - var(--portal-header-size)); }
 .app-shell[data-view="overview"] .sidebar:not(.open) { display: none; }

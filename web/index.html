@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/sectors.css">
   <link rel="stylesheet" href="/sector-whatsapp.css">
   <link rel="stylesheet" href="/user-wizard.css">
+  <link rel="stylesheet" href="/client-wizard.css">
   <link rel="stylesheet" href="/marketing-tasks.css">
   <link rel="stylesheet" href="/marketing.css">
   <link rel="stylesheet" href="/marketing-metrics.css">
@@ -79,6 +80,7 @@
             <p id="authError" class="form-message" role="alert" hidden></p>
             <button id="authSubmit" class="button button-primary button-full" type="submit">Entrar <span aria-hidden="true">→</span></button>
           </form>
+          <p class="auth-client-entry"><a class="text-button" href="/cliente">Acessar o Portal do Cliente ↗</a></p>
         </div>
       </div>
     </div>
@@ -389,31 +391,34 @@
 
         <section class="view" id="view-companies" aria-labelledby="companiesTitle" hidden>
           <div class="page-heading"><div><h1 id="companiesTitle">Empresas e clientes</h1><p>Cadastros e acessos da carteira da Maximum.</p></div><button id="newCompanyButton" class="button button-primary" type="button"><i class="bi bi-plus-lg" aria-hidden="true"></i> Adicionar Cliente</button></div>
-          <article class="surface"><div class="list-toolbar"><label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">Buscar empresa</span><input id="companySearch" type="search" placeholder="Buscar por nome ou CNPJ"></label><span id="companiesCount" class="list-count">— empresas</span></div><div id="companiesList" class="list-content" aria-live="polite"></div></article>
+          <article class="surface"><div class="list-toolbar"><label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">Buscar cliente</span><input id="companySearch" type="search" placeholder="Buscar por nome, CNPJ ou CPF"></label><span id="companiesCount" class="list-count">— clientes</span></div><p id="clientListError" class="form-message" role="alert" hidden></p><button id="clientListRetry" class="button button-quiet" type="button" hidden>Tentar novamente</button><div id="companiesList" class="list-content" aria-live="polite"><p>Carregando clientes…</p></div></article>
         </section>
 
         <section class="view client-admin" id="view-client-detail" aria-labelledby="clientDetailTitle" hidden>
           <a class="text-button client-back" href="/home#companies">← Voltar a Empresas e clientes</a>
           <div class="page-heading client-heading">
-            <div><h1 id="clientDetailTitle">Ficha da empresa</h1><p id="clientDetailCnpj" hidden></p></div>
+            <div><h1 id="clientDetailTitle">Ficha do cliente</h1><p id="clientDetailCnpj" hidden></p></div>
             <div id="clientDetailActions" class="client-actions" hidden>
               <button class="button button-quiet" id="clientLinkButton" type="button" aria-expanded="false" aria-controls="clientLinkPanel"><i class="bi bi-link-45deg" aria-hidden="true"></i> Gerar link</button>
+              <button class="button button-quiet" id="clientPortalAccessButton" type="button"><i class="bi bi-key" aria-hidden="true"></i> Acesso do cliente</button>
               <button class="button button-primary" id="clientEditButton" type="button">Editar cadastro</button>
             </div>
           </div>
+          <p id="clientDetailLoading" role="status" hidden>Carregando cadastro…</p>
           <p id="clientDetailError" class="form-message" role="alert" hidden></p>
           <div id="clientDetailContent" class="client-content" hidden>
             <section id="clientLinkPanel" class="surface client-link-panel" aria-labelledby="clientLinkHeading" hidden>
               <h2 id="clientLinkHeading">Link da ficha administrativa</h2>
               <p>Abre a ficha para administradores autenticados na Central.</p>
-              <div class="field client-link-field"><label for="clientLinkValue">Link da empresa</label><div><input id="clientLinkValue" type="url" readonly><button class="button button-quiet" id="clientCopyLink" type="button">Copiar link</button></div></div>
+              <div class="field client-link-field"><label for="clientLinkValue">Link do cadastro</label><div><input id="clientLinkValue" type="url" readonly><button class="button button-quiet" id="clientCopyLink" type="button">Copiar link</button></div></div>
             </section>
             <section class="surface client-record" aria-labelledby="clientRecordHeading">
-              <div class="surface-header"><h2 id="clientRecordHeading">Dados da empresa</h2><span id="clientDetailStatus" class="status-pill"></span></div>
-              <dl class="client-record-data"><div><dt>CNPJ</dt><dd id="clientRecordCnpj"></dd></div><div><dt>Cadastrada em</dt><dd id="clientRecordSince"></dd></div></dl>
+              <div class="surface-header"><h2 id="clientRecordHeading">Dados do cliente</h2><span id="clientDetailStatus" class="status-pill"></span></div>
+              <dl class="client-record-data"><div><dt id="clientRecordDocumentLabel">CNPJ</dt><dd id="clientRecordCnpj"></dd></div><div><dt>Cadastrado em</dt><dd id="clientRecordSince"></dd></div></dl>
               <div class="client-record-actions"><a class="text-button" id="clientFiscalLink" href="/setor/fiscal">Consultar NFS-e ↗</a></div>
             </section>
-            <section class="surface client-access" aria-labelledby="clientAccessHeading">
+            <div id="clientProfile"></div>
+            <section id="clientStaffPortfolio" class="surface client-access" aria-labelledby="clientAccessHeading">
               <div class="surface-header"><div><h2 id="clientAccessHeading">Acessos à empresa</h2><p>Vincule membros à carteira da empresa. Cada pessoa usa as permissões dos seus módulos.</p></div><span id="clientAccessCount" class="list-count"></span></div>
               <div class="list-toolbar"><label class="search-field"><i class="bi bi-search" aria-hidden="true"></i><span class="sr-only">Buscar pessoas</span><input id="clientAccessSearch" type="search" placeholder="Buscar por nome ou e-mail" autocomplete="off"></label></div>
               <ul id="clientAccessList" class="list-content client-access-list"></ul>
@@ -445,28 +450,12 @@
         <section class="view" id="view-agents" aria-labelledby="agentsTitle" hidden>
           <div class="page-heading"><div><p class="eyebrow">INFRAESTRUTURA</p><h1 id="agentsTitle">Agentes de coleta</h1><p>Monitore a comunicação do servidor Windows com a plataforma.</p></div><button id="newAgentButton" type="button" class="button button-primary">+ Vincular agente</button></div>
           <article class="surface"><div class="surface-header"><div><p class="eyebrow">SERVIDORES</p><h3>Instalações vinculadas</h3></div><span id="agentsCount" class="list-count">— agentes</span></div><div id="agentsList" class="list-content" aria-live="polite"></div></article>
-          <div class="module-message"><span aria-hidden="true">⌁</span><div><strong>O A1 permanece no servidor Windows</strong><p>O agente abre a conexão com a API, transmite lotes confirmados e informa sua saúde. O painel não recebe o arquivo PFX nem a senha do certificado.</p></div></div>
+          <div class="module-message"><span aria-hidden="true">⌁</span><div><strong>O A1 permanece no servidor Windows</strong><p>O agente abre a conexão com a API, transmite lotes confirmados e informa sua saúde. O cadastro de clientes mantém certificados em um cofre separado. O agente usa o A1 configurado no servidor Windows.</p></div></div>
         </section>
       </main>
     </div>
     </div>
   </div>
-
-  <dialog id="companyDialog" class="form-dialog" aria-labelledby="companyDialogTitle" aria-describedby="companyDialogDescription">
-    <form id="companyForm" method="dialog">
-      <div class="dialog-header"><div><p class="eyebrow">CADASTRO</p><h2 id="companyDialogTitle">Adicionar Cliente</h2></div><button type="button" class="icon-button close-dialog" aria-label="Fechar">×</button></div>
-      <div class="company-form-content">
-        <p id="companyDialogDescription" class="dialog-description">A empresa ficará disponível conforme as permissões concedidas à equipe.</p>
-        <div class="company-form-fields">
-          <div class="field"><label for="companyName">Razão social</label><input id="companyName" name="name" required maxlength="160" autocomplete="organization" placeholder="Nome da empresa" autofocus></div>
-          <div class="field"><label for="companyCnpj">CNPJ</label><input id="companyCnpj" name="cnpj" inputmode="numeric" required maxlength="18" placeholder="00.000.000/0000-00"></div>
-          <div id="companyStatusField" class="field" hidden><label for="companyStatus">Situação cadastral</label><select id="companyStatus" name="active"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
-        </div>
-        <p id="companyError" class="form-message" role="alert" hidden></p>
-      </div>
-      <div class="dialog-actions"><button type="button" class="button button-quiet close-dialog">Cancelar</button><button type="submit" id="companySaveButton" class="button button-primary">Salvar cliente</button></div>
-    </form>
-  </dialog>
 
   <dialog id="userDialog" class="form-dialog" aria-labelledby="userDialogTitle">
     <form id="userForm" method="dialog">
