@@ -10,6 +10,7 @@ const MODULE_ACTIONS = Object.freeze({
 });
 const FISCAL_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, fiscalDocumentsRead: 'view' });
 const MARKETING_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, marketingCrmRead: 'edit', marketingCrmManage: 'edit' });
+const RH_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, clubMoodRead: 'manage' });
 const ACTION_PREREQUISITES = new Map([
   ['workItemCreate', 'workItemRead'],
   ['workItemUpdate', 'workItemRead'],
@@ -35,7 +36,10 @@ export const MODULES = Object.freeze([
 export const LEVELS = Object.freeze(['view', 'edit', 'manage']);
 
 function actionLevels(module) {
-  return module === 'fiscal' ? FISCAL_ACTIONS : module === 'marketing' ? MARKETING_ACTIONS : MODULE_ACTIONS;
+  if (module === 'fiscal') return FISCAL_ACTIONS;
+  if (module === 'marketing') return MARKETING_ACTIONS;
+  if (module === 'rh') return RH_ACTIONS;
+  return MODULE_ACTIONS;
 }
 
 export function grantLevel(grant) {

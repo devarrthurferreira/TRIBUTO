@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '../api/validation.mjs';
+import { canPerform } from '../platform/policy.mjs';
 import { clubFields, clubId, importClubFields } from './catalog.mjs';
 
 const RECORD_PATH = /^\/club\/(benefits|partners|events)(?:\/([a-f\d-]{36}))?$/i;
 const SAVED_PATH = /^\/club\/saved\/([^/]+)$/;
+const RH_MOOD_PATH = /^\/club\/check-in\/rh(?:\/([^/]+))?$/;
 const HISTORY_DAYS = 30;
 const MIN_SUMMARY_RESPONSES = 5;
+const RH_PERIODS = ['7', '30', '90'];
 const localDate = new Intl.DateTimeFormat('sv-SE', {
   timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
 });
@@ -22,6 +25,20 @@ function checkInMood(input) {
   throw new ApiError(400, 'CLUB_INVALID_MOOD', 'Selecione uma opção de humor ou confirme apenas a presença.');
 }
 
+function shareWithRh(input) {
+  const share = input?.shareWithRh;
+  if (share === undefined) return false;
+  if (typeof share === 'boolean') return share;
+  throw new ApiError(400, 'CLUB_INVALID_SHARING', 'Confirme se deseja compartilhar este registro com o RH.');
+}
+
+function rhDays(url) {
+  const values = new URL(url, 'http://localhost').searchParams.getAll('days');
+  if (!values.length) return HISTORY_DAYS;
+  if (values.length === 1 && RH_PERIODS.includes(values[0])) return Number(values[0]);
+  throw new ApiError(400, 'CLUB_INVALID_PERIOD', 'Selecione um período de 7, 30 ou 90 dias.');
+}
+
 export function createClubRouter(store, { clock = () => new Date() } = {}) {
   return {
     async handleHttp({ req, res, route, user, send, readBody, requireAdmin, logger }) {
@@ -31,18 +48,36 @@ export function createClubRouter(store, { clock = () => new Date() } = {}) {
           return send(res, 200, await store.list(user.role === 'admin'));
         }
         if (route === '/club/check-in' && (method === 'GET' || method === 'PUT')) {
-          const mood = method === 'PUT' ? checkInMood(await readBody(req)) : undefined;
+          const input = method === 'PUT' ? await readBody(req) : null;
           const today = localDate.format(clock());
-          if (mood !== undefined) await store.saveMood(user._id, today, mood);
-          const history = await store.getMoodHistory(user._id, earlierDate(today, HISTORY_DAYS - 1), today);
-          const current = history.find(({ date }) => date === today);
-          return send(res, 200, { today, checkedIn: Boolean(current), todayMood: current?.mood ?? null, history });
+          if (method === 'PUT') await store.saveMood(user._id, today, checkInMood(input), shareWithRh(input));
+          const rows = await store.getMoodHistory(user._id, earlierDate(today, HISTORY_DAYS - 1), today);
+          const current = rows.find(({ date }) => date === today);
+          const history = rows.map(({ date, mood }) => ({ date, mood }));
+          return send(res, 200, {
+            today, checkedIn: Boolean(current), todayMood: current?.mood ?? null, sharedWithRh: Boolean(current?.sharedWithRh), history,
+          });
         }
         if (route === '/club/check-in/summary' && method === 'GET') {
           requireAdmin(user);
           const today = localDate.format(clock());
           const days = await store.getMoodSummary(earlierDate(today, HISTORY_DAYS), today, MIN_SUMMARY_RESPONSES);
           return send(res, 200, { days, minimum: MIN_SUMMARY_RESPONSES });
+        }
+        const rhMood = RH_MOOD_PATH.exec(route);
+        if (rhMood && method === 'GET') {
+          if (!canPerform(user, 'rh', 'clubMoodRead')) {
+            throw new ApiError(403, 'FORBIDDEN', 'Acesso restrito ao acompanhamento de check-ins do RH.');
+          }
+          const days = rhDays(req.url);
+          const today = localDate.format(clock());
+          const firstDay = earlierDate(today, days - 1);
+          if (rhMood[1]) {
+            const result = await store.getRhMoodProfile(clubId(rhMood[1], 'perfil'), firstDay, today);
+            if (!result) throw new ApiError(404, 'CLUB_PROFILE_NOT_FOUND', 'Nenhum check-in compartilhado neste período para este perfil.');
+            return send(res, 200, result);
+          }
+          return send(res, 200, { today, firstDay, days, ...await store.getRhMoodOverview(firstDay, today) });
         }
         if (route === '/club/saved' && method === 'GET') {
           return send(res, 200, { ids: await store.listSaved(user._id) });

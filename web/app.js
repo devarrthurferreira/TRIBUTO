@@ -8,6 +8,7 @@ import { mountMarketingCrm } from './marketing-crm.js';
 import { mountCrmPageBuilder } from './crm-page-builder.js';
 import { mountClub } from './club.js';
 import { CLUB_PATHS, clubPageFromPath } from './club-routes.js';
+import { mountClubRhMood } from './club-rh-mood.js';
 import { mountPeople } from './people.js';
 
 const API = '/v1/platform';
@@ -42,7 +43,7 @@ const viewLabels = {
   desempenho: 'Desempenho e Desenvolvimento', engajamento: 'Clima e Engajamento',
 };
 const clubTitles = {
-  home: 'Clube Maximum', checkIn: 'Check-in diário | Clube Maximum', benefits: 'Benefícios | Clube Maximum',
+  home: 'Clube Maximum', benefits: 'Benefícios | Clube Maximum',
   advantages: 'Vantagens | Clube Maximum', partners: 'Parceiros | Clube Maximum',
 };
 const actionLabels = {
@@ -57,6 +58,7 @@ const actionLabels = {
   whatsappTicketUpdate: 'Alterar chamados do WhatsApp',
   marketingCrmRead: 'Consultar contatos e campanhas do CRM',
   marketingCrmManage: 'Gerenciar contatos e campanhas do CRM',
+  clubMoodRead: 'Consultar check-ins compartilhados com o RH',
 };
 const actionDependencies = {
   workItemCreate: 'workItemRead', workItemUpdate: 'workItemRead',
@@ -82,7 +84,7 @@ function appendEmpty(container, title, description, symbol = '◷') {
   container.append(empty);
 }
 function displayError(error) {
-  if (error?.status === 401) { showAuth(false, '', Boolean(clubPageFromPath(location.pathname))); return; }
+  if (error?.status === 401) { showAuth(false, '', Boolean(clubPageFromPath(location.pathname)) || isRhMoodLink()); return; }
   notice(error?.message || 'Não foi possível concluir a operação.', 'error');
 }
 let noticeTimer;
@@ -250,6 +252,10 @@ function updateChatBadges(notification = { unread: 0 }) {
   $('clubRailTalk').setAttribute('aria-label', unread ? `Talk, mensagens não lidas: ${unread}` : 'Talk');
 }
 
+function isRhMoodLink(query = new URLSearchParams(location.search)) {
+  return location.pathname === `${SECTOR_PREFIX}rh` && query.get('painel') === 'humor';
+}
+
 function showAuth(setupRequired, message = '', preserveRoute = false) {
   club.close();
   people.close();
@@ -262,8 +268,8 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   const query = new URLSearchParams(location.search);
   const preserveMarketingLink = preserveRoute && location.pathname === `${SECTOR_PREFIX}marketing`
     && (['tasks', 'metrics', 'crm'].includes(query.get('painel')) || query.has('atividade'));
-  const preserveClubLink = preserveRoute && clubPageFromPath(location.pathname);
-  if (!preserveMarketingLink && !preserveClubLink && (location.pathname !== '/' || (!preserveRoute && location.hash))) {
+  const preserveClubOrRhLink = preserveRoute && (clubPageFromPath(location.pathname) || isRhMoodLink(query));
+  if (!preserveMarketingLink && !preserveClubOrRhLink && (location.pathname !== '/' || (!preserveRoute && location.hash))) {
     const fragment = preserveRoute && !location.pathname.startsWith(SECTOR_PREFIX) ? location.hash : '';
     history.replaceState(null, '', `/${fragment}`);
   }
@@ -341,6 +347,7 @@ function applySession(session) {
   $('marketingMetricsSummary').hidden = !marketingTasksAllowed;
   $('marketingRecent').hidden = !marketingTasksAllowed;
   $('marketingCrmSummary').hidden = !canUse('marketing', 'marketingCrmRead');
+  $('rhMoodShortcut').hidden = !canUse('rh', 'clubMoodRead');
   $('customerSuccessOverview').hidden = !canUse('sucesso-do-cliente', 'workItemRead');
   $('customerSuccessRestricted').hidden = canUse('sucesso-do-cliente', 'workItemRead');
   document.querySelector('[data-go="tecnologia"]').hidden = !canView('tecnologia');
@@ -450,9 +457,10 @@ function navigate(view, { replace = false } = {}) {
     id: sector.id, label: sector.label, session: state.session, admin: isAdmin(),
     content: $(`view-${sector.id}`), activities: canUse(sector.id, 'workItemRead'),
     crm: sector.id === 'marketing' && canUse('marketing', 'marketingCrmRead'),
+    clubMood: sector.id === 'rh' && canUse('rh', 'clubMoodRead'),
     fiscalDocuments: sector.id === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead'),
     talk: canUse(sector.id, 'sectorTalkRead'), whatsapp: canUse(sector.id, 'whatsappRead'),
-    onPanelChange: sector.id === 'marketing' ? showMarketingPanel : undefined,
+    onPanelChange: { marketing: showMarketingPanel, rh: showRhPanel }[sector.id],
   } : null, { home: state.view === 'overview' });
   $('conteudo').focus({ preventScroll: true });
   if (previousView !== state.view && (peopleArea || state.view === 'club')) window.scrollTo({ top: 0, behavior: 'instant' });
@@ -468,6 +476,23 @@ function navigate(view, { replace = false } = {}) {
   if (state.view === 'company-detail') void loadCompanyDetail().catch(displayError);
   if (state.view !== 'marketing' && canUse(state.view, 'workItemRead')) void loadWorkItems(state.view).catch(displayError);
   return surface;
+}
+
+let rhMoodCleanup;
+
+function showRhPanel(panel) {
+  const moodOpen = panel === 'humor' && canUse('rh', 'clubMoodRead');
+  $('rhOverview').hidden = panel !== 'overview';
+  const root = $('rhMood');
+  root.hidden = !moodOpen;
+  if (moodOpen) {
+    document.title = 'Humor e presença | Recursos Humanos';
+    rhMoodCleanup ??= mountClubRhMood(root, { request, onAuthError: displayError });
+  } else if (rhMoodCleanup) {
+    rhMoodCleanup();
+    rhMoodCleanup = undefined;
+    root.replaceChildren();
+  }
 }
 
 let activeMarketingPanel;
@@ -960,6 +985,7 @@ function renderUserGrants(user, target = $('userGrantOptions')) {
     for (const [action, actionLabel] of Object.entries(actionLabels)) {
       if (action === 'fiscalDocumentsRead' && id !== 'fiscal') continue;
       if (action.startsWith('marketingCrm') && id !== 'marketing') continue;
+      if (action === 'clubMoodRead' && id !== 'rh') continue;
       if (legacyModules.some(module => module.id === id) && /^(sectorTalk|whatsapp)/.test(action)) continue;
       const input = node('input');
       input.type = 'checkbox';
@@ -974,6 +1000,7 @@ function renderUserGrants(user, target = $('userGrantOptions')) {
       for (const action of actions.querySelectorAll('input')) {
         const dependsOn = actionDependencies[action.value];
         action.disabled = (editLevelActions.has(action.value) && level.value === 'view')
+          || (action.value === 'clubMoodRead' && level.value !== 'manage')
           || Boolean(dependsOn && !actions.querySelector(`input[value="${dependsOn}"]`).checked);
       }
     };
@@ -1483,6 +1510,7 @@ function setupEvents() {
     control.addEventListener('click', () => sectorNavigation.selectPanel(control.dataset.marketingGo));
   }
   $('openCustomerSuccessActivities').addEventListener('click', () => sectorNavigation.selectPanel('activities'));
+  $('openRhMood').addEventListener('click', () => sectorNavigation.selectPanel('humor'));
   $('fiscalCompanyLookup').addEventListener('input', renderFiscalCompanyQuickList);
   $('fiscalCompanyFilter').addEventListener('change', () => void loadFiscalDocuments().catch(displayError));
   $('backToCompanies').addEventListener('click', () => navigate(isAdmin() ? `client-${state.selectedCompanyCnpj}` : 'fiscal'));
@@ -1560,4 +1588,4 @@ mountPortal(() => {
   if (state.view === 'overview') openChat();
   else location.assign('/home?talk=1');
 }, () => sectorNavigation.open('whatsapp'));
-request('/session').then(applySession).catch((error) => showAuth(false, error.message, Boolean(clubPageFromPath(location.pathname))));
+request('/session').then(applySession).catch((error) => showAuth(false, error.message, Boolean(clubPageFromPath(location.pathname)) || isRhMoodLink()));

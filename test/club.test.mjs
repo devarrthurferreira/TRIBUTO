@@ -10,15 +10,20 @@ import { createPlatformRouter } from '../src/platform/routes.mjs';
 const CLUB = '/v1/platform/club';
 
 async function withClubRoutes(store, run, options) {
-  const accountFor = role => ({ _id: randomUUID(), role, active: true });
-  const [admin, member] = ['admin', 'member'].map(accountFor);
-  const sessions = [admin, member].map((user, index) => ({
-    userId: user._id, token: String(index + 1).repeat(64), csrfToken: `csrf-${user.role}`,
+  const accountFor = (role, moduleGrants = {}) => ({ _id: randomUUID(), role, active: true, moduleGrants });
+  const admin = accountFor('admin');
+  const member = accountFor('member');
+  const rhManager = accountFor('member', { rh: 'manage' });
+  const rhViewer = accountFor('member', { rh: 'view' });
+  const rhBlocked = accountFor('member', { rh: { level: 'manage', blockedActions: ['clubMoodRead'] } });
+  const accounts = [admin, member, rhManager, rhViewer, rhBlocked];
+  const sessions = accounts.map((user, index) => ({
+    userId: user._id, token: String(index + 1).repeat(64), csrfToken: `csrf-${index}`,
   }));
-  const [adminSession, memberSession] = sessions;
+  const [adminSession, memberSession, rhManagerSession, rhViewerSession, rhBlockedSession] = sessions;
   const platform = {
     async findSession(hash) { return sessions.find(session => sha256(session.token) === hash); },
-    async findUserById(id) { return [admin, member].find(user => user._id === id); },
+    async findUserById(id) { return accounts.find(user => user._id === id); },
   };
   const club = createClubRouter(store, options);
   const router = createPlatformRouter({ store: platform, club });
@@ -37,7 +42,7 @@ async function withClubRoutes(store, run, options) {
       });
       return { status: response.status, result: await response.json() };
     }
-    await run({ request, admin, member, adminSession, memberSession });
+    await run({ request, admin, member, adminSession, memberSession, rhManagerSession, rhViewerSession, rhBlockedSession });
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
@@ -109,17 +114,93 @@ test('Check-in usa a data de São Paulo, permite presença sem humor e limita ca
     const date = '2026-11-26';
     const checkIn = (mood, options) => request(path, memberSession, { method: 'PUT', input: { mood }, ...options });
     assert.equal((await request(path)).status, 401);
-    assert.deepEqual((await request(path, memberSession)).result, { today: date, checkedIn: false, todayMood: null, history: [] });
+    assert.deepEqual((await request(path, memberSession)).result, { today: date, checkedIn: false, todayMood: null, sharedWithRh: false, history: [] });
     assert.equal((await checkIn(5, { csrf: '' })).result.error, 'CSRF');
     for (const mood of [undefined, 0, 6, 2.5, '3', true, {}]) assert.equal((await checkIn(mood)).status, 400);
-    assert.deepEqual((await checkIn(null)).result, { today: date, checkedIn: true, todayMood: null, history: [{ date, mood: null }] });
+    assert.deepEqual((await checkIn(null)).result, { today: date, checkedIn: true, todayMood: null, sharedWithRh: false, history: [{ date, mood: null }] });
     assert.equal((await checkIn(5)).result.todayMood, 5);
     assert.deepEqual((await checkIn(2)).result.history, [{ date, mood: 2 }]);
     assert.equal((await checkIn(null)).result.todayMood, 2);
     assert.deepEqual((await request(path, adminSession)).result.history, []);
     now = new Date('2026-11-27T03:00:00Z');
-    assert.deepEqual((await request(path, memberSession)).result, { today: '2026-11-27', checkedIn: false, todayMood: null, history: [{ date, mood: 2 }] });
+    assert.deepEqual((await request(path, memberSession)).result, { today: '2026-11-27', checkedIn: false, todayMood: null, sharedWithRh: false, history: [{ date, mood: 2 }] });
   }, { clock: () => now });
+});
+
+test('Gestão de RH consulta apenas os check-ins compartilhados no período e respeita revogação e bloqueios', async () => {
+  const checkIns = new Map();
+  const today = '2026-11-26';
+  const yesterday = '2026-11-25';
+  const firstDay = '2026-11-20';
+  let employeeId;
+  function sharedRows(first, last) {
+    assert.equal(last, today);
+    return [...checkIns.values()].filter(row => row.sharedWithRh && row.date >= first && row.date <= last);
+  }
+  const store = {
+    async saveMood(userId, date, mood, sharing = false) {
+      const key = `${userId}:${date}`;
+      checkIns.set(key, { userId, date, mood: mood ?? checkIns.get(key)?.mood ?? null, sharedWithRh: sharing });
+    },
+    async getMoodHistory(userId, first, last) {
+      return [...checkIns.values()].filter(row => row.userId === userId && row.date >= first && row.date <= last)
+        .sort((a, b) => b.date.localeCompare(a.date));
+    },
+    async getRhMoodOverview(first, last) {
+      assert.equal(first, firstDay);
+      const profiles = sharedRows(first, last).map(row => ({
+        id: row.userId, name: 'Colaboradora de teste', checkIns: 1, answers: Number(row.mood !== null), average: row.mood, lastDate: row.date,
+      }));
+      const totals = { checkIns: profiles.length, answers: Number(profiles[0]?.average != null), average: profiles[0]?.average ?? null,
+        counts: [1, 2, 3, 4, 5].map(mood => Number(profiles[0]?.average === mood)) };
+      const trend = profiles.map(({ lastDate: date, checkIns: count, answers, average }) => ({ date, checkIns: count, answers, average }));
+      return { totals, trend, profiles };
+    },
+    async getRhMoodProfile(userId, first, last) {
+      assert.equal(first, '2026-10-28');
+      const history = sharedRows(first, last).filter(row => row.userId === userId).map(({ date, mood }) => ({ date, mood }));
+      return history.length ? { profile: { id: employeeId, name: 'Colaboradora de teste' }, history } : null;
+    },
+  };
+  await withClubRoutes(store, async ({ request, member, adminSession, memberSession, rhManagerSession, rhViewerSession, rhBlockedSession }) => {
+    employeeId = member._id;
+    const overview = '/check-in/rh?days=7';
+    const detail = `/check-in/rh/${employeeId}`;
+    const update = input => request('/check-in', memberSession, { method: 'PUT', input });
+
+    await store.saveMood(employeeId, yesterday, 1);
+    assert.equal((await request(overview)).status, 401);
+    for (const session of [memberSession, rhViewerSession, rhBlockedSession]) {
+      assert.equal((await request(overview, session)).status, 403);
+      assert.equal((await request(detail, session)).status, 403);
+    }
+    for (const query of ['days=', 'days=8', 'days=7&days=30', 'days=90.0']) {
+      assert.equal((await request(`/check-in/rh?${query}`, rhManagerSession)).result.error, 'CLUB_INVALID_PERIOD');
+    }
+    assert.equal((await request('/check-in/rh/id-invalido', rhManagerSession)).status, 400);
+    assert.equal((await request(detail, rhManagerSession)).status, 404);
+    for (const shareWithRh of [null, 1, 'true', {}]) {
+      assert.equal((await update({ mood: 4, shareWithRh })).result.error, 'CLUB_INVALID_SHARING');
+    }
+    assert.equal((await update({ mood: null, shareWithRh: true })).result.sharedWithRh, true);
+    assert.deepEqual((await request(detail, rhManagerSession)).result.history, [{ date: today, mood: null }]);
+    assert.equal((await request(overview, rhManagerSession)).result.totals.average, null);
+    assert.equal((await update({ mood: 4, shareWithRh: true })).result.todayMood, 4);
+    assert.deepEqual((await request(overview, rhManagerSession)).result, {
+      today, firstDay, days: 7, totals: { checkIns: 1, answers: 1, average: 4, counts: [0, 0, 0, 1, 0] },
+      trend: [{ date: today, checkIns: 1, answers: 1, average: 4 }],
+      profiles: [{ id: employeeId, name: 'Colaboradora de teste', checkIns: 1, answers: 1, average: 4, lastDate: today }],
+    });
+    assert.deepEqual((await request(detail, adminSession)).result.history, [{ date: today, mood: 4 }]);
+    assert.equal((await request(`/check-in/rh/${randomUUID()}`, rhManagerSession)).status, 404);
+    const revoked = (await update({ mood: null, shareWithRh: false })).result;
+    assert.equal(revoked.sharedWithRh, false);
+    assert.deepEqual(revoked.history, [{ date: today, mood: 4 }, { date: yesterday, mood: 1 }]);
+    assert.equal((await request(detail, rhManagerSession)).status, 404);
+    assert.deepEqual((await request(overview, rhManagerSession)).result.profiles, []);
+    assert.equal((await update({ mood: 5 })).result.sharedWithRh, false);
+    assert.equal((await request(detail, rhManagerSession)).status, 404);
+  }, { clock: () => new Date('2026-11-26T15:00:00Z') });
 });
 
 test('A visão de humor da equipe exige administrador e solicita apenas dias encerrados com pelo menos cinco respostas', async () => {

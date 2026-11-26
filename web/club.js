@@ -236,7 +236,6 @@ export function mountClub(root, { request, onAuthError }) {
   subnav.innerHTML = `
     <div class="sector-subnav-list">
       <a class="sector-subnav-link" href="${CLUB_PATHS.home}" data-club-page="home"><i class="bi bi-house-door" aria-hidden="true"></i>Início</a>
-      <a class="sector-subnav-link" href="${CLUB_PATHS.checkIn}" data-club-page="checkIn"><i class="bi bi-check2" aria-hidden="true"></i>Check-in diário</a>
       ${Object.entries(sections).map(([key, { label, icon: name }]) => `<a class="sector-subnav-link" href="${CLUB_PATHS[key]}" data-club-page="${key}"><i class="bi bi-${name}" aria-hidden="true"></i>${label}</a>`).join('')}
     </div>
     <button type="button" class="sector-subnav-link club-manage" hidden><i class="bi bi-gear" aria-hidden="true"></i><span>Gerenciar Clube</span></button>`;
@@ -294,7 +293,7 @@ export function mountClub(root, { request, onAuthError }) {
         </div>
       </section>`;
     ui.content.querySelector('.club-hero').after(ui.message, ui.loadState);
-    cleanupCheckIn = mountClubCheckIn(ui.content.querySelector('.club-home-check-in'), { request, onAuthError, isAdmin, compact: true });
+    cleanupCheckIn = mountClubCheckIn(ui.content.querySelector('.club-home-check-in'), { request, onAuthError });
   }
 
   function renderCatalogPage(key) {
@@ -336,9 +335,7 @@ export function mountClub(root, { request, onAuthError }) {
       if (link.dataset.clubPage === page) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     }
-    if (page === 'checkIn') {
-      cleanupCheckIn = mountClubCheckIn(ui.content, { request, onAuthError, isAdmin });
-    } else if (page === 'home') renderHomePage();
+    if (page === 'home') renderHomePage();
     else panel = renderCatalogPage(page);
   }
 
@@ -372,7 +369,7 @@ export function mountClub(root, { request, onAuthError }) {
 
   function render() {
     const manageLabel = managing ? 'Voltar ao Clube' : 'Gerenciar Clube';
-    ui.manage.hidden = !isAdmin || page === 'checkIn';
+    ui.manage.hidden = !isAdmin;
     ui.manage.querySelector('span').textContent = manageLabel;
     ui.manage.setAttribute('aria-label', manageLabel);
     ui.manage.setAttribute('aria-pressed', String(managing));
@@ -629,7 +626,7 @@ export function mountClub(root, { request, onAuthError }) {
   }
 
   async function load(keepMessage = false) {
-    if (!opened || page === 'checkIn') return;
+    if (!opened) return;
     const current = ++generation;
     if (!keepMessage) showMessage('');
     if (!catalog) setLoadState('Carregando o Clube…');

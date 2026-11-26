@@ -5,7 +5,7 @@ import { setWhatsAppNotification } from './portal.js';
 const get = (id) => document.getElementById(id);
 const areas = ['setor', 'talk', 'whatsapp'];
 const titles = { setor: 'Setor', talk: 'Talk', whatsapp: 'WhatsApp' };
-const icons = { overview: 'grid', activities: 'list-task', tasks: 'list-task', metrics: 'graph-up', crm: 'envelope', fiscal: 'receipt', users: 'people', agents: 'broadcast' };
+const icons = { overview: 'grid', activities: 'list-task', tasks: 'list-task', metrics: 'graph-up', crm: 'envelope', humor: 'graph-up', fiscal: 'receipt', users: 'people', agents: 'broadcast' };
 const crmSections = [
   { key: 'subscribers', slug: 'contatos', label: 'Contatos', icon: 'people' },
   { key: 'campaigns', slug: 'campanhas', label: 'Campanhas', icon: 'envelope' },
@@ -36,6 +36,7 @@ function sectionOptions(sector) {
     if (sector.activities) options.push({ id: 'metrics', label: 'Métricas' });
     if (sector.crm) options.push({ id: 'crm', label: 'CRM' });
   }
+  if (sector.clubMood) options.push({ id: 'humor', label: 'Humor e presença' });
   if (sector.fiscalDocuments) options.push({ id: 'fiscal', label: 'Documentos fiscais' });
   if (sector.admin && sector.id === 'tecnologia') {
     options.push({ id: 'users', label: 'Equipe e acessos', href: '/home#users' });
@@ -227,7 +228,7 @@ export function mountSectorNavigation() {
     selectedPanel = sectionOptions(context).some(({ id, href }) => id === candidate && !href) ? candidate : 'overview';
     selectedCrmSection = crmSectionFromQuery(query).section;
     const area = urlArea();
-    if (selectedPanel === 'crm' && area === 'setor' && (priorPanel !== 'crm' || activeArea !== 'setor')
+    if (['crm', 'humor'].includes(selectedPanel) && area === 'setor' && (priorPanel !== selectedPanel || activeArea !== 'setor')
       && !narrowViewport.matches) expanded = true;
     app.dataset.sectorPanel = selectedPanel;
     renderSubnav();
@@ -285,7 +286,7 @@ export function mountSectorNavigation() {
     buttons.setor.focus();
   });
   narrowViewport.addEventListener('change', ({ matches }) => {
-    if (activeArea !== 'setor' || selectedPanel !== 'crm') return;
+    if (activeArea !== 'setor' || !['crm', 'humor'].includes(selectedPanel)) return;
     expanded = !matches;
     showArea(activeArea);
   });

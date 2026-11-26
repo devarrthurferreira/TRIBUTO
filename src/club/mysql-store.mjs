@@ -18,6 +18,14 @@ const SCHEMAS = [`CREATE TABLE IF NOT EXISTS platform_club_catalog (
   PRIMARY KEY (user_id, check_date),
   KEY idx_club_checkins_date (check_date, mood)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+`CREATE TABLE IF NOT EXISTS platform_club_rh_checkins (
+  user_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  check_date DATE NOT NULL,
+  PRIMARY KEY (user_id, check_date),
+  KEY idx_club_rh_checkins_date (check_date),
+  CONSTRAINT fk_club_rh_checkin FOREIGN KEY (user_id, check_date)
+    REFERENCES platform_club_checkins (user_id, check_date) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 `CREATE TABLE IF NOT EXISTS platform_club_saved (
   user_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   item_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -28,6 +36,18 @@ const CATALOG_WITH_PARTNER = `FROM platform_club_catalog item
   LEFT JOIN platform_club_catalog partner ON partner.id = item.partner_id AND partner.deleted_at IS NULL`;
 const VISIBLE_ITEM = 'item.active = 1 AND (item.partner_id IS NULL OR partner.active = 1)';
 const SAVABLE_ITEM = `item.deleted_at IS NULL AND item.collection IN ('benefits', 'partners') AND ${VISIBLE_ITEM}`;
+const SHARED_CHECK_INS = `FROM platform_club_rh_checkins shared
+  INNER JOIN platform_club_checkins checkin ON checkin.user_id = shared.user_id AND checkin.check_date = shared.check_date
+  INNER JOIN platform_users person ON person.id = shared.user_id AND person.active = 1
+  WHERE shared.check_date BETWEEN ? AND ?`;
+
+function moodMetrics(row) {
+  return {
+    checkIns: Number(row.check_ins),
+    answers: Number(row.answers),
+    average: row.average === null ? null : Number(row.average),
+  };
+}
 
 function utcIso(value) {
   if (!value) return null;
@@ -83,14 +103,65 @@ export class ClubMySqlStore {
   }
 
   async getMoodHistory(userId, firstDay, today) {
-    const [rows] = await this.platformStore.pool.execute(`SELECT check_date, mood FROM platform_club_checkins
-      WHERE user_id = ? AND check_date >= ? AND check_date <= ? ORDER BY check_date DESC`, [userId, firstDay, today]);
-    return rows.map(row => ({ date: row.check_date, mood: row.mood }));
+    const [rows] = await this.platformStore.pool.execute(`SELECT checkin.check_date, checkin.mood, shared.user_id IS NOT NULL AS shared_with_rh
+      FROM platform_club_checkins checkin LEFT JOIN platform_club_rh_checkins shared
+        ON shared.user_id = checkin.user_id AND shared.check_date = checkin.check_date
+      WHERE checkin.user_id = ? AND checkin.check_date BETWEEN ? AND ?
+      ORDER BY checkin.check_date DESC`, [userId, firstDay, today]);
+    return rows.map(row => ({ date: row.check_date, mood: row.mood, sharedWithRh: Number(row.shared_with_rh) === 1 }));
   }
 
-  async saveMood(userId, today, mood) {
-    await this.platformStore.pool.execute(`INSERT INTO platform_club_checkins (user_id, check_date, mood)
-      VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE mood = COALESCE(VALUES(mood), mood)`, [userId, today, mood]);
+  async saveMood(userId, today, mood, shareWithRh = false) {
+    await this.platformStore.transaction(async connection => {
+      await connection.execute(`INSERT INTO platform_club_checkins (user_id, check_date, mood)
+        VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE mood = COALESCE(VALUES(mood), mood)`, [userId, today, mood]);
+      if (shareWithRh) {
+        await connection.execute(`INSERT INTO platform_club_rh_checkins (user_id, check_date)
+          VALUES (?, ?) ON DUPLICATE KEY UPDATE check_date = VALUES(check_date)`, [userId, today]);
+      } else {
+        await connection.execute('DELETE FROM platform_club_rh_checkins WHERE user_id = ? AND check_date = ?', [userId, today]);
+      }
+    });
+  }
+
+  async getRhMoodOverview(firstDay, today) {
+    return this.platformStore.transaction(async connection => {
+      const period = [firstDay, today];
+      const [days] = await connection.execute(`SELECT shared.check_date, COUNT(*) AS check_ins,
+        COUNT(checkin.mood) AS answers, ROUND(AVG(checkin.mood), 2) AS average,
+        SUM(checkin.mood = 1) AS mood1, SUM(checkin.mood = 2) AS mood2, SUM(checkin.mood = 3) AS mood3,
+        SUM(checkin.mood = 4) AS mood4, SUM(checkin.mood = 5) AS mood5
+        ${SHARED_CHECK_INS} GROUP BY shared.check_date ORDER BY shared.check_date`, period);
+      const [people] = await connection.execute(`SELECT person.id, person.name, COUNT(*) AS check_ins,
+        COUNT(checkin.mood) AS answers, ROUND(AVG(checkin.mood), 2) AS average, MAX(shared.check_date) AS last_date
+        ${SHARED_CHECK_INS} GROUP BY person.id, person.name ORDER BY person.name, person.id`, period);
+      const totals = { checkIns: 0, answers: 0, average: null, counts: [0, 0, 0, 0, 0] };
+      const trend = days.map(row => {
+        const metrics = moodMetrics(row);
+        totals.checkIns += metrics.checkIns;
+        totals.answers += metrics.answers;
+        [row.mood1, row.mood2, row.mood3, row.mood4, row.mood5].forEach((count, index) => {
+          totals.counts[index] += Number(count);
+        });
+        return { date: row.check_date, ...metrics };
+      });
+      if (totals.answers) {
+        const score = totals.counts.reduce((sum, count, index) => sum + count * (index + 1), 0);
+        totals.average = Math.round(score * 100 / totals.answers) / 100;
+      }
+      const profiles = people.map(row => ({ id: row.id, name: row.name, ...moodMetrics(row), lastDate: row.last_date }));
+      return { totals, trend, profiles };
+    });
+  }
+
+  async getRhMoodProfile(userId, firstDay, today) {
+    const [rows] = await this.platformStore.pool.execute(`SELECT person.id, person.name, shared.check_date, checkin.mood
+      ${SHARED_CHECK_INS} AND shared.user_id = ? ORDER BY shared.check_date DESC`, [firstDay, today, userId]);
+    if (!rows.length) return null;
+    return {
+      profile: { id: rows[0].id, name: rows[0].name },
+      history: rows.map(row => ({ date: row.check_date, mood: row.mood })),
+    };
   }
 
   async getMoodSummary(firstDay, today, minimum) {

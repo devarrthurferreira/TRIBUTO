@@ -30,7 +30,7 @@ test('servidor entrega painel e API na mesma origem com headers de proteção', 
     assert.equal(await sectorHead.text(), '');
     assert.equal((await fetch(`${origin}/setor/inexistente`)).status, 404);
     assert.equal((await fetch(`${origin}/clube/inexistente`)).status, 404);
-    for (const asset of ['/styles.css', '/app.js', '/club-routes.js', '/club-check-in.js', '/club-check-in.css']) {
+    for (const asset of ['/styles.css', '/app.js', '/club-routes.js', '/club-check-in.js', '/club-check-in.css', '/club-rh-mood.js', '/club-rh-mood.css']) {
       assert.equal((await fetch(`${origin}${asset}`)).status, 200);
     }
     for (const [asset, mime] of [['/maximum-logo.png', 'image/png'], ['/maximum-carreiras.webp', 'image/webp'],

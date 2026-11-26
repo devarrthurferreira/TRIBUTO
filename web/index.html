@@ -20,6 +20,7 @@
   <link rel="stylesheet" href="/crm-page-builder.css">
   <link rel="stylesheet" href="/club.css">
   <link rel="stylesheet" href="/club-check-in.css">
+  <link rel="stylesheet" href="/club-rh-mood.css">
   <link rel="stylesheet" href="/people.css">
   <script defer src="/socket.io/socket.io.js"></script>
   <script type="module" src="/app.js"></script>
@@ -260,8 +261,17 @@
           <div id="technologyRestricted" class="module-message" hidden><span aria-hidden="true">⌘</span><div><strong>Atividades com acesso restrito</strong><p>Seu perfil pode acessar Tecnologia. A visualização das atividades é liberada em Equipe e acessos.</p></div></div>
         </section>
 
-        <section class="view" id="view-rh" aria-labelledby="rhTitle" hidden>
-          <div class="page-heading"><div><h1 id="rhTitle">Recursos Humanos</h1><p>Espaço do time de Recursos Humanos.</p></div><span class="status-pill status-planned">Em preparação</span></div>
+        <section class="view" id="view-rh" aria-label="Recursos Humanos" hidden>
+          <div id="rhOverview">
+            <div class="page-heading"><div><h1>Recursos Humanos</h1><p>Espaço do time de Recursos Humanos.</p></div></div>
+            <article id="rhMoodShortcut" class="module-message" hidden>
+              <span aria-hidden="true"><i class="bi bi-graph-up"></i></span>
+              <div><strong>Humor e presença</strong><p>Acompanhe os check-ins compartilhados no Clube Maximum.</p>
+                <button id="openRhMood" class="button button-quiet" type="button">Abrir indicadores</button>
+              </div>
+            </article>
+          </div>
+          <div id="rhMood" hidden></div>
         </section>
 
         <section class="view" id="view-marketing" aria-label="Marketing" hidden>
