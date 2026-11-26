@@ -265,12 +265,11 @@
 .dossier-received h2 { color: var(--dossier-accent); }
 .dossier-protocol { font-variant-numeric: tabular-nums; }
 
-@media (max-width: 700px), (hover: none) and (pointer: coarse) and (max-width: 950px) {
+@media (max-width: 700px), (hover: none) and (pointer: coarse) {
   .dossier-dialog {
     --dossier-entry: translateY(10px);
     inset: 0;
     margin: auto;
-    width: min(calc(100vw - 24px), 540px);
     height: min(calc(100dvh - 24px), 760px);
     border: 1px solid var(--dossier-edge);
     border-radius: 16px;
