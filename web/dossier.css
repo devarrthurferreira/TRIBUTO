@@ -245,6 +245,7 @@
   border: 1px solid var(--dossier-edge);
 }
 .dossier-link-secret .dossier-field { flex: 1; }
+.dossier-link-meta .dossier-muted + .dossier-muted { margin-top: 3px; }
 
 .dossier-public { background: var(--dossier-page); min-height: 100dvh; }
 .dossier-public-bar {
@@ -263,6 +264,7 @@
 .dossier-public-main { width: min(calc(100% - 28px), 900px); margin: clamp(20px, 5vw, 44px) auto 32px; }
 .dossier-received h2, .dossier-received p { margin: 7px 0; }
 .dossier-received h2 { color: var(--dossier-accent); }
+.dossier-received .dossier-button { margin-top: 10px; }
 .dossier-protocol { font-variant-numeric: tabular-nums; }
 
 @media (max-width: 700px), (hover: none) and (pointer: coarse) {

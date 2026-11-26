@@ -1,4 +1,4 @@
-import { el, mountDossierForm } from './dossier-form.js';
+import { button, el, mountDossierForm } from './dossier-form.js';
 
 const status = document.getElementById('dossierPublicStatus');
 const mount = document.getElementById('dossierPublicForm');
@@ -6,11 +6,11 @@ const retry = document.getElementById('dossierPublicRetry');
 let finish;
 let opening = 0;
 
-async function request(method, token, dossier) {
+async function request(method, token, body) {
   const headers = { Accept: 'application/json', Authorization: 'Bearer ' + token };
-  if (dossier) headers['Content-Type'] = 'application/json';
+  if (body) headers['Content-Type'] = 'application/json';
   const response = await fetch('/v1/dossier-link', {
-    method, headers, body: dossier ? JSON.stringify({ dossier }) : undefined,
+    method, headers, body: body ? JSON.stringify(body) : undefined,
     cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
     signal: AbortSignal.timeout(20_000),
   });
@@ -37,7 +37,7 @@ function unavailable(message) {
   setStatus(message || 'Este link não está disponível. Solicite um novo à equipe de Sucesso do Cliente.', true);
 }
 
-async function start() {
+async function start({ focusForm = false } = {}) {
   const version = ++opening;
   const token = location.hash.slice(1);
   finish?.();
@@ -46,8 +46,9 @@ async function start() {
   if (!/^[A-Za-z0-9_-]{43}$/.test(token)) { unavailable(); return; }
   setStatus('Validando o link…');
   retry.hidden = true;
+  let link;
   try {
-    await request('GET', token);
+    link = await request('GET', token);
   } catch (failure) {
     if (opening !== version) return;
     if ([400, 401, 403, 404, 409, 410].includes(failure.status)) unavailable(failure.message);
@@ -58,12 +59,14 @@ async function start() {
     return;
   }
   if (opening !== version) return;
+  const reusable = link.mode === 'reusable';
+  const submissionId = reusable ? crypto.randomUUID() : undefined;
   setStatus('');
   mount.hidden = false;
   finish = mountDossierForm(mount, {
     submitLabel: 'Enviar dossiê à Maximum',
     async submit(dossier) {
-      try { return await request('POST', token, dossier); }
+      try { return await request('POST', token, reusable ? { dossier, submissionId } : { dossier }); }
       catch (failure) {
         if (opening === version && [401, 403, 404, 410].includes(failure.status)) {
           unavailable(failure.message);
@@ -85,13 +88,19 @@ async function start() {
         protocol.prepend(el('strong', '', 'Protocolo '));
         confirmation.append(protocol);
       }
+      if (reusable) {
+        const next = button('Preencher outro dossiê', true);
+        next.addEventListener('click', () => { void start({ focusForm: true }); });
+        confirmation.append(next);
+      }
       status.replaceChildren(confirmation);
       status.classList.remove('dossier-error');
       status.hidden = false;
-      history.replaceState(null, '', location.pathname);
+      if (!reusable) history.replaceState(null, '', location.pathname);
       title.focus();
     },
   });
+  if (focusForm) mount.querySelector('.dossier-step-heading h2')?.focus();
 }
 
 document.querySelector('.skip-link')?.addEventListener('click', (event) => {

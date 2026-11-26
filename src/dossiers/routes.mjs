@@ -3,6 +3,7 @@ import { validCnpj } from '../platform/brazilian-documents.mjs';
 import { canPerformDossier } from '../platform/policy.mjs';
 import { renderDossierHtml } from './documents.mjs';
 import { normalizeDossier, normalizeFees } from './fields.mjs';
+import { importDossiers } from './import.mjs';
 
 const PRIVATE_ROOT = '/dossiers';
 const PUBLIC_ENDPOINT = '/v1/dossier-link';
@@ -10,6 +11,7 @@ const UUID = '[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}';
 const DOSSIER_ROUTE = new RegExp(`^${PRIVATE_ROOT}/(${UUID})(/document|/fees|/fees/send|/archive|/restore)?$`);
 const LINK_ROUTE = new RegExp(`^${PRIVATE_ROOT}/links/(${UUID})$`);
 const TOKEN = /^Bearer ([A-Za-z0-9_-]{43})$/;
+const SUBMISSION_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const BODY_LIMIT = 700_000;
 
 function requireAction(user, action) {
@@ -26,7 +28,7 @@ function expectFields(body, names) {
 }
 
 function linkOptions(body) {
-  const { companyCnpj, label = '', expiresInHours = 72 } = expectFields(body, ['companyCnpj', 'label', 'expiresInHours']);
+  const { companyCnpj, label = '', expiresInHours = 72, mode = 'single' } = expectFields(body, ['companyCnpj', 'label', 'expiresInHours', 'mode']);
   let cnpj = null;
   if (companyCnpj !== undefined && companyCnpj !== null && companyCnpj !== '') {
     cnpj = typeof companyCnpj === 'string' && companyCnpj.trim().toUpperCase().replace(/[./-]/g, '');
@@ -38,7 +40,10 @@ function linkOptions(body) {
   if (!Number.isSafeInteger(expiresInHours) || expiresInHours < 1 || expiresInHours > 168) {
     throw new ApiError(400, 'DOSSIER_LINK_EXPIRATION', 'Defina uma validade de 1 a 168 horas.');
   }
-  return { companyCnpj: cnpj, label: label.trim(), expiresInHours };
+  if (mode !== 'single' && mode !== 'reusable') {
+    throw new ApiError(400, 'DOSSIER_LINK_MODE', 'Escolha se o link pode receber um ou vários dossiês.');
+  }
+  return { companyCnpj: cnpj, label: label.trim(), expiresInHours, mode };
 }
 
 function checkedRevision(revision) {
@@ -88,6 +93,9 @@ export function createDossierRouter(store) {
       const includeFees = canPerformDossier(user, 'dossierFees');
       const detail = async id => ({ dossier: await store.read(user, id, { includeFees }) });
       try {
+        if (route === PRIVATE_ROOT + '/import' && method === 'POST') {
+          return await importDossiers({ req, res, user, send, readBody, store });
+        }
         if (route === PRIVATE_ROOT && method === 'GET') {
           return send(res, 200, await store.list(user, listOptions(req)));
         }
@@ -192,8 +200,11 @@ export function createPublicDossierRouter(store, { logger = console } = {}) {
       if (!token) throw new ApiError(410, 'DOSSIER_LINK_UNAVAILABLE', 'Este link está indisponível, expirado ou já foi utilizado.');
       const link = await store.publicLink(token);
       if (req.method === 'GET') return sendPublic(res, 200, link);
-      const { dossier } = expectFields(await readPublicJson(req), ['dossier']);
-      return sendPublic(res, 201, await store.submitFromLink(token, normalizeDossier(dossier)));
+      const { dossier, submissionId } = expectFields(await readPublicJson(req), ['dossier', 'submissionId']);
+      if (submissionId !== undefined && (typeof submissionId !== 'string' || !SUBMISSION_ID.test(submissionId))) {
+        throw new ApiError(400, 'DOSSIER_SUBMISSION_ID', 'Recarregue o formulário antes de enviar.');
+      }
+      return sendPublic(res, 201, await store.submitFromLink(token, normalizeDossier(dossier), submissionId));
     } catch (error) {
       return sanitizedFailure(error, logger);
     }

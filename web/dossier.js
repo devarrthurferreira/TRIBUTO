@@ -51,7 +51,7 @@ function copyLink(control, status) {
   try {
     if (!navigator.clipboard?.writeText) throw new Error();
     return navigator.clipboard.writeText(control.value).then(() => {
-      setNotice(status, 'Link copiado. Envie-o somente à pessoa responsável pelo preenchimento.');
+      setNotice(status, 'Link copiado. Compartilhe apenas com quem vai preencher.');
     }).catch(() => {
       control.focus();
       control.select();
@@ -437,10 +437,15 @@ export function mountDossierAdmin(root, {
     const item = el('article', 'dossier-list-item');
     const title = el('div');
     const expired = Date.parse(link.expiresAt) <= Date.now();
-    const state = link.revokedAt ? 'Revogado' : link.usedAt ? 'Utilizado' : expired ? 'Expirado' : 'Ativo';
+    const reusable = link.mode === 'reusable';
+    const state = link.revokedAt ? 'Revogado' : !reusable && link.usedAt ? 'Utilizado' : expired ? 'Expirado' : 'Ativo';
     title.append(el('h3', '', link.label || 'Link de preenchimento'),
       el('p', 'dossier-muted', link.companyCnpj ? 'CNPJ vinculado · ' + documentLabel(link.companyCnpj) : 'Sem empresa vinculada'));
-    const meta = el('p', 'dossier-muted', state + ' · Validade ' + dateLabel(link.expiresAt));
+    const count = link.submissionCount ?? (link.usedAt ? 1 : 0);
+    const meta = el('div', 'dossier-link-meta');
+    meta.append(el('p', 'dossier-muted', reusable ? 'Vários preenchimentos' : 'Uso único'),
+      el('p', 'dossier-muted', state + ' · Validade ' + dateLabel(link.expiresAt)));
+    if (count) meta.append(el('p', 'dossier-muted', count === 1 ? '1 dossiê enviado' : count + ' dossiês enviados'));
     item.append(title, meta);
     if (state === 'Ativo') {
       const revoke = button('Revogar link');
@@ -483,15 +488,19 @@ export function mountDossierAdmin(root, {
     for (const item of options || []) {
       company.control.append(new Option(item.name + ' · ' + documentLabel(item.cnpj), item.cnpj));
     }
+    const mode = input('Tipo de link', { type: 'select', name: 'mode' });
+    mode.control.append(new Option('Uso único', 'single'), new Option('Vários preenchimentos', 'reusable'));
     const expiration = input('Validade (horas)', { type: 'number', name: 'expiresInHours', min: 1, max: 168, value: '24', required: true });
     const createLink = button('Gerar link', true, true);
     const fieldList = el('div', 'dossier-fields');
-    fieldList.append(title.wrapper, company.wrapper, expiration.wrapper);
+    fieldList.append(title.wrapper, company.wrapper, mode.wrapper, expiration.wrapper);
     form.append(fieldList, createLink);
     const secretZone = el('div', 'dossier-link-secret');
     const historyTitle = el('h3', '', 'Links gerados');
     const linkList = el('div', 'dossier-admin-list');
-    panel.append(el('p', 'dossier-muted', 'Cada link permite um envio e expira no prazo selecionado. Copie-o quando aparecer.'), form, secretZone, historyTitle, linkList);
+    panel.append(el('p', 'dossier-muted',
+      'Compartilhe o link pelo celular para receber novos dossiês. O acesso é exclusivo para preenchimento e expira no prazo selecionado.'),
+    form, secretZone, historyTitle, linkList);
 
     async function refresh() {
       try {
@@ -508,7 +517,7 @@ export function mountDossierAdmin(root, {
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (busy) return;
-      const body = { expiresInHours: Number(expiration.control.value) };
+      const body = { mode: mode.control.value, expiresInHours: Number(expiration.control.value) };
       if (title.control.value.trim()) body.label = title.control.value.trim();
       if (company.control.value) body.companyCnpj = company.control.value;
       changeBusy(true);
