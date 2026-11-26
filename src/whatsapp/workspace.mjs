@@ -127,7 +127,7 @@ export function createWhatsAppWorkspace({ pool, whatsAppStore, platformStore }) 
     }
     if (route === '/whatsapp/settings' && method === 'GET') {
       const users = canManage ? (await platformStore.listUsers()).filter(item => canPerform(item, sector, 'whatsappRead'))
-        .map(({ name, email, role }) => ({ name, email, role })) : [];
+        .map(({ name, email, role, tenureYears = 0 }) => ({ name, email, role, tenureYears })) : [];
       return { canManage, users, roles: [
         { name: 'Administrador', description: 'Configura conexões, tags e controle de ausência.' },
         { name: 'Equipe do setor', description: 'Consulta, resposta e gestão de chamados dependem das permissões do setor.' },

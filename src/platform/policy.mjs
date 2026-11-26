@@ -1,3 +1,5 @@
+import { completedTenureYears } from './employment.mjs';
+
 const MODULE_ACTIONS = Object.freeze({
   workItemRead: 'view',
   workItemCreate: 'edit',
@@ -91,5 +93,6 @@ export function publicUser(user) {
   if (!user) return null;
   const { _id, name, username, email, role, active, companyCnpjs, moduleGrants, createdAt } = user;
   return { id: _id, name, ...(username ? { username } : {}), email, role, active, accessPending: user.accessPending ?? !hasLoginCredentials(user),
-    companyCnpjs: companyCnpjs || [], moduleGrants: moduleGrants || {}, createdAt };
+    companyCnpjs: companyCnpjs || [], moduleGrants: moduleGrants || {}, createdAt,
+    tenureYears: user.tenureYears ?? completedTenureYears(user.admissionDate) };
 }

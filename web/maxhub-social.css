@@ -164,7 +164,7 @@ textarea.hub-input { resize: vertical; }
 .hub-composer-fields-fixed { grid-template-columns: minmax(0, 1fr); flex-basis: min(100%, 180px); max-width: min(100%, 240px); }
 .hub-composer-fields > :last-child { grid-column: 1 / -1; }
 .hub-composer-fields select { text-overflow: ellipsis; }
-.hub-composer-tools, .hub-profile-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.hub-composer-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
 .hub-composer-toolbar { padding-top: 10px; border-top: 1px solid var(--hub-edge); }
 .hub-composer-attach { width: 38px; padding: 0; font-size: 16px; }
 .hub-composer-hint, .hub-composer-count { color: var(--muted); font-size: 11px; }
@@ -196,7 +196,7 @@ textarea.hub-input { resize: vertical; }
   box-shadow: 0 8px 25px var(--portal-aura, #64203920);
 }
 .hub-mention-status { padding: 6px 8px; color: var(--muted); font-size: 11px; }
-.hub-mention-list, .hub-comment-list, .hub-ranking-list, .hub-profile-badge-list, .hub-history-list, .hub-mentions { margin: 0; padding: 0; list-style: none; }
+.hub-mention-list, .hub-comment-list, .hub-ranking-list, .hub-history-list, .hub-mentions { margin: 0; padding: 0; list-style: none; }
 .hub-mention-list { display: grid; gap: 3px; max-height: min(220px, 36dvh); overflow: auto; }
 .hub-mention-person {
   display: grid;
@@ -347,25 +347,8 @@ textarea.hub-input { resize: vertical; }
 .hub-rule-row dd { margin: 0; }
 .hub-rules { margin: 0; }
 .hub-history-amount, .hub-rule-row dd { color: var(--hub-gold); font-weight: 700; }
-.hub-profile { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); align-items: start; gap: 12px; }
-.hub-profile-overview { display: flex; grid-column: 1 / -1; flex-wrap: wrap; align-items: center; gap: clamp(8px, 2cqi, 22px); background: linear-gradient(126deg, var(--hub-hover), var(--hub-surface) 70%); }
-.hub-profile-name { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
-.hub-profile-name h2 { margin-bottom: 5px; color: var(--hub-accent); font-size: clamp(13px, 2cqi, 20px); }
-.hub-profile-name strong { font-size: clamp(16px, 3cqi, 30px); }
-.hub-profile-name p { margin-top: 3px; color: var(--muted); font-size: 12px; }
-.hub-profile-points { display: grid; justify-items: center; gap: 2px; min-width: 72px; padding: 8px 11px; border-radius: 10px; background: var(--hub-gold-soft); color: var(--hub-gold); font-size: 11px; }
-.hub-profile-points strong { font-size: 18px; }
-.hub-profile-form, .hub-profile-badges { display: grid; min-width: 0; gap: 12px; }
-.hub-profile-form > .hub-btn { justify-self: start; }
-.hub-profile-count, .hub-profile-note { color: var(--muted); font-size: 11px; }
-.hub-profile-count { margin-top: -7px; }
-.hub-profile-badge-list { display: grid; gap: 6px; }
-.hub-profile-badge { display: flex; align-items: start; gap: 8px; min-width: 0; padding: 8px; border: 1px solid var(--hub-edge); border-radius: 9px; background: var(--hub-floor); }
-.hub-profile-badge-mark { display: grid; flex: 0 0 31px; height: 31px; place-items: center; border-radius: 8px; background: var(--hub-gold-soft); color: var(--hub-gold); }
-.hub-profile-badge strong { font-size: 12px; overflow-wrap: anywhere; }
-.hub-profile-badge p { margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
 @container (max-width: 680px) {
-  .hub-feed-layout, .hub-history-grid, .hub-profile { grid-template-columns: minmax(0, 1fr); }
+  .hub-feed-layout, .hub-history-grid { grid-template-columns: minmax(0, 1fr); }
   .hub-rank-aside { position: static; }
 }
 @container (max-width: 355px) {

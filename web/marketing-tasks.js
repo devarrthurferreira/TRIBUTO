@@ -1,3 +1,5 @@
+import { appendPersonName, personOptionLabel } from './person-name.js';
+
 const MARKETING = 'marketing';
 const STATUSES = { open: 'A fazer', in_progress: 'Em andamento', done: 'Concluída' };
 const PRIORITIES = { low: 'Baixa', normal: 'Normal', high: 'Alta', urgent: 'Urgente' };
@@ -40,7 +42,7 @@ function icon(name) {
 
 function labelIcon(name, label) {
   const element = node('span');
-  element.append(icon(name), document.createTextNode(label));
+  element.append(icon(name), label);
   return element;
 }
 
@@ -179,7 +181,9 @@ function makeTaskCard(item, { assignees, companies, today, openDetails }) {
   }
   const footer = node('span', 'mt-card-footer');
   const assignee = assignees.find(({ id }) => id === item.assigneeId);
-  footer.append(labelIcon('person', assignee?.name || (item.assigneeId ? 'Responsável indisponível' : 'Sem responsável')));
+  const assignedName = assignee ? appendPersonName(node('span'), assignee.name, assignee.tenureYears)
+    : item.assigneeId ? 'Responsável indisponível' : 'Sem responsável';
+  footer.append(labelIcon('person', assignedName));
   if (item.dueAt) {
     const due = labelIcon('clock-history', formatDate(item.dueAt));
     if (item.status !== 'done' && item.dueAt < today) due.classList.add('mt-overdue');
@@ -323,7 +327,7 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
   function syncFilters() {
     const tags = [...new Set([...items.values()].flatMap(item => item.tags || []))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
     options(ui.tag, 'Todas', tags.map(tag => [tag, tag]), ui.tag.value);
-    options(ui.assignee, 'Todos', [['unassigned', 'Sem responsável'], ...teammates.map(({ id, name }) => [id, name])], ui.assignee.value);
+    options(ui.assignee, 'Todos', [['unassigned', 'Sem responsável'], ...teammates.map(person => [person.id, personOptionLabel(person)])], ui.assignee.value);
   }
 
   function renderBoard() {
@@ -461,7 +465,10 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
       const text = event.action === 'create' ? 'Criou a tarefa'
         : status ? `Alterou a situação para ${status.toLocaleLowerCase('pt-BR')}${fields.length ? ` e atualizou ${fields.join(', ')}` : ''}`
         : fields.length ? `Alterou ${fields.join(', ')}` : 'Atualizou a tarefa';
-      entry.append(node('strong', '', text), node('small', '', [event.actorName, formatDate(event.at, true)].filter(Boolean).join(' · ')));
+      const who = appendPersonName(node('small'), event.actorName, event.actorTenureYears);
+      const when = formatDate(event.at, true);
+      if (when) who.append(event.actorName ? ` · ${when}` : when);
+      entry.append(node('strong', '', text), who);
       ui.historyEntries.append(entry);
     }
   }
@@ -470,7 +477,7 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
     for (const [name, values] of [['status', STATUSES], ['priority', PRIORITIES]]) {
       field(name).replaceChildren(...Object.entries(values).map(([value, label]) => new Option(label, value)));
     }
-    const assigneeOptions = teammates.map(({ id, name }) => [id, name]);
+    const assigneeOptions = teammates.map(person => [person.id, personOptionLabel(person)]);
     if (item?.assigneeId && !assigneeOptions.some(([id]) => id === item.assigneeId)) assigneeOptions.push([item.assigneeId, 'Responsável indisponível']);
     options(field('assigneeId'), 'Sem responsável', assigneeOptions);
     const companyOptions = listCompanies().map(company => [company.cnpj, companyLabel(company)]);

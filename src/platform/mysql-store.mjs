@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { completedTenureYears } from './employment.mjs';
 import { INTERNAL_WORK_ITEM_MODULES, MODULES, canPerform } from './policy.mjs';
 import { MarketingMetricsMySqlStore } from '../marketing/metrics-mysql.mjs';
 
@@ -28,6 +29,7 @@ function user(row) {
   if (!row) return null;
   return {
     _id: row.id, name: row.name, username: row.username ?? null, email: row.email,
+    admissionDate: row.admission_date ?? null, tenureYears: completedTenureYears(row.admission_date),
     passwordHash: row.password_hash, role: row.role, active: bool(row.active),
     accessPending: row.access_pending === undefined
       ? !row.password_hash || !(row.email || row.username)
@@ -36,6 +38,10 @@ function user(row) {
     createdAt: sqlDate(row.created_at), updatedAt: sqlDate(row.updated_at), passwordChangedAt: sqlDate(row.password_changed_at)
   };
 }
+
+const USER_ACCOUNT = `FROM platform_users u
+  LEFT JOIN platform_user_profiles p ON p.user_id = u.id
+  LEFT JOIN platform_user_employment employment ON employment.user_id = u.id`;
 function company(row) {
   if (!row) return null;
   return { _id: row.id, cnpj: row.cnpj, name: row.name, active: bool(row.active), createdAt: sqlDate(row.created_at) };
@@ -105,6 +111,10 @@ const TABLES = [
     profile_json LONGTEXT NOT NULL,
     UNIQUE KEY uniq_platform_profile_username (username),
     UNIQUE KEY uniq_platform_profile_cpf (cpf)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_user_employment (
+    user_id CHAR(36) NOT NULL PRIMARY KEY,
+    admission_date DATE NOT NULL
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS platform_companies (
     cnpj CHAR(14) NOT NULL PRIMARY KEY, id CHAR(36) NOT NULL,
@@ -248,27 +258,27 @@ export class PlatformMySqlStore {
     [record._id, record.name, record.email ?? null, record.passwordHash ?? null, record.role, Number(record.active), json(record.companyCnpjs), json(record.moduleGrants), record.createdAt]);
   }
   async findUserByEmail(email) {
-    return user(await this.one(`SELECT u.*, p.username FROM platform_users u
-      LEFT JOIN platform_user_profiles p ON p.user_id = u.id WHERE u.email = ?`, [email]));
+    return user(await this.one(`SELECT u.*, p.username, employment.admission_date
+      ${USER_ACCOUNT} WHERE u.email = ?`, [email]));
   }
   async findUserByUsername(username) {
-    return user(await this.one(`SELECT u.*, p.username FROM platform_user_profiles p
-      INNER JOIN platform_users u ON u.id = p.user_id WHERE p.username = ?`, [username]));
+    return user(await this.one(`SELECT u.*, p.username, employment.admission_date
+      ${USER_ACCOUNT} WHERE p.username = ?`, [username]));
   }
   async findUserById(id) {
-    return user(await this.one(`SELECT u.*, p.username FROM platform_users u
-      LEFT JOIN platform_user_profiles p ON p.user_id = u.id WHERE u.id = ?`, [id]));
+    return user(await this.one(`SELECT u.*, p.username, employment.admission_date
+      ${USER_ACCOUNT} WHERE u.id = ?`, [id]));
   }
   async getUserProfile(id) {
-    const row = await this.one('SELECT cpf, profile_json FROM platform_user_profiles WHERE user_id = ?', [id]);
-    return row ? { ...parse(row.profile_json, {}), cpf: row.cpf } : null;
+    const row = await this.one(`SELECT p.cpf, p.profile_json, employment.admission_date ${USER_ACCOUNT} WHERE u.id = ?`, [id]);
+    if (!row?.profile_json && !row?.admission_date) return null;
+    return { ...parse(row.profile_json, {}), cpf: row.cpf, ...(row.admission_date ? { admissionDate: row.admission_date } : {}) };
   }
   async listUsers() {
     return (await this.rows(`SELECT u.id, u.name, u.email, u.role, u.active, u.company_cnpjs, u.module_grants,
-      u.created_at, u.updated_at, u.password_changed_at, p.username,
+      u.created_at, u.updated_at, u.password_changed_at, p.username, employment.admission_date,
       (COALESCE(u.password_hash, '') = '' OR (COALESCE(u.email, '') = '' AND COALESCE(p.username, '') = '')) AS access_pending
-      FROM platform_users u
-      LEFT JOIN platform_user_profiles p ON p.user_id = u.id ORDER BY u.name`)).map((row) => {
+      ${USER_ACCOUNT} ORDER BY u.name`)).map((row) => {
       const result = user(row);
       delete result.passwordHash;
       return result;
@@ -276,7 +286,7 @@ export class PlatformMySqlStore {
   }
   async createUser(record, actorId) {
     if (record.active && (!record.passwordHash || !(record.email || record.username))) throw userConflict('USER_ACCESS_PENDING');
-    const { cpf, ...profile } = record.profile || {};
+    const { cpf, admissionDate, ...profile } = record.profile || {};
     for (let attempt = 1; attempt <= 999; attempt += 1) {
       const username = record.username ? (attempt === 1 ? record.username : `${record.username}${attempt}`) : null;
       try {
@@ -284,6 +294,9 @@ export class PlatformMySqlStore {
           await this.insertUser(connection, record);
           if (record.profile || username) await connection.execute('INSERT INTO platform_user_profiles (user_id, username, cpf, profile_json) VALUES (?, ?, ?, ?)',
             [record._id, username, cpf ?? null, json(profile)]);
+          if (admissionDate) {
+            await connection.execute('INSERT INTO platform_user_employment (user_id, admission_date) VALUES (?, ?)', [record._id, admissionDate]);
+          }
           await this.insertAudit(connection, 'user.create', actorId, record._id, { role: record.role });
         });
         return username;
@@ -302,8 +315,8 @@ export class PlatformMySqlStore {
     const values = entries.map(([key, value]) => key === 'companyCnpjs' || key === 'moduleGrants' ? json(value) : key === 'active' ? Number(value) : value);
     try {
       return await this.transaction(async connection => {
-        const [[row]] = await connection.execute(`SELECT u.*, p.username FROM platform_users u
-          LEFT JOIN platform_user_profiles p ON p.user_id = u.id WHERE u.id = ? FOR UPDATE`, [id]);
+        const [[row]] = await connection.execute(`SELECT u.*, p.username, employment.admission_date
+          ${USER_ACCOUNT} WHERE u.id = ? FOR UPDATE`, [id]);
         if (!row) return null;
         const previous = user(row);
         const passwordChanged = Object.hasOwn(changes, 'passwordHash');
@@ -322,6 +335,15 @@ export class PlatformMySqlStore {
         }
         await connection.execute(`UPDATE platform_users SET ${assignments.join(', ')} WHERE id = ?`, [...params, id]);
         if (passwordChanged) await connection.execute('DELETE FROM platform_sessions WHERE user_id = ?', [id]);
+        if (Object.hasOwn(changes, 'admissionDate')) {
+          if (changes.admissionDate === null) {
+            await connection.execute('DELETE FROM platform_user_employment WHERE user_id = ?', [id]);
+          } else {
+            await connection.execute(`INSERT INTO platform_user_employment (user_id, admission_date) VALUES (?, ?)
+              ON DUPLICATE KEY UPDATE admission_date = VALUES(admission_date)`, [id, changes.admissionDate]);
+          }
+          account.tenureYears = completedTenureYears(account.admissionDate);
+        }
         return { ...account, updatedAt: updatedAt.toISOString(),
           ...(passwordChanged ? { passwordChangedAt: updatedAt.toISOString() } : {}) };
       });
@@ -412,14 +434,16 @@ export class PlatformMySqlStore {
   }
   async getWorkItem(id) { return workItem(await this.one(`${WORK_ITEM_SELECT} WHERE task.id = ?`, [id])); }
   async listWorkItemHistory(id) {
-    const rows = await this.rows(`SELECT audit.action, audit.at, audit.detail_json, people.name
+    const rows = await this.rows(`SELECT audit.action, audit.at, audit.detail_json, people.name, employment.admission_date
       FROM platform_audit audit LEFT JOIN platform_users people ON people.id = audit.actor_id
+      LEFT JOIN platform_user_employment employment ON employment.user_id = people.id
       WHERE audit.subject = ? AND audit.action IN ('work_item.create', 'work_item.update')
       ORDER BY audit.at DESC, audit.id DESC LIMIT 30`, [id]);
     return rows.map(row => {
       const detail = parse(row.detail_json, {});
       return { action: row.action === 'work_item.create' ? 'create' : 'update', at: sqlDate(row.at),
-        actorName: row.name || 'Usuário indisponível', fields: detail.fields || [], ...(detail.status ? { status: detail.status } : {}) };
+        actorName: row.name || 'Usuário indisponível', actorTenureYears: completedTenureYears(row.admission_date),
+        fields: detail.fields || [], ...(detail.status ? { status: detail.status } : {}) };
     });
   }
   async createWorkItem(item) {

@@ -1,7 +1,7 @@
 import { destroyChat, initChat, openChat } from './chat.js';
 import { mountPortal, setChatNotification } from './portal.js';
 import { crmSectionFromQuery, mountSectorNavigation } from './sectors.js';
-import { mountUserWizard } from './user-wizard.js';
+import { latestAdmissionDate, mountUserWizard } from './user-wizard.js';
 import { mountMarketingTasks } from './marketing-tasks.js';
 import { mountMarketingMetrics } from './marketing-metrics.js';
 import { mountMarketingCrm } from './marketing-crm.js';
@@ -10,6 +10,8 @@ import { mountClub } from './club.js';
 import { CLUB_PATHS, clubPageFromPath } from './club-routes.js';
 import { mountClubRhMood } from './club-rh-mood.js';
 import { MAXHUB_PATH, isMaxHubPath, legacyMaxHubUrl, mountMaxHub } from './maxhub.js';
+
+import { appendPersonName } from './person-name.js';
 
 const API = '/v1/platform';
 const DASHBOARD_PATH = '/home';
@@ -302,6 +304,19 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   $('authForm').dataset.setup = String(setupRequired);
   formError('authError', message);
 }
+function renderSessionNames(user) {
+  for (const [id, name] of [
+    ['profileName', user.name || user.email],
+    ['profileShortName', firstName(user.name)],
+    ['greetingName', firstName(user.name)],
+  ]) {
+    const label = $(id);
+    label.replaceChildren();
+    appendPersonName(label, name, user.tenureYears);
+  }
+  $('profileInitials').textContent = initials(user.name);
+}
+
 function applySession(session) {
   if (!session?.user) { showAuth(!!session?.setupRequired, '', true); return; }
   const view = viewFromLocation();
@@ -317,13 +332,10 @@ function applySession(session) {
   }
   state.session = session;
   $('authView').hidden = true;
-  $('profileName').textContent = session.user.name || session.user.email;
+  renderSessionNames(session.user);
   $('profileRole').textContent = isAdmin() ? 'Administrador' : 'Equipe';
-  $('profileInitials').textContent = initials(session.user.name);
   $('profileAvatar').hidden = true;
   $('profileAvatar').removeAttribute('src');
-  $('profileShortName').textContent = firstName(session.user.name);
-  $('greetingName').textContent = firstName(session.user.name);
   $('todayLabel').textContent = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Sao_Paulo' }).format(new Date());
   for (const button of document.querySelectorAll('.nav-link')) {
     const view = button.dataset.view;
@@ -800,26 +812,33 @@ function renderFiscalCompanyQuickList() {
 }
 function openCompanyDialog(company) {
   if (!isAdmin()) return;
+  const dialog = $('companyDialog');
+  if (dialog.open) return;
   const form = $('companyForm');
   form.reset();
   form.dataset.company = company?.cnpj || '';
-  $('companyDialogTitle').textContent = company ? 'Editar empresa' : 'Nova empresa';
+  dialog.classList.toggle('company-create-drawer', !company);
+  $('companyDialogTitle').textContent = company ? 'Editar empresa' : 'Adicionar Cliente';
+  $('companySaveButton').textContent = company ? 'Salvar alterações' : 'Salvar cliente';
   $('companyName').value = company?.name || '';
   $('companyCnpj').value = company ? cnpjLabel(company.cnpj) : '';
   $('companyCnpj').readOnly = Boolean(company);
   $('companyStatusField').hidden = !company;
   $('companyStatus').value = String(company?.active !== false);
   formError('companyError', '');
-  $('companyDialog').showModal();
+  dialog.showModal();
 }
 
 async function createCompany(event) {
   event.preventDefault();
-  if (!isAdmin()) return;
+  const button = $('companySaveButton');
+  if (!isAdmin() || button.disabled) return;
+  const dialog = $('companyDialog');
+  const closeButtons = dialog.querySelectorAll('.close-dialog');
   formError('companyError', '');
   const editCnpj = $('companyForm').dataset.company;
-  const button = event.submitter || $('companyForm').querySelector('[type="submit"]');
-  withBusy(button, true);
+  withBusy(button, true, 'Salvando…');
+  for (const closeButton of closeButtons) closeButton.disabled = true;
   try {
     const name = $('companyName').value.trim();
     const companyResult = await request(editCnpj ? `/companies/${editCnpj}` : '/companies', editCnpj
@@ -832,9 +851,12 @@ async function createCompany(event) {
   } catch (error) {
     formError('companyError', error.message);
     return;
-  } finally { withBusy(button, false); }
-  $('companyDialog').close();
-  notice(editCnpj ? 'Cadastro atualizado.' : 'Empresa cadastrada.');
+  } finally {
+    withBusy(button, false);
+    for (const closeButton of closeButtons) closeButton.disabled = false;
+  }
+  dialog.close();
+  notice(editCnpj ? 'Cadastro atualizado.' : 'Cliente cadastrado.');
   void Promise.all([loadCompanies(), loadDashboard()]).catch(displayError);
 }
 
@@ -877,7 +899,7 @@ function renderClientAccess() {
     const row = node('li', 'list-row client-access-row');
     const main = node('div', 'list-row-main');
     const info = node('div', 'client-access-info');
-    info.append(node('strong', '', member.name));
+    info.append(appendPersonName(node('strong'), member.name, member.tenureYears));
     if (member.email) info.append(node('small', '', member.email));
     if (!member.active) info.append(node('small', '', 'Usuário inativo'));
     main.append(node('span', 'row-avatar', initials(member.name)), info);
@@ -976,7 +998,7 @@ async function loadUsers() {
     const main = node('div', 'list-row-main');
     const avatar = node('span', 'row-avatar teal', initials(user.name));
     const info = node('div');
-    info.append(node('strong', '', user.name));
+    info.append(appendPersonName(node('strong'), user.name, user.tenureYears));
     if (user.email) info.append(node('small', '', user.email));
     if (user.username) info.append(node('small', '', user.username));
     if (user.accessPending && !user.email && !user.username) info.append(node('small', '', `Cadastro ${user.id.slice(0, 8)}`));
@@ -1056,6 +1078,10 @@ function openUserDialog(user) {
   $('userActive').checked = user.active !== false;
   formError('userError', '');
   $('userName').value = user.name || '';
+  const admissionDate = $('userAdmissionDate');
+  admissionDate.max = latestAdmissionDate();
+  admissionDate.value = user.admissionDate || '';
+  admissionDate.dataset.originalValue = admissionDate.value;
   $('userEmail').value = user.email || '';
   const pending = Boolean(user.accessPending);
   $('userEmail').readOnly = !pending;
@@ -1092,11 +1118,18 @@ async function saveUserAccess(event) {
   withBusy(button, true);
   try {
     const body = { name: $('userName').value.trim(), role: $('userRole').value, active: $('userActive').checked, companyCnpjs, moduleGrants };
+    const admissionDate = $('userAdmissionDate');
+    if (admissionDate.value !== admissionDate.dataset.originalValue) body.admissionDate = admissionDate.value || null;
     if (!$('userEmail').readOnly) {
       if ($('userEmail').value.trim()) body.email = $('userEmail').value.trim();
       if ($('userPendingPassword').value) body.password = $('userPendingPassword').value;
     }
     const { user } = await request(`/users/${encodeURIComponent(editId)}`, { method: 'PATCH', body });
+    if (state.session?.user.id === user.id) {
+      state.session.user.name = user.name;
+      state.session.user.tenureYears = user.tenureYears;
+      renderSessionNames(state.session.user);
+    }
     $('userDialog').close();
     form.reset();
     form.dataset.editId = '';
@@ -1590,6 +1623,9 @@ function setupEvents() {
   $('newUserButton').addEventListener('click', openUserWizard);
   $('newAgentButton').addEventListener('click', () => $('agentDialog').showModal());
   $('companyForm').addEventListener('submit', createCompany);
+  $('companyDialog').addEventListener('cancel', event => {
+    if ($('companySaveButton').disabled) event.preventDefault();
+  });
   $('userForm').addEventListener('submit', saveUserAccess);
   $('userDialog').addEventListener('close', () => { $('userPendingPassword').value = ''; });
   $('userRole').addEventListener('change', updateGrantEditorRole);

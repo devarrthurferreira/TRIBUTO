@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '../api/validation.mjs';
+import { completedTenureYears } from '../platform/employment.mjs';
 import { grantLevel, LEVELS, MODULES } from '../platform/policy.mjs';
 import { awardMaxcoin, revokeMaxcoin } from './points.mjs';
 
@@ -113,7 +114,8 @@ function commentNotFound() {
 const ACTIVITY_DATE = 'COALESCE(latest_repost.created_at, post.created_at)';
 const POST_SELECT = `SELECT post.id, post.author_id, post.kind, post.body, post.audience_type,
   post.audience_sector, post.created_at, post.image_mime IS NOT NULL AS has_image,
-  author.name AS author_name, profile.photo_mime IS NOT NULL AS has_avatar,
+  author.name AS author_name, employment.admission_date AS author_admission_date,
+  profile.photo_mime IS NOT NULL AS has_avatar,
   (SELECT COUNT(*) FROM platform_maxhub_feed_likes reaction WHERE reaction.post_id = post.id) AS like_count,
   EXISTS (SELECT 1 FROM platform_maxhub_feed_likes my_like WHERE my_like.post_id = post.id AND my_like.user_id = ?) AS liked,
   (SELECT COUNT(*) FROM platform_maxhub_feed_comments comment WHERE comment.post_id = post.id) AS comment_count,
@@ -121,24 +123,29 @@ const POST_SELECT = `SELECT post.id, post.author_id, post.kind, post.body, post.
   EXISTS (SELECT 1 FROM platform_maxhub_feed_reposts my_repost WHERE my_repost.post_id = post.id AND my_repost.user_id = ?) AS reposted,
   (SELECT COUNT(*) FROM platform_maxhub_feed_reposts repost WHERE repost.post_id = post.id) AS repost_count,
   latest_repost.created_at AS reposted_at, reposter.id AS reposter_id, reposter.name AS reposter_name,
+  reposter_employment.admission_date AS reposter_admission_date,
   reposter_profile.photo_mime IS NOT NULL AS reposter_has_avatar, ${ACTIVITY_DATE} AS activity_at
   FROM platform_maxhub_feed post INNER JOIN platform_users author ON author.id = post.author_id
+  LEFT JOIN platform_user_employment employment ON employment.user_id = author.id
   LEFT JOIN platform_maxhub_profiles profile ON profile.user_id = author.id
   LEFT JOIN platform_maxhub_feed_reposts latest_repost ON latest_repost.post_id = post.id
     AND latest_repost.user_id = (SELECT recent.user_id FROM platform_maxhub_feed_reposts recent
       WHERE recent.post_id = post.id ORDER BY recent.created_at DESC, recent.user_id DESC LIMIT 1)
   LEFT JOIN platform_users reposter ON reposter.id = latest_repost.user_id
+  LEFT JOIN platform_user_employment reposter_employment ON reposter_employment.user_id = reposter.id
   LEFT JOIN platform_maxhub_profiles reposter_profile ON reposter_profile.user_id = reposter.id`;
 
 function postView(row, mentions, firstComment, viewer) {
   return {
     id: row.id, kind: row.kind, text: row.body,
-    author: { id: row.author_id, name: row.author_name, hasAvatar: Number(row.has_avatar) === 1 },
+    author: { id: row.author_id, name: row.author_name, hasAvatar: Number(row.has_avatar) === 1,
+      tenureYears: completedTenureYears(row.author_admission_date) },
     audience: { type: row.audience_type, ...(row.audience_sector ? { sector: row.audience_sector } : {}) },
     mentions, createdAt: dateLabel(row.created_at), hasImage: Number(row.has_image) === 1,
     likeCount: Number(row.like_count), liked: Number(row.liked) === 1, commentCount: Number(row.comment_count), firstComment,
     saved: Number(row.saved) === 1, reposted: Number(row.reposted) === 1, repostCount: Number(row.repost_count),
-    repostedBy: row.reposter_id ? { id: row.reposter_id, name: row.reposter_name, hasAvatar: Number(row.reposter_has_avatar) === 1 } : null,
+    repostedBy: row.reposter_id ? { id: row.reposter_id, name: row.reposter_name, hasAvatar: Number(row.reposter_has_avatar) === 1,
+      tenureYears: completedTenureYears(row.reposter_admission_date) } : null,
     repostedAt: row.reposted_at ? dateLabel(row.reposted_at) : null,
     canDelete: row.author_id === viewer._id || viewer.role === 'admin',
   };
@@ -147,15 +154,16 @@ function postView(row, mentions, firstComment, viewer) {
 async function includedMentions(connection, viewer, ids) {
   if (!ids.length) return new Map();
   const scope = accessScope(viewer);
-  const [rows] = await connection.execute(`SELECT mention.post_id, person.id, person.name
+  const [rows] = await connection.execute(`SELECT mention.post_id, person.id, person.name, employment.admission_date
     FROM platform_maxhub_feed_mentions mention INNER JOIN platform_maxhub_feed post ON post.id = mention.post_id
     INNER JOIN platform_users person ON person.id = mention.user_id
+    LEFT JOIN platform_user_employment employment ON employment.user_id = person.id
     WHERE post.id IN (${placeholders(ids.length)}) AND ${scope.where} ORDER BY mention.post_id, mention.ordinal`,
   [...ids, ...scope.values]);
   const mentions = new Map();
   for (const row of rows) {
     if (!mentions.has(row.post_id)) mentions.set(row.post_id, []);
-    mentions.get(row.post_id).push({ id: row.id, name: row.name });
+    mentions.get(row.post_id).push({ id: row.id, name: row.name, tenureYears: completedTenureYears(row.admission_date) });
   }
   return mentions;
 }
@@ -178,19 +186,22 @@ async function createdPost(connection, viewer, id) {
 }
 
 const COMMENT_SELECT = `SELECT comment.id, comment.post_id, comment.body, comment.author_id, comment.created_at,
-  author.name AS author_name, profile.photo_mime IS NOT NULL AS has_avatar, parent_link.parent_id,
+  author.name AS author_name, employment.admission_date AS author_admission_date,
+  profile.photo_mime IS NOT NULL AS has_avatar, parent_link.parent_id,
   (SELECT COUNT(*) FROM platform_maxhub_feed_comment_replies reply WHERE reply.parent_id = comment.id) AS reply_count,
   (SELECT COUNT(*) FROM platform_maxhub_feed_comment_likes reaction WHERE reaction.comment_id = comment.id) AS like_count,
   EXISTS (SELECT 1 FROM platform_maxhub_feed_comment_likes my_like WHERE my_like.comment_id = comment.id AND my_like.user_id = ?) AS liked,
   EXISTS (SELECT 1 FROM platform_maxhub_feed_comment_saves my_save WHERE my_save.comment_id = comment.id AND my_save.user_id = ?) AS saved`;
 const COMMENT_JOINS = `LEFT JOIN platform_users author ON author.id = comment.author_id
+  LEFT JOIN platform_user_employment employment ON employment.user_id = author.id
   LEFT JOIN platform_maxhub_profiles profile ON profile.user_id = author.id
   LEFT JOIN platform_maxhub_feed_comment_replies parent_link ON parent_link.comment_id = comment.id`;
 
 function commentView(row) {
   return {
     id: row.id, parentId: row.parent_id ?? null, text: row.body, createdAt: dateLabel(row.created_at),
-    author: { id: row.author_id, name: row.author_name, hasAvatar: Number(row.has_avatar) === 1 },
+    author: { id: row.author_id, name: row.author_name, hasAvatar: Number(row.has_avatar) === 1,
+      tenureYears: completedTenureYears(row.author_admission_date) },
     likeCount: Number(row.like_count), liked: Number(row.liked) === 1,
     saved: Number(row.saved) === 1, replyCount: Number(row.reply_count),
   };

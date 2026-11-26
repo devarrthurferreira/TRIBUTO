@@ -23,6 +23,7 @@
   <link rel="stylesheet" href="/club-rh-mood.css">
   <link rel="stylesheet" href="/maxhub.css">
   <link rel="stylesheet" href="/maxhub-social.css">
+  <link rel="stylesheet" href="/maxhub-profile.css">
   <link rel="stylesheet" href="/people.css">
   <link rel="stylesheet" href="/maxhub-people.css">
   <script defer src="/socket.io/socket.io.js"></script>
@@ -387,7 +388,7 @@
         </section>
 
         <section class="view" id="view-companies" aria-labelledby="companiesTitle" hidden>
-          <div class="page-heading"><div><h1 id="companiesTitle">Empresas e clientes</h1><p>Cadastros e acessos da carteira da Maximum.</p></div><button id="newCompanyButton" class="button button-primary" type="button">+ Nova empresa</button></div>
+          <div class="page-heading"><div><h1 id="companiesTitle">Empresas e clientes</h1><p>Cadastros e acessos da carteira da Maximum.</p></div><button id="newCompanyButton" class="button button-primary" type="button"><i class="bi bi-plus-lg" aria-hidden="true"></i> Adicionar Cliente</button></div>
           <article class="surface"><div class="list-toolbar"><label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">Buscar empresa</span><input id="companySearch" type="search" placeholder="Buscar por nome ou CNPJ"></label><span id="companiesCount" class="list-count">— empresas</span></div><div id="companiesList" class="list-content" aria-live="polite"></div></article>
         </section>
 
@@ -451,15 +452,19 @@
     </div>
   </div>
 
-  <dialog id="companyDialog" class="form-dialog" aria-labelledby="companyDialogTitle">
+  <dialog id="companyDialog" class="form-dialog" aria-labelledby="companyDialogTitle" aria-describedby="companyDialogDescription">
     <form id="companyForm" method="dialog">
-      <div class="dialog-header"><div><p class="eyebrow">CADASTRO</p><h2 id="companyDialogTitle">Nova empresa</h2></div><button type="button" class="icon-button close-dialog" aria-label="Fechar">×</button></div>
-      <p class="dialog-description">A empresa ficará disponível conforme as permissões concedidas à equipe.</p>
-      <div class="field"><label for="companyName">Razão social</label><input id="companyName" name="name" required maxlength="160" placeholder="Nome da empresa"></div>
-      <div class="field"><label for="companyCnpj">CNPJ</label><input id="companyCnpj" name="cnpj" inputmode="numeric" required maxlength="18" placeholder="00.000.000/0000-00"></div>
-      <div id="companyStatusField" class="field" hidden><label for="companyStatus">Situação cadastral</label><select id="companyStatus" name="active"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
-      <p id="companyError" class="form-message" role="alert" hidden></p>
-      <div class="dialog-actions"><button type="button" class="button button-quiet close-dialog">Cancelar</button><button type="submit" class="button button-primary">Salvar empresa</button></div>
+      <div class="dialog-header"><div><p class="eyebrow">CADASTRO</p><h2 id="companyDialogTitle">Adicionar Cliente</h2></div><button type="button" class="icon-button close-dialog" aria-label="Fechar">×</button></div>
+      <div class="company-form-content">
+        <p id="companyDialogDescription" class="dialog-description">A empresa ficará disponível conforme as permissões concedidas à equipe.</p>
+        <div class="company-form-fields">
+          <div class="field"><label for="companyName">Razão social</label><input id="companyName" name="name" required maxlength="160" autocomplete="organization" placeholder="Nome da empresa" autofocus></div>
+          <div class="field"><label for="companyCnpj">CNPJ</label><input id="companyCnpj" name="cnpj" inputmode="numeric" required maxlength="18" placeholder="00.000.000/0000-00"></div>
+          <div id="companyStatusField" class="field" hidden><label for="companyStatus">Situação cadastral</label><select id="companyStatus" name="active"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
+        </div>
+        <p id="companyError" class="form-message" role="alert" hidden></p>
+      </div>
+      <div class="dialog-actions"><button type="button" class="button button-quiet close-dialog">Cancelar</button><button type="submit" id="companySaveButton" class="button button-primary">Salvar cliente</button></div>
     </form>
   </dialog>
 
@@ -468,6 +473,7 @@
       <div class="dialog-header"><h2 id="userDialogTitle">Editar acesso</h2><button type="button" class="icon-button close-dialog" aria-label="Fechar">×</button></div>
       <p class="dialog-description">Conceda somente os módulos e empresas necessários para essa pessoa.</p>
       <div class="field"><label for="userName">Nome</label><input id="userName" name="name" required maxlength="120" placeholder="Nome da pessoa"></div>
+      <div class="field"><label for="userAdmissionDate">Data de admissão</label><input id="userAdmissionDate" type="date" min="1900-01-01" aria-describedby="userAdmissionDateHelp"><small id="userAdmissionDateHelp">Usada para calcular os emblemas por tempo de empresa.</small></div>
       <div class="field"><label for="userEmail">E-mail de acesso</label><input id="userEmail" type="email" maxlength="254" autocomplete="off" readonly></div>
       <div id="userPendingCredentials" hidden>
         <p id="userPendingHint" class="muted"></p>
@@ -506,6 +512,7 @@
             <div class="field"><label for="newUserBirthDate">Nascimento</label><input id="newUserBirthDate" type="date" autocomplete="bday"></div>
             <div class="field"><label for="newUserEmail">E-mail</label><input id="newUserEmail" type="email" autocomplete="email" maxlength="254"></div>
             <div class="field"><label for="newUserPhone">Telefone</label><input id="newUserPhone" type="tel" autocomplete="tel" maxlength="19" placeholder="(00) 00000-0000"></div>
+            <div class="field"><label for="newUserAdmissionDate">Data de admissão</label><input id="newUserAdmissionDate" type="date" min="1900-01-01" aria-describedby="newUserAdmissionDateHelp"><small id="newUserAdmissionDateHelp">Usada para calcular os emblemas por tempo de empresa.</small></div>
             <div class="field"><label for="newUserHasChildren">Possui filhos?</label><select id="newUserHasChildren"><option value="" selected>Não informado</option><option value="no">Não</option><option value="yes">Sim</option></select></div>
             <div class="field" id="newUserChildrenRow" hidden><label for="newUserChildrenCount">Quantidade de filhos</label><input id="newUserChildrenCount" type="number" min="1" max="99" step="1" inputmode="numeric"></div>
           </div>

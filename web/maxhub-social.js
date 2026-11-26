@@ -1,3 +1,6 @@
+import { mountMaxHubProfile } from './maxhub-profile.js';
+import { appendPersonName } from './person-name.js';
+
 const number = new Intl.NumberFormat('pt-BR');
 const timelineDate = new Intl.DateTimeFormat('pt-BR', {
   timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
@@ -325,7 +328,8 @@ function mountComposer(root, { kind, ctx, onPost }) {
         const option = el('li', 'hub-mention-person');
         option.id = `maxhub-mention-option-${index}`;
         option.setAttribute('role', 'option');
-        const name = el('span', 'hub-mention-name', person.name);
+        const name = el('span', 'hub-mention-name');
+        name.append(appendPersonName(el('span'), person.name, person.tenureYears));
         if (sectorNames[person.sector]) name.append(el('small', '', sectorNames[person.sector]));
         option.append(avatar(person), name);
         option.addEventListener('mousedown', event => event.preventDefault());
@@ -588,7 +592,11 @@ function renderPostComments(post, { ctx, path, available, savedOnly, onSave }) {
   function setReplyTarget(comment) {
     parentId = comment?.parentId || comment?.id;
     target.hidden = !comment;
-    targetText.textContent = comment ? `Respondendo a ${comment.author.name}` : '';
+    targetText.replaceChildren();
+    if (comment) {
+      targetText.append('Respondendo a ');
+      appendPersonName(targetText, comment.author.name, comment.author.tenureYears);
+    }
     const label = comment ? 'Escreva uma resposta' : 'Escreva um comentário';
     reply.placeholder = `${label}…`;
     reply.setAttribute('aria-label', label);
@@ -621,7 +629,7 @@ function renderPostComments(post, { ctx, path, available, savedOnly, onSave }) {
     const main = el('div', 'hub-comment-main');
     const content = el('div', 'hub-comment-content');
     const identity = el('div', 'hub-comment-identity');
-    identity.append(el('strong', '', comment.author.name), stamp(comment.createdAt));
+    identity.append(appendPersonName(el('strong'), comment.author.name, comment.author.tenureYears), stamp(comment.createdAt));
     const actions = el('div', 'hub-comment-actions');
     const like = feedAction('Curtir comentário', 'heart');
     const respond = feedAction('Responder comentário', 'reply');
@@ -787,14 +795,16 @@ function renderPost(post, ctx, { onDelete, onSave, onCommentSave, onRepost, save
   function syncRepostInfo() {
     repostInfo.hidden = !post.repostedBy;
     if (!post.repostedBy) return;
-    const name = post.repostedBy.id === ctx.session?.user?.id ? 'Você republicou' : `${post.repostedBy.name} republicou`;
-    repostInfo.replaceChildren(icon('arrow-repeat'), el('span', '', name));
+    const own = post.repostedBy.id === ctx.session?.user?.id;
+    const byline = appendPersonName(el('span'), own ? 'Você' : post.repostedBy.name, post.repostedBy.tenureYears);
+    byline.append(' republicou');
+    repostInfo.replaceChildren(icon('arrow-repeat'), byline);
   }
   syncRepostInfo();
   const head = el('header', 'hub-post-heading');
   const identity = el('div', 'hub-post-identity');
   const names = el('div', 'hub-post-name');
-  names.append(el('strong', '', post.author.name), stamp(post.createdAt));
+  names.append(appendPersonName(el('strong'), post.author.name, post.author.tenureYears), stamp(post.createdAt));
   identity.append(avatar(post.author), names);
   head.append(identity);
 
@@ -891,7 +901,12 @@ function renderPostContent(card, { text, mentions }) {
   const identified = new Set();
   if (text) {
     const content = el('p', 'hub-post-text');
-    const names = [...new Set(mentions.map(person => `@${person.name}`))]
+    const peopleByName = new Map();
+    for (const person of mentions) {
+      const mention = `@${person.name}`;
+      peopleByName.set(mention, peopleByName.has(mention) ? null : person);
+    }
+    const names = [...peopleByName.keys()]
       .sort((a, b) => b.length - a.length)
       .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     let start = 0;
@@ -899,8 +914,10 @@ function renderPostContent(card, { text, mentions }) {
       const matchMention = new RegExp(`(?<![\\p{L}\\p{M}\\p{N}_@])(?:${names.join('|')})(?![\\p{L}\\p{M}\\p{N}_])`, 'gu');
       for (const match of text.matchAll(matchMention)) {
         const [mention] = match;
-        content.append(document.createTextNode(text.slice(start, match.index)), el('span', 'hub-post-mention', mention));
-        identified.add(mention);
+        const person = peopleByName.get(mention);
+        content.append(document.createTextNode(text.slice(start, match.index)),
+          appendPersonName(el('span', 'hub-post-mention'), mention, person?.tenureYears));
+        if (person) identified.add(mention);
         start = match.index + mention.length;
       }
     }
@@ -912,7 +929,7 @@ function renderPostContent(card, { text, mentions }) {
   if (remaining.length) {
     const tags = el('ul', 'hub-mentions');
     tags.setAttribute('aria-label', 'Pessoas marcadas');
-    for (const person of remaining) tags.append(el('li', '', `@${person.name}`));
+    for (const person of remaining) tags.append(appendPersonName(el('li'), `@${person.name}`, person.tenureYears));
     card.append(tags);
   }
 }
@@ -1093,7 +1110,7 @@ function mountRanking(root, ctx, compact = false) {
       if (entry.rank >= 1 && entry.rank <= 3) item.dataset.position = entry.rank;
       if (entry.id === ctx.session?.user?.id) item.dataset.me = 'true';
       const position = el('span', 'hub-rank-position', `${entry.rank}º`);
-      const person = el('span', 'hub-rank-person', entry.name);
+      const person = appendPersonName(el('span', 'hub-rank-person'), entry.name, entry.tenureYears);
       const points = el('strong', 'hub-rank-points', number.format(entry.points));
       points.setAttribute('aria-label', `${number.format(entry.points)} Maxcoin`);
       item.append(position, avatar(entry), person, points);
@@ -1169,157 +1186,6 @@ function mountHistory(root, ctx) {
   void load();
 }
 
-function mountProfile(root, ctx) {
-  const section = el('section', 'hub-profile');
-  const overview = el('div', 'hub-card hub-profile-overview');
-  const form = el('form', 'hub-card hub-profile-form');
-  form.hidden = true;
-  const formHeading = panelHeading('Editar perfil', 'person-badge', 'h3');
-  const biography = el('textarea', 'hub-input');
-  biography.rows = 5;
-  biography.maxLength = 600;
-  biography.placeholder = 'Conte um pouco sobre você…';
-  const description = field('Descrição', biography);
-  const count = el('small', 'hub-profile-count');
-  const photoActions = el('div', 'hub-profile-actions');
-  const file = el('input');
-  file.type = 'file';
-  file.accept = 'image/png,image/jpeg,image/webp';
-  file.hidden = true;
-  const choose = btn('Trocar foto', { glyph: 'paperclip' });
-  const remove = btn('Remover foto', { glyph: 'x-lg' });
-  const save = btn('Salvar perfil', { glyph: 'check2', type: 'submit', primary: true });
-  const photoHelp = el('span', 'hub-profile-note', 'PNG, JPG ou WebP até 450 KB.');
-  photoActions.append(choose, remove, photoHelp);
-  const feedback = status();
-  form.append(formHeading, photoActions, file, description, count, save, feedback.line);
-  const badges = el('section', 'hub-card hub-profile-badges');
-  badges.hidden = true;
-  section.append(overview, form, badges);
-  root.append(section);
-
-  let current;
-  let nextPhoto;
-  let photoVersion = 0;
-  let reading = false;
-  let saving = false;
-
-  function renderOverview() {
-    const title = el('div', 'hub-profile-name');
-    const source = nextPhoto === null ? '' : nextPhoto;
-    title.append(el('h2', '', 'Meu perfil'), el('strong', '', current.name));
-    if (current.sector && sectorNames[current.sector]) title.append(el('p', '', sectorNames[current.sector]));
-    const points = el('div', 'hub-profile-points');
-    points.append(el('strong', '', number.format(current.points)), el('span', '', 'Maxcoin'));
-    overview.replaceChildren(avatar(current, { large: true, source }), title, points);
-    remove.hidden = nextPhoto === null || (!nextPhoto && !current.hasAvatar);
-  }
-
-  function renderBadges() {
-    const rows = el('ul', 'hub-profile-badge-list');
-    for (const badge of current.badges) {
-      const row = el('li', 'hub-profile-badge');
-      const mark = el('span', 'hub-profile-badge-mark');
-      const content = el('div');
-      const glyph = ['check2', 'gift', 'graph-up', 'people', 'clock-history', 'broadcast', 'person-badge'].includes(badge.icon) ? badge.icon : 'gift';
-      mark.append(icon(glyph));
-      content.append(el('strong', '', badge.label), el('p', '', badge.description));
-      row.append(mark, content);
-      rows.append(row);
-    }
-    badges.replaceChildren(
-      panelHeading('Meus emblemas', 'gift', 'h3'),
-      rows.childElementCount ? rows : info('Seus emblemas vão aparecer aqui conforme você participa do MaxHub.'),
-    );
-  }
-
-  function renderCount() {
-    count.textContent = `${biography.value.length} de ${biography.maxLength} caracteres`;
-  }
-
-  async function load() {
-    overview.replaceChildren(info('Carregando perfil…'));
-    try {
-      current = await ctx.request('/maxhub/profile');
-      if (!ctx.active()) return;
-      biography.value = current.bio || '';
-      renderCount();
-      renderOverview();
-      renderBadges();
-      form.hidden = badges.hidden = false;
-    } catch (error) {
-      if (ctx.handle(error)) overview.replaceChildren(info('Não foi possível abrir o perfil.', { error: true, retry: load }));
-    }
-  }
-
-  function syncControls() {
-    save.disabled = reading || saving;
-    remove.disabled = choose.disabled = saving;
-    biography.disabled = saving;
-  }
-
-  choose.addEventListener('click', () => file.click());
-  remove.addEventListener('click', () => {
-    photoVersion += 1;
-    reading = false;
-    nextPhoto = null;
-    file.value = '';
-    renderOverview();
-    syncControls();
-    choose.focus();
-  });
-  file.addEventListener('change', async () => {
-    const version = ++photoVersion;
-    reading = true;
-    syncControls();
-    try {
-      const data = await readImage(file.files[0], 460800);
-      if (!ctx.active() || version !== photoVersion || !data) return;
-      nextPhoto = data;
-      renderOverview();
-      feedback.set('');
-    } catch (error) {
-      if (ctx.active() && version === photoVersion) feedback.set(error.message, true);
-    } finally {
-      if (ctx.active() && version === photoVersion) {
-        reading = false;
-        file.value = '';
-        syncControls();
-      }
-    }
-  });
-  biography.addEventListener('input', renderCount);
-  form.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (saving || reading) return;
-    saving = true;
-    syncControls();
-    feedback.set('Salvando perfil…');
-    try {
-      const body = { bio: biography.value.trim() };
-      if (nextPhoto !== undefined) body.photo = nextPhoto;
-      const result = await ctx.request('/maxhub/profile', { method: 'PUT', body });
-      if (!ctx.active()) return;
-      current = result;
-      nextPhoto = undefined;
-      biography.value = current.bio || '';
-      renderCount();
-      renderOverview();
-      renderBadges();
-      feedback.set('Perfil atualizado.');
-      ctx.onProfileChange?.(current);
-    } catch (error) {
-      if (ctx.handle(error)) feedback.set(error.message || 'Não foi possível atualizar o perfil.', true);
-    } finally {
-      if (ctx.active()) {
-        saving = false;
-        syncControls();
-      }
-    }
-  });
-  void load();
-}
-
 export function mountMaxHubSocial(root, { area, request, onAuthError, onProfileChange, session }) {
   let disposed = false;
   const ctx = {
@@ -1342,7 +1208,7 @@ export function mountMaxHubSocial(root, { area, request, onAuthError, onProfileC
   if (Object.hasOwn(feedSections, area)) cleanup = mountFeed(root, area, ctx);
   else if (area === 'ranking') cleanup = mountRanking(root, ctx);
   else if (area === 'history') mountHistory(root, ctx);
-  else if (area === 'profile') mountProfile(root, ctx);
+  else if (area === 'profile') cleanup = mountMaxHubProfile(root, ctx, { avatar, readImage, sectorNames });
   return () => {
     disposed = true;
     cleanup?.();

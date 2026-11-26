@@ -1,3 +1,5 @@
+import { completedTenureYears } from '../platform/employment.mjs';
+
 const PAGE_SIZE = 50;
 
 const TABLES = [
@@ -44,7 +46,8 @@ const TABLES = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`
 ];
 
-const messageColumns = 'm.*, rev.edited_at, rev.deleted_at';
+const senderEmployment = 'LEFT JOIN platform_user_employment employment ON employment.user_id = m.sender_id';
+const messageColumns = 'm.*, rev.edited_at, rev.deleted_at, employment.admission_date AS sender_admission_date';
 const revisionJoin = 'LEFT JOIN platform_chat_revisions rev ON rev.message_sequence = m.sequence_no';
 
 function toAttachment(row) {
@@ -55,7 +58,8 @@ function toMessage(row, attachments = []) {
   const deletedAt = sqlDate(row.deleted_at);
   return {
     id: String(row.sequence_no), clientId: row.client_id, roomKey: row.room_key,
-    senderId: row.sender_id, senderName: row.sender_name, text: deletedAt ? '' : row.message_text,
+    senderId: row.sender_id, senderName: row.sender_name, tenureYears: completedTenureYears(row.sender_admission_date),
+    text: deletedAt ? '' : row.message_text,
     createdAt: sqlDate(row.created_at), editedAt: sqlDate(row.edited_at), deletedAt,
     attachments: deletedAt ? [] : attachments,
     reference: !deletedAt && row.reference_type && row.reference_id ? { type: row.reference_type, id: row.reference_id } : null
@@ -90,7 +94,7 @@ export class ChatMySqlStore {
   }
 
   async listMessages(roomKey, beforeSequence = null) {
-    const [rows] = await this.pool.execute(`SELECT ${messageColumns} FROM platform_chat_messages m ${revisionJoin}
+    const [rows] = await this.pool.execute(`SELECT ${messageColumns} FROM platform_chat_messages m ${revisionJoin} ${senderEmployment}
       WHERE m.room_key = ? ${beforeSequence === null ? '' : 'AND m.sequence_no < CAST(? AS UNSIGNED)'}
       ORDER BY m.sequence_no DESC LIMIT ${PAGE_SIZE + 1}`, beforeSequence === null ? [roomKey] : [roomKey, beforeSequence]);
     const messages = await this.attachmentsFor(this.pool, rows.slice(0, PAGE_SIZE).reverse());
@@ -117,8 +121,9 @@ export class ChatMySqlStore {
         await connection.rollback();
       }
       if (!repeated) {
-        const [[row]] = await connection.execute(`SELECT * FROM platform_chat_messages
-          WHERE sender_id = ? AND client_id = ?`, [senderId, clientId]);
+        const [[row]] = await connection.execute(`SELECT m.*, employment.admission_date AS sender_admission_date
+          FROM platform_chat_messages m ${senderEmployment}
+          WHERE m.sender_id = ? AND m.client_id = ?`, [senderId, clientId]);
         for (const [position, attachment] of attachments.entries()) {
           await connection.execute(`INSERT INTO platform_chat_attachments
             (id, message_sequence, sort_index, name, mime, size_bytes, payload)
@@ -136,7 +141,7 @@ export class ChatMySqlStore {
       connection.release();
     }
     // A fresh read avoids taking an exclusive lock on a duplicate row while other retries are waiting.
-    const [[row]] = await this.pool.execute(`SELECT ${messageColumns} FROM platform_chat_messages m ${revisionJoin}
+    const [[row]] = await this.pool.execute(`SELECT ${messageColumns} FROM platform_chat_messages m ${revisionJoin} ${senderEmployment}
       WHERE m.sender_id = ? AND m.client_id = ? AND m.room_key = ?`, [senderId, clientId, roomKey]);
     if (!row) return { message: null, inserted: false };
     const [message] = await this.attachmentsFor(this.pool, [row]);
@@ -153,9 +158,9 @@ export class ChatMySqlStore {
         await connection.rollback();
         return { message: null, changed: false };
       }
-      const [[revision]] = await connection.execute(`SELECT edited_at, deleted_at FROM platform_chat_revisions
-        WHERE message_sequence = CAST(? AS UNSIGNED)`, [id]);
-      if (revision) Object.assign(row, revision);
+      const [[metadata]] = await connection.execute(`SELECT rev.edited_at, rev.deleted_at, employment.admission_date AS sender_admission_date
+        FROM platform_chat_messages m ${revisionJoin} ${senderEmployment} WHERE m.sequence_no = CAST(? AS UNSIGNED)`, [id]);
+      Object.assign(row, metadata);
       const [previous] = await this.attachmentsFor(connection, [row]);
       if (previous.deletedAt || text === previous.text) {
         await connection.commit();
@@ -221,7 +226,7 @@ export class ChatMySqlStore {
         LEFT JOIN platform_chat_revisions history_revision ON history_revision.message_sequence = history.sequence_no
         WHERE history.room_key IN (${placeholders(roomKeys)})
         GROUP BY history.room_key
-      ) activity JOIN platform_chat_messages m ON m.sequence_no = activity.latest ${revisionJoin}`, [userId, userId, ...roomKeys]);
+      ) activity JOIN platform_chat_messages m ON m.sequence_no = activity.latest ${revisionJoin} ${senderEmployment}`, [userId, userId, ...roomKeys]);
     const activity = new Map(rows.map(row => [row.room_key, row]));
     return roomKeys.map(roomKey => {
       const row = activity.get(roomKey);

@@ -1,3 +1,5 @@
+import { appendPersonName } from './person-name.js';
+
 const API = '/v1/platform/chat';
 const MAX_FILES = 3;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -228,13 +230,20 @@ async function refreshSummary(state) {
   for (const person of state.people) {
     const id = `direct:${person.id}`;
     const known = state.roomLookup.get(id);
-    state.roomLookup.set(id, { ...(known || { id, name: person.name, kind: 'direct', unread: 0 }), online: person.online });
+    state.roomLookup.set(id, {
+      ...(known || { id, name: person.name, kind: 'direct', unread: 0 }),
+      online: person.online,
+      tenureYears: person.tenureYears ?? known?.tenureYears
+    });
   }
   if (state.room) {
     const previous = state.room;
     const room = state.roomLookup.get(previous.id);
     if (room) {
       state.room = room;
+      if (previous.name !== room.name || previous.tenureYears !== room.tenureYears) {
+        renderRoomName(state.refs.title, room);
+      }
       if (canReviseRoom(previous) !== canReviseRoom(room)) {
         if (!canReviseRoom(room)) closeMutation(state, false);
         if (state.historyReady) renderMessages(state);
@@ -271,6 +280,11 @@ function conversationVisible(state) {
   return state.dialog.open && document.visibilityState !== 'hidden' && state.refs.messages.getClientRects().length > 0;
 }
 
+function renderRoomName(label, room) {
+  label.replaceChildren();
+  appendPersonName(label, room.name, room.kind === 'direct' ? room.tenureYears : undefined);
+}
+
 function renderRoomList(state) {
   const query = searchable(state.refs.search.value.trim());
   const container = state.refs.rooms;
@@ -302,7 +316,9 @@ function renderRoomList(state) {
       }
       avatar.setAttribute('aria-hidden', 'true');
       const titles = el('span', 'chat-room-text');
-      titles.append(el('strong', '', room.name), el('small', '', messagePreview(room.lastMessage) || (room.kind === 'sector' ? 'Canal do setor' : 'Mensagem direta')));
+      const name = el('strong');
+      renderRoomName(name, room);
+      titles.append(name, el('small', '', messagePreview(room.lastMessage) || (room.kind === 'sector' ? 'Canal do setor' : 'Mensagem direta')));
       const meta = el('span', 'chat-room-meta');
       if (room.lastMessage?.createdAt) meta.append(el('time', '', activityLabel(room.lastMessage.createdAt)));
       if (room.unread) {
@@ -343,7 +359,7 @@ function selectRoom(state, room, focus = false) {
   state.dialog.dataset.mobileView = 'conversation';
   state.refs.blank.hidden = true;
   state.refs.thread.hidden = false;
-  state.refs.title.textContent = room.name;
+  renderRoomName(state.refs.title, room);
   state.refs.channelType.textContent = room.kind === 'sector' ? 'Canal do setor' : 'Conversa direta';
   state.refs.linkChooser.hidden = true;
   state.refs.messages.replaceChildren(el('p', 'chat-empty-state', 'Carregando conversa…'));
@@ -419,7 +435,10 @@ function messageElement(state, message) {
   const meta = el('div', 'chat-message-meta');
   const time = el('time', '', timeLabel(message.createdAt));
   time.dateTime = message.createdAt;
-  meta.append(el('strong', '', sentByMe ? 'Você' : message.sender.name), time);
+  const name = el('strong');
+  const tenureYears = message.sender.tenureYears ?? (sentByMe ? state.session.user.tenureYears : undefined);
+  appendPersonName(name, sentByMe ? 'Você' : message.sender.name, tenureYears);
+  meta.append(name, time);
   const body = el('div', 'chat-bubble');
   if (message.deletedAt) {
     body.classList.add('chat-deleted');

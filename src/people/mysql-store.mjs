@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { ApiError } from '../api/validation.mjs';
 import { awardMaxcoin, maxHubDay } from '../maxhub/points.mjs';
+import { completedTenureYears } from '../platform/employment.mjs';
 import { goalDetails } from './fields.mjs';
 
 export const MIN_SURVEY_RESPONSES = 3;
@@ -89,18 +90,27 @@ const SCHEMA = [
 
 const SURVEYS = `SELECT survey.*, kind.kind FROM platform_people_surveys survey
     LEFT JOIN platform_people_survey_kinds kind ON kind.survey_id = survey.id`;
-const NOTE_FIELDS = 'note.*, sender.name AS sender_name, recipient.name AS recipient_name';
+const NOTE_FIELDS = `note.*, sender.name AS sender_name, recipient.name AS recipient_name,
+    sender_employment.admission_date AS sender_admission_date, recipient_employment.admission_date AS recipient_admission_date`;
 const NOTE_PEOPLE = `FROM platform_people_notes note
-    JOIN platform_users sender ON sender.id = note.sender_id JOIN platform_users recipient ON recipient.id = note.recipient_id`;
+    JOIN platform_users sender ON sender.id = note.sender_id JOIN platform_users recipient ON recipient.id = note.recipient_id
+    LEFT JOIN platform_user_employment sender_employment ON sender_employment.user_id = sender.id
+    LEFT JOIN platform_user_employment recipient_employment ON recipient_employment.user_id = recipient.id`;
 const FEEDBACK = `SELECT ${NOTE_FIELDS}, details.description, details.ratings ${NOTE_PEOPLE}
     LEFT JOIN platform_people_feedback_details details ON details.note_id = note.id`;
 const ANONYMOUS_FEEDBACK = `SELECT feedback.id, feedback.recipient_id, recipient.name AS recipient_name, feedback.body,
-    feedback.description, feedback.ratings, feedback.created_at, feedback.sender_key = ? AS sent_by_me
-    FROM platform_people_anonymous_feedback feedback JOIN platform_users recipient ON recipient.id = feedback.recipient_id`;
+    feedback.description, feedback.ratings, feedback.created_at, feedback.sender_key = ? AS sent_by_me,
+    recipient_employment.admission_date AS recipient_admission_date
+    FROM platform_people_anonymous_feedback feedback JOIN platform_users recipient ON recipient.id = feedback.recipient_id
+    LEFT JOIN platform_user_employment recipient_employment ON recipient_employment.user_id = recipient.id`;
 const REVIEWS = `SELECT ${NOTE_FIELDS}, assignment.note_id AS assignment_id, assignment.response, assignment.responded_at ${NOTE_PEOPLE}
     LEFT JOIN platform_people_review_assignments assignment ON assignment.note_id = note.id`;
-const MEETINGS = `SELECT meeting.*, organizer.name AS organizer_name, participant.name AS participant_name FROM platform_people_meetings meeting
-    JOIN platform_users organizer ON organizer.id = meeting.organizer_id JOIN platform_users participant ON participant.id = meeting.participant_id`;
+const MEETINGS = `SELECT meeting.*, organizer.name AS organizer_name, participant.name AS participant_name,
+    organizer_employment.admission_date AS organizer_admission_date, participant_employment.admission_date AS participant_admission_date
+    FROM platform_people_meetings meeting
+    JOIN platform_users organizer ON organizer.id = meeting.organizer_id JOIN platform_users participant ON participant.id = meeting.participant_id
+    LEFT JOIN platform_user_employment organizer_employment ON organizer_employment.user_id = organizer.id
+    LEFT JOIN platform_user_employment participant_employment ON participant_employment.user_id = participant.id`;
 
 function iso(value) {
   return (value instanceof Date ? value : new Date(`${String(value).replace(' ', 'T')}Z`)).toISOString();
@@ -127,7 +137,8 @@ function checkInRecord(row) {
 
 function noteRecord(row) {
   return {
-    id: row.id, recipient: { id: row.recipient_id, name: row.recipient_name }, text: row.body, createdAt: iso(row.created_at),
+    id: row.id, recipient: { id: row.recipient_id, name: row.recipient_name,
+      tenureYears: completedTenureYears(row.recipient_admission_date) }, text: row.body, createdAt: iso(row.created_at),
   };
 }
 
@@ -138,7 +149,7 @@ function feedbackRecord(row, userId, anonymous = false) {
   const createdAt = anonymous && !sent ? `${maxHubDay(new Date(note.createdAt))}T12:00:00.000Z` : note.createdAt;
   return {
     ...note, createdAt, anonymous, direction: sent ? 'sent' : 'received',
-    sender: anonymous ? null : { id: row.sender_id, name: row.sender_name },
+    sender: anonymous ? null : { id: row.sender_id, name: row.sender_name, tenureYears: completedTenureYears(row.sender_admission_date) },
     description: row.description ?? '',
     ratings: typeof row.ratings === 'string' ? JSON.parse(row.ratings) : row.ratings ?? {},
   };
@@ -147,7 +158,8 @@ function feedbackRecord(row, userId, anonymous = false) {
 function reviewRecord(row) {
   const response = row.responded_at ? { text: row.response, createdAt: iso(row.responded_at) } : null;
   return {
-    ...noteRecord(row), reviewer: { id: row.sender_id, name: row.sender_name }, title: row.title,
+    ...noteRecord(row), reviewer: { id: row.sender_id, name: row.sender_name, tenureYears: completedTenureYears(row.sender_admission_date) },
+    title: row.title,
     status: (response && 'responded') || (row.assignment_id && 'pending') || 'recorded', response,
   };
 }
@@ -162,7 +174,8 @@ function planRecord(row) {
 function meetingRecord(row) {
   return {
     id: row.id, title: row.title, notes: row.notes, date: row.scheduled_day, time: row.scheduled_time,
-    organizer: { id: row.organizer_id, name: row.organizer_name }, participant: { id: row.participant_id, name: row.participant_name },
+    organizer: { id: row.organizer_id, name: row.organizer_name, tenureYears: completedTenureYears(row.organizer_admission_date) },
+    participant: { id: row.participant_id, name: row.participant_name, tenureYears: completedTenureYears(row.participant_admission_date) },
     status: row.completed_at ? 'completed' : 'scheduled',
     createdAt: iso(row.created_at), completedAt: row.completed_at ? iso(row.completed_at) : null,
   };

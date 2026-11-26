@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ApiError, sha256 } from '../api/validation.mjs';
 import { hashPassword, verifyPassword, newSecret, safeEqualHex } from './auth.mjs';
 import { lookupCep } from './cep.mjs';
+import { saoPauloDate } from './employment.mjs';
 import { handleMarketingMetrics, socialMetricsFields } from '../marketing/metrics-routes.mjs';
 import { INTERNAL_WORK_ITEM_MODULES, MODULES, LEVELS, capabilitiesFor, permissionsFor, canAccess, canAccessCompany, canAccessWorkItemCompany, canPerform, hasLoginCredentials, publicUser } from './policy.mjs';
 
@@ -16,7 +17,6 @@ const MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const WORK_ITEM_STATUSES = ['open', 'in_progress', 'done'];
 const MARKETING_PAGE_SIZE = 100;
-const LOCAL_DATE = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
 
 function fail(status, code, message) { throw new ApiError(status, code, message); }
 function check(condition, field) { if (!condition) fail(400, 'INVALID_INPUT', `Campo inválido: ${field}`); }
@@ -78,8 +78,13 @@ function cpfNumber(value) {
 }
 function dateOfBirth(value) {
   const birthDate = dateField(value, 'nascimento');
-  check(birthDate >= '1900-01-01' && birthDate < LOCAL_DATE.format(new Date()), 'nascimento');
+  check(birthDate >= '1900-01-01' && birthDate < saoPauloDate(), 'nascimento');
   return birthDate;
+}
+function hireDate(value) {
+  const admissionDate = dateField(value, 'admissão');
+  check(admissionDate >= '1900-01-01' && admissionDate <= saoPauloDate(), 'admissão');
+  return admissionDate;
 }
 function phoneNumber(value) {
   const phone = field(value, 'telefone', 10, 24).replace(/[().\s-]/g, '');
@@ -105,7 +110,8 @@ function profileFor(input) {
     && (hasChildren === false ? childrenCount === 0 : childrenCount >= 1 && childrenCount <= 99)), 'quantidade de filhos');
   return { firstName: optionalField(input.firstName, 'nome', 1, 50), lastName: optionalField(input.lastName, 'sobrenome', 1, 50),
     cpf: optional(input.cpf, cpfNumber), birthDate: optional(input.birthDate, dateOfBirth), email: optional(input.email, email),
-    phone: optional(input.phone, phoneNumber), hasChildren, childrenCount, address: optional(input.address, addressFor) };
+    phone: optional(input.phone, phoneNumber), hasChildren, childrenCount, address: optional(input.address, addressFor),
+    ...(input.admissionDate !== undefined ? { admissionDate: optional(input.admissionDate, hireDate) } : {}) };
 }
 function usernameFor({ firstName, lastName } = {}) {
   const normalize = (value) => (value || '').normalize('NFD').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 35);
@@ -162,6 +168,9 @@ function requireCsrf(req, session) {
 }
 function sessionView(user, session, setupRequired = false) {
   return { user: publicUser(user), permissions: permissionsFor(user), capabilities: capabilitiesFor(user), csrfToken: session?.csrfToken ?? null, setupRequired };
+}
+function managedUser(user) {
+  return { ...publicUser(user), admissionDate: user.admissionDate ?? null };
 }
 async function validateCompanyGrants(store, companies) {
   check(Array.isArray(companies) && companies.length <= 1000 && companies.every(validCnpj) && new Set(companies).size === companies.length, 'companyCnpjs');
@@ -401,7 +410,7 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
           const company = await store.getCompany(key);
           if (!company) fail(404, 'NOT_FOUND', 'Empresa não cadastrada');
           const members = (await store.listUsers()).filter(person => person.role === 'member').map(person => ({
-            id: person._id, name: person.name, email: person.email, active: person.active,
+            id: person._id, name: person.name, email: person.email, active: person.active, tenureYears: person.tenureYears ?? 0,
             hasAccess: person.companyCnpjs?.includes(key) || false,
           }));
           return send(res, 200, { company: companyView(company), members });
@@ -431,7 +440,7 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
       }
       if (req.method === 'GET' && route === '/users') {
         requireAdmin(user);
-        return send(res, 200, { users: (await store.listUsers()).map(publicUser) });
+        return send(res, 200, { users: (await store.listUsers()).map(managedUser) });
       }
       if (req.method === 'POST' && route === '/users') {
         requireAdmin(user);
@@ -450,14 +459,14 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
         const member = { _id: randomUUID(), name, email: address, username, profile, moduleGrants, companyCnpjs,
           passwordHash, role, active: hasLoginCredentials({ email: address, username, passwordHash }), createdAt: new Date() };
         const savedUsername = await store.createUser(member, user._id);
-        return send(res, 201, { user: publicUser({ ...member, username: savedUsername }) });
+        return send(res, 201, { user: managedUser({ ...member, username: savedUsername, admissionDate: profile?.admissionDate }) });
       }
       const userMatch = /^\/users\/([a-f0-9-]{36})$/.exec(route);
       if (req.method === 'GET' && userMatch) {
         requireAdmin(user);
         const target = await store.findUserById(userMatch[1]);
         if (!target) fail(404, 'NOT_FOUND', 'Usuário não encontrado');
-        return send(res, 200, { user: publicUser(target), profile: await store.getUserProfile(target._id) });
+        return send(res, 200, { user: managedUser(target), profile: await store.getUserProfile(target._id) });
       }
       if (req.method === 'PATCH' && userMatch) {
         requireAdmin(user);
@@ -470,6 +479,7 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
         if (input.role !== undefined) { check(['admin', 'member'].includes(input.role), 'role'); changes.role = input.role; }
         if (input.companyCnpjs !== undefined) changes.companyCnpjs = await validateCompanyGrants(store, input.companyCnpjs);
         if (input.moduleGrants !== undefined) changes.moduleGrants = validateModuleGrants(input.moduleGrants);
+        if (input.admissionDate !== undefined) changes.admissionDate = optional(input.admissionDate, hireDate);
         const address = optional(input.email, email);
         const password = optional(input.password, accessPassword);
         const emailChanged = address !== null && address !== target.email;
@@ -485,7 +495,7 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
         if (target._id === user._id && (changes.role && changes.role !== 'admin' || changes.active === false)) fail(409, 'SELF_LOCKOUT', 'Não é possível retirar o próprio acesso de administrador');
         const updated = await store.updateUser(target._id, changes);
         await store.audit('user.update', user._id, target._id, { fields: Object.keys(changes) });
-        return send(res, 200, { user: publicUser(updated) });
+        return send(res, 200, { user: managedUser(updated) });
       }
       if (req.method === 'GET' && route === '/agents') {
         requireAdmin(user);
@@ -534,7 +544,7 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
             page === 1 ? store.listUsers() : [],
           ]);
           const assignees = people.filter(person => canPerform(person, module, 'workItemRead')
-            && (!companyCnpj || canAccessCompany(person, companyCnpj))).map(({ _id: id, name }) => ({ id, name }));
+            && (!companyCnpj || canAccessCompany(person, companyCnpj))).map(({ _id: id, name, tenureYears = 0 }) => ({ id, name, tenureYears }));
           return send(res, 200, { items: items.slice(0, MARKETING_PAGE_SIZE).map(publicWorkItem),
             ...(page === 1 ? { assignees } : {}), page, hasMore: items.length > MARKETING_PAGE_SIZE });
         }

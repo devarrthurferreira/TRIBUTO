@@ -1,6 +1,7 @@
 import { ApiError } from '../api/validation.mjs';
 import { normalizeAttachments } from '../chat/attachments.mjs';
 import { maxHubDay } from './points.mjs';
+import { profileDetails } from './profile-fields.mjs';
 
 const AVATAR = /^\/maxhub\/avatar\/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i;
 const IMAGE_BYTES = 450 * 1024;
@@ -46,13 +47,16 @@ export function sendMaxHubImage(res, { mime, data }, head = false) {
 
 function profileFields(input) {
   const { bio, photo } = input;
-  if (bio === undefined && photo === undefined) {
-    throw new ApiError(400, 'MAXHUB_PROFILE_INPUT', 'Informe uma descrição ou uma foto.');
-  }
+  const changes = profileDetails(input);
   if (bio !== undefined && (typeof bio !== 'string' || bio.trim().length > 600)) {
     throw new ApiError(400, 'MAXHUB_PROFILE_BIO', 'A descrição deve ter até 600 caracteres.');
   }
-  return { bio: bio?.trim(), photo: photo == null ? photo : parseMaxHubImage(photo) };
+  if (bio !== undefined) changes.bio = bio.trim();
+  if (photo !== undefined) changes.photo = photo === null ? null : parseMaxHubImage(photo);
+  if (!Object.keys(changes).length) {
+    throw new ApiError(400, 'MAXHUB_PROFILE_INPUT', 'Informe os dados do perfil que deseja alterar.');
+  }
+  return changes;
 }
 
 export function createMaxHubCoreRouter(store, { clock = () => new Date() } = {}) {
@@ -67,7 +71,7 @@ export function createMaxHubCoreRouter(store, { clock = () => new Date() } = {})
       if (route === '/maxhub/points' && method === 'GET') return send(res, 200, await store.points(user._id));
       if (route === '/maxhub/profile' && method === 'GET') return send(res, 200, await store.profile(user));
       if (route === '/maxhub/profile' && method === 'PUT') {
-        return send(res, 200, await store.updateProfile(user, profileFields(await readBody(req, 640_000))));
+        return send(res, 200, await store.updateProfile(user, profileFields(await readBody(req, 1_300_000))));
       }
       const avatar = AVATAR.exec(route);
       if (avatar && (method === 'GET' || method === 'HEAD')) {

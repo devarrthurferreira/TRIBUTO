@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '../api/validation.mjs';
+import { completedTenureYears } from '../platform/employment.mjs';
 import { applyClubFields, CLUB_COLLECTIONS } from './catalog.mjs';
 
 const SCHEMAS = [`CREATE TABLE IF NOT EXISTS platform_club_catalog (
@@ -51,8 +52,13 @@ const VISIBLE_ITEM = 'item.active = 1 AND (item.partner_id IS NULL OR partner.ac
 const SAVABLE_ITEM = `item.deleted_at IS NULL AND item.collection IN ('benefits', 'partners') AND ${VISIBLE_ITEM}`;
 const SHARED_CHECK_INS = `FROM platform_club_rh_checkins shared
   INNER JOIN platform_club_checkins checkin ON checkin.user_id = shared.user_id AND checkin.check_date = shared.check_date
-  INNER JOIN platform_users person ON person.id = shared.user_id AND person.active = 1
-  WHERE shared.check_date BETWEEN ? AND ?`;
+  INNER JOIN platform_users person ON person.id = shared.user_id AND person.active = 1`;
+const SHARED_DATES = 'WHERE shared.check_date BETWEEN ? AND ?';
+const PROFILE_EMPLOYMENT = 'LEFT JOIN platform_user_employment employment ON employment.user_id = person.id';
+
+function moodProfile(row) {
+  return { id: row.id, name: row.name, tenureYears: completedTenureYears(row.admission_date) };
+}
 
 function moodMetrics(row) {
   return {
@@ -185,10 +191,11 @@ export class ClubMySqlStore {
         COUNT(checkin.mood) AS answers, ROUND(AVG(checkin.mood), 2) AS average,
         SUM(checkin.mood = 1) AS mood1, SUM(checkin.mood = 2) AS mood2, SUM(checkin.mood = 3) AS mood3,
         SUM(checkin.mood = 4) AS mood4, SUM(checkin.mood = 5) AS mood5
-        ${SHARED_CHECK_INS} GROUP BY shared.check_date ORDER BY shared.check_date`, period);
-      const [people] = await connection.execute(`SELECT person.id, person.name, COUNT(*) AS check_ins,
+        ${SHARED_CHECK_INS} ${SHARED_DATES} GROUP BY shared.check_date ORDER BY shared.check_date`, period);
+      const [people] = await connection.execute(`SELECT person.id, person.name, employment.admission_date, COUNT(*) AS check_ins,
         COUNT(checkin.mood) AS answers, ROUND(AVG(checkin.mood), 2) AS average, MAX(shared.check_date) AS last_date
-        ${SHARED_CHECK_INS} GROUP BY person.id, person.name ORDER BY person.name, person.id`, period);
+        ${SHARED_CHECK_INS} ${PROFILE_EMPLOYMENT} ${SHARED_DATES}
+        GROUP BY person.id, person.name, employment.admission_date ORDER BY person.name, person.id`, period);
       const totals = { checkIns: 0, answers: 0, average: null, counts: [0, 0, 0, 0, 0] };
       const trend = days.map(row => {
         const metrics = moodMetrics(row);
@@ -203,17 +210,18 @@ export class ClubMySqlStore {
         const score = totals.counts.reduce((sum, count, index) => sum + count * (index + 1), 0);
         totals.average = Math.round(score * 100 / totals.answers) / 100;
       }
-      const profiles = people.map(row => ({ id: row.id, name: row.name, ...moodMetrics(row), lastDate: row.last_date }));
+      const profiles = people.map(row => ({ ...moodProfile(row), ...moodMetrics(row), lastDate: row.last_date }));
       return { totals, trend, profiles };
     });
   }
 
   async getRhMoodProfile(userId, firstDay, today) {
-    const [rows] = await this.platformStore.pool.execute(`SELECT person.id, person.name, shared.check_date, checkin.mood
-      ${SHARED_CHECK_INS} AND shared.user_id = ? ORDER BY shared.check_date DESC`, [firstDay, today, userId]);
+    const [rows] = await this.platformStore.pool.execute(`SELECT person.id, person.name, employment.admission_date, shared.check_date, checkin.mood
+      ${SHARED_CHECK_INS} ${PROFILE_EMPLOYMENT} ${SHARED_DATES} AND shared.user_id = ?
+      ORDER BY shared.check_date DESC`, [firstDay, today, userId]);
     if (!rows.length) return null;
     return {
-      profile: { id: rows[0].id, name: rows[0].name },
+      profile: moodProfile(rows[0]),
       history: rows.map(row => ({ date: row.check_date, mood: row.mood })),
     };
   }

@@ -72,7 +72,7 @@ test('Rotas principais do MaxHub usam o titular da sessão para pontos e perfil'
     output.handled = await router.handleHttp({
       req: { method, url: `/v1/platform${route}${query}` }, res, route, user: person,
       send(_res, status, payload) { Object.assign(output, { status, payload }); return true; },
-      readBody(_req, limit) { assert.equal(limit, 640_000); return input; },
+      readBody(_req, limit) { assert.equal(limit, 1_300_000); return input; },
     });
     return output;
   }
@@ -86,6 +86,30 @@ test('Rotas principais do MaxHub usam o titular da sessão para pontos e perfil'
     ['visit', id, '2026-11-25'], ['points', id], ['profile', id], ['update', id, { bio: 'Oi', photo: null }], ['directory', 'Lia'],
   ]);
   await assert.rejects(handle('PUT', '/maxhub/profile', { bio: 'a'.repeat(601) }), { status: 400 });
+  await handle('PUT', '/maxhub/profile', {
+    skills: ['  Gestão  ', 'Comunicação'],
+    personalLinks: [{ id, platform: 'Linkedin', url: 'https://linkedin.com/in/lia', label: 'Minha página' }],
+    education: [{ type: 'Curso', title: 'Liderança', institution: 'Maximum', startMonth: '2026-01', ongoing: true }],
+  });
+  const [, userId, details] = calls.at(-1);
+  assert.equal(userId, id);
+  assert.deepEqual(details.skills, ['Gestão', 'Comunicação']);
+  assert.deepEqual(details.personalLinks, [{ id, platform: 'linkedin', url: 'https://linkedin.com/in/lia', label: 'Minha página' }]);
+  assert.match(details.education[0].id, /^[a-f0-9-]{36}$/);
+  assert.deepEqual(details.education[0], {
+    id: details.education[0].id, type: 'Curso', title: 'Liderança', institution: 'Maximum', startMonth: '2026-01',
+    endMonth: '', ongoing: true, credentialUrl: '', description: '',
+  });
+  await handle('PUT', '/maxhub/profile', { education: [] });
+  assert.deepEqual(calls.at(-1), ['update', id, { education: [] }]);
+  for (const input of [
+    { skills: [' '] },
+    { personalLinks: [{ platform: 'instagram', url: 'javascript:alert(1)' }] },
+    { personalLinks: [{ platform: 'github', url: 'https://pessoa:senha@example.com' }] },
+    { education: [{ type: 'Curso', title: 'Curso ABC', startMonth: '2026-05', endMonth: '2026-04' }] },
+    { education: [{ type: 'Curso', title: 'Curso XYZ', ongoing: true, endMonth: '2026-04' }] },
+    { admissionDate: '2012-03-04' },
+  ]) await assert.rejects(handle('PUT', '/maxhub/profile', input), { status: 400 });
   const image = await handle('GET', `/maxhub/avatar/${id}`);
   assert.equal(image.headers['content-type'], 'image/png');
   assert.equal(image.headers['cross-origin-resource-policy'], 'same-origin');

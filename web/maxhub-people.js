@@ -1,3 +1,5 @@
+import { appendPersonName, personOptionLabel } from './person-name.js';
+
 const sections = {
   reviews: { title: 'Avaliações', icon: 'journal-text', intro: 'Responda às avaliações enviadas pelo RH.', resource: 'reviews' },
   'my-reviews': { title: 'Minhas avaliações', icon: 'person-badge', intro: 'Responda às avaliações enviadas pelo RH.', resource: 'reviews' },
@@ -84,7 +86,7 @@ function description(value) { return node('p', 'people-description', value); }
 
 function meta(icon, label) {
   const element = node('p', 'people-meta');
-  element.append(glyph(icon), document.createTextNode(label));
+  element.append(glyph(icon), label);
   return element;
 }
 
@@ -105,7 +107,9 @@ function meter(value, label, max = 100) {
 function card(title, status, contents, actions = []) {
   const element = node('article', 'people-card');
   const header = node('header', 'people-card-head');
-  header.append(node('h3', '', title));
+  const heading = node('h3');
+  heading.append(title);
+  header.append(heading);
   if (status) header.append(statusBadge(status));
   element.append(header, ...contents.filter(Boolean));
   if (actions.length) {
@@ -305,7 +309,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
         if (disposed || expectedDialog !== dialogVersion || current !== searchVersion || !ui.dialog.open) return;
         const prior = select.value;
         const people = (result.people || []).filter(person => !excludeSelf || person.id !== userId);
-        select.replaceChildren(new Option('Selecione uma pessoa', ''), ...people.map(person => new Option(person.name, person.id)));
+        select.replaceChildren(new Option('Selecione uma pessoa', ''), ...people.map(person => new Option(personOptionLabel(person), person.id)));
         if (people.some(person => person.id === prior)) select.value = prior;
         status.textContent = people.length ? '' : 'Nenhuma pessoa encontrada.';
       } catch (error) {
@@ -407,7 +411,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
           matches = people.filter(person => person.id !== userId).slice(0, 8);
           status.textContent = matches.length ? '' : 'Nenhuma pessoa encontrada.';
           for (const [index, person] of matches.entries()) {
-            const option = node('li', '', person.name);
+            const option = appendPersonName(node('li'), person.name, person.tenureYears);
             option.id = `maxpeople-directory-option-${index}`;
             option.setAttribute('role', 'option');
             option.setAttribute('aria-selected', 'false');
@@ -621,7 +625,8 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
 
   function renderFeedback(item) {
     const outgoing = feedbackDirection(item, userId) === 'sent';
-    const title = outgoing ? `Para ${item.recipient.name}` : item.anonymous ? 'Feedback anônimo' : `De ${item.sender.name}`;
+    const counterpart = outgoing ? item.recipient : item.sender;
+    const title = counterpart ? appendPersonName(node('span', '', outgoing ? 'Para ' : 'De '), counterpart.name, counterpart.tenureYears) : 'Feedback anônimo';
     const contents = [meta('clock-history', day(item.createdAt)), description(item.text)];
     if (item.anonymous && outgoing) contents.unshift(meta('shield-lock', 'Enviado anonimamente'));
     if (item.description) contents.push(description(item.description));
@@ -640,7 +645,9 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
   }
 
   function renderReview(item) {
-    return card(item.title, 'pending', [meta('clock-history', `${item.reviewer.name} · ${day(item.createdAt)}`), description(item.text)], [
+    const reviewMeta = appendPersonName(node('span'), item.reviewer.name, item.reviewer.tenureYears);
+    reviewMeta.append(` · ${day(item.createdAt)}`);
+    return card(item.title, 'pending', [meta('clock-history', reviewMeta), description(item.text)], [
       button('Responder', () => answerReview(item), { primary: true, icon: 'send', subject: item.title }),
     ]);
   }
@@ -655,8 +662,9 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
   }
 
   function renderMeeting(item) {
-    const counterpart = item.organizer.id === userId ? item.participant.name : item.organizer.name;
-    return card(item.title, item.status, [meta('person', `Com ${counterpart}`),
+    const counterpart = item.organizer.id === userId ? item.participant : item.organizer;
+    const name = appendPersonName(node('span', '', 'Com '), counterpart.name, counterpart.tenureYears);
+    return card(item.title, item.status, [meta('person', name),
       meta('clock-history', `${day(item.date)}${item.time ? ` às ${item.time.slice(0, 5)}` : ''}`), item.notes && description(item.notes)],
     item.status === 'scheduled' ? [button('Finalizar reunião', () => finishMeeting(item), { primary: true, subject: item.title })] : []);
   }

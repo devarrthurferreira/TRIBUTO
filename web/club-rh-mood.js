@@ -1,4 +1,6 @@
 import { clubMoods as moods } from './club-check-in.js';
+import { appendPersonName } from './person-name.js';
+
 const number = new Intl.NumberFormat('pt-BR');
 const score = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const shortDay = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
@@ -282,13 +284,18 @@ export function mountClubRhMood(container, { request, onAuthError }) {
   let profileRequest = 0;
   let anonymousRequest = 0;
 
+  function renderProfileTitle(profile) {
+    profileTitle.replaceChildren();
+    appendPersonName(profileTitle, profile.name, profile.tenureYears);
+  }
+
   async function loadProfile(profile) {
     const current = ++profileRequest;
     refs.profileContent.replaceChildren(detailFeedback('Carregando perfil…'));
     try {
       const data = await request(`/club/check-in/rh/${encodeURIComponent(profile.id)}?days=${period.value}`);
       if (current !== profileRequest || !dialog.open) return;
-      profileTitle.textContent = data.profile.name;
+      renderProfileTitle(data.profile);
       renderProfile(refs.profileContent, data.profile, data.history);
     } catch (error) {
       if (current !== profileRequest || !dialog.open) return;
@@ -301,7 +308,7 @@ export function mountClubRhMood(container, { request, onAuthError }) {
 
   function showProfile(profile, button) {
     profileOpener = button;
-    profileTitle.textContent = profile.name;
+    renderProfileTitle(profile);
     refs.profilePeriod.textContent = `${fullDay.format(dayDate(report.firstDay))} a ${fullDay.format(dayDate(report.today))}`;
     dialog.showModal();
     void loadProfile(profile);
@@ -326,11 +333,16 @@ export function mountClubRhMood(container, { request, onAuthError }) {
       const row = element('li');
       const view = element('button', 'club-rh-profile');
       view.type = 'button';
-      view.setAttribute('aria-label', `Ver perfil de ${profile.name}`);
       const mark = element('span', 'club-rh-profile-mark');
       mark.append(glyph('person'));
       const identity = element('span', 'club-rh-profile-identity');
-      identity.append(element('strong', '', profile.name));
+      const action = element('span', 'sr-only', 'Ver perfil de');
+      action.id = `rh-profile-action-${profile.id}`;
+      const name = element('strong');
+      name.id = `rh-profile-name-${profile.id}`;
+      appendPersonName(name, profile.name, profile.tenureYears);
+      view.setAttribute('aria-labelledby', `${action.id} ${name.id}`);
+      identity.append(action, name);
       if (profile.lastDate) {
         const lastDate = element('span', 'club-rh-profile-last', 'Último registro em ');
         lastDate.append(dateElement(profile.lastDate));

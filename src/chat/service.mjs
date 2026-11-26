@@ -81,7 +81,7 @@ export function createChat({ store, chatStore, logger = console }) {
   async function publicMessage(message, user) {
     return {
       id: message.id, clientId: message.clientId, room: roomForViewer(message.roomKey, user._id),
-      sender: { id: message.senderId, name: message.senderName },
+      sender: { id: message.senderId, name: message.senderName, tenureYears: message.tenureYears ?? 0 },
       text: message.text, createdAt: message.createdAt, attachments: message.attachments,
       editedAt: message.editedAt ?? null, deletedAt: message.deletedAt ?? null,
       reference: message.reference ? await resolveReference(user, message.reference) : null
@@ -96,7 +96,10 @@ export function createChat({ store, chatStore, logger = console }) {
       ...modules.filter(({ id }) => canPerform(user, id, 'sectorTalkRead')).map(({ id, label }) => ({
         id: sectorKey(id), key: sectorKey(id), kind: 'sector', name: label, readOnly: !canPerform(user, id, 'sectorTalkSend')
       })),
-      ...contacts.map(person => ({ id: `direct:${person._id}`, key: directKey(user._id, person._id), kind: 'direct', name: person.name, readOnly: !person.active }))
+      ...contacts.map(person => ({
+        id: `direct:${person._id}`, key: directKey(user._id, person._id), kind: 'direct', name: person.name,
+        tenureYears: person.tenureYears ?? 0, readOnly: !person.active,
+      }))
     ];
     const result = new Map((await chatStore.listRoomActivity(user._id, rooms.map(room => room.key))).map(entry => [entry.roomKey, entry]));
     const populated = await Promise.all(rooms.map(async ({ key, ...room }) => {
@@ -104,7 +107,7 @@ export function createChat({ store, chatStore, logger = console }) {
       return { ...room, unread: current?.unread || 0, lastMessage: current?.lastMessage ? await publicMessage(current.lastMessage, user) : null };
     }));
     return {
-      people: contacts.filter(person => person.active).map(({ _id: id, name }) => ({ id, name, online: online.has(id) })),
+      people: contacts.filter(person => person.active).map(({ _id: id, name, tenureYears = 0 }) => ({ id, name, tenureYears, online: online.has(id) })),
       modules: modules.map(publicModule), rooms: populated.filter(room => room.kind === 'sector' || room.lastMessage),
       unread: populated.reduce((total, room) => total + room.unread, 0)
     };

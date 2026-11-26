@@ -2,6 +2,11 @@ const digits = value => value.replace(/\D/g, '');
 const searchText = value => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 const usernamePart = value => searchText(value).replace(/[^a-z0-9]/g, '').slice(0, 35);
 const formatCep = value => digits(value).slice(0, 8).replace(/^(\d{5})(\d)/, '$1-$2');
+const localDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+export function latestAdmissionDate() {
+  return localDate.format(new Date());
+}
 
 function formatCpf(value) {
   return digits(value).slice(0, 11).replace(/^(\d{3})(\d)/, '$1.$2').replace(/^(\d{3}\.\d{3})(\d)/, '$1.$2').replace(/(\d{3}\.\d{3}\.\d{3})(\d)/, '$1-$2');
@@ -17,10 +22,8 @@ function cpfIsValid(value) {
   return checkDigit(9) === Number(cpf[9]) && checkDigit(10) === Number(cpf[10]);
 }
 
-function latestBirthDate() {
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
-  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
-  const date = new Date(`${values.year}-${values.month}-${values.day}T00:00:00Z`);
+function latestBirthDate(today) {
+  const date = new Date(`${today}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() - 1);
   return date.toISOString().slice(0, 10);
 }
@@ -35,7 +38,7 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
   const primary = id('userWizardContinue');
   const back = id('userWizardBack');
   const error = id('newUserError');
-  const fields = Object.fromEntries(['FirstName', 'LastName', 'Cpf', 'BirthDate', 'Email', 'Phone', 'HasChildren', 'ChildrenCount', 'Cep', 'Street', 'Neighborhood', 'AddressNumber', 'Role', 'Username', 'AccessEmail', 'Password'].map(name => [name, id(`newUser${name}`)]));
+  const fields = Object.fromEntries(['FirstName', 'LastName', 'Cpf', 'BirthDate', 'AdmissionDate', 'Email', 'Phone', 'HasChildren', 'ChildrenCount', 'Cep', 'Street', 'Neighborhood', 'AddressNumber', 'Role', 'Username', 'AccessEmail', 'Password'].map(name => [name, id(`newUser${name}`)]));
   const cepStatus = id('newUserCepStatus');
   const cepButton = id('newUserSearchCep');
   const companySearch = id('newUserCompanySearch');
@@ -160,7 +163,7 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
     const address = includeProvided({ cep: digits(fields.Cep.value), street: fields.Street.value.trim(), neighborhood: fields.Neighborhood.value.trim(), number: fields.AddressNumber.value.trim() });
     return includeProvided({
       firstName: fields.FirstName.value.trim(), lastName: fields.LastName.value.trim(), cpf: digits(fields.Cpf.value),
-      birthDate: fields.BirthDate.value, email: fields.Email.value.trim(), phone: digits(fields.Phone.value),
+      birthDate: fields.BirthDate.value, admissionDate: fields.AdmissionDate.value, email: fields.Email.value.trim(), phone: digits(fields.Phone.value),
       hasChildren: children ? children === 'yes' : undefined,
       childrenCount: children === 'yes' && fields.ChildrenCount.value ? Number(fields.ChildrenCount.value) : undefined,
       address: Object.keys(address).length ? address : undefined,
@@ -232,8 +235,10 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
   });
 
   return function open() {
+    const today = latestAdmissionDate();
     fields.BirthDate.min = '1900-01-01';
-    fields.BirthDate.max = latestBirthDate();
+    fields.BirthDate.max = latestBirthDate(today);
+    fields.AdmissionDate.max = today;
     renderGrants(id('newUserGrantOptions'));
     renderCompanies(companyOptions);
     updateChildren();

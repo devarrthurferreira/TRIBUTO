@@ -1,3 +1,5 @@
+import { appendPersonName } from './person-name.js';
+
 const API = '/v1/platform/whatsapp';
 const REFRESH_MS = 10_000;
 const TIME = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -486,10 +488,12 @@ function listOrEmpty(target, entries, makeRow, empty) {
   } else target.append(emptyState(...empty));
 }
 
-function directoryRow(name, details, extra) {
+function directoryRow(name, details, extra, tenureYears) {
   const row = element('li', 'wa-directory-row');
   const text = element('div', 'wa-directory-name');
-  text.append(element('strong', '', name));
+  const title = element('strong');
+  appendPersonName(title, name, tenureYears);
+  text.append(title);
   if (details) text.append(element('small', '', details));
   row.append(text);
   if (extra) row.append(extra);
@@ -859,7 +863,8 @@ function renderSettings(state, data) {
   listOrEmpty(section, entries, (item) => {
     const description = item.email || item.description || item.permissions?.join?.(', ') || item.role || '';
     const status = CONNECTION_LABELS[item.status] || item.status;
-    return directoryRow(item.name || item.label || 'Registro', description, status ? element('span', 'wa-pill', status) : null);
+    return directoryRow(item.name || item.label || 'Registro', description,
+      status ? element('span', 'wa-pill', status) : null, key === 'users' ? item.tenureYears : undefined);
   }, messages[key]);
 }
 

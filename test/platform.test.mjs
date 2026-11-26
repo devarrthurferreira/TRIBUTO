@@ -4,6 +4,7 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { createPlatformRouter } from '../src/platform/routes.mjs';
 import { INTERNAL_WORK_ITEM_MODULES, canPerform, canAccessWorkItemCompany, hasLoginCredentials } from '../src/platform/policy.mjs';
+import { completedTenureYears } from '../src/platform/employment.mjs';
 import { sha256 } from '../src/api/validation.mjs';
 
 const CNPJ_A = '12345678000195';
@@ -32,7 +33,8 @@ class MemoryPlatformStore {
     }
     let username = base;
     for (let attempt = 2; username && users.some((other) => other.username === username); attempt += 1) username = `${base}${attempt}`;
-    this.users.set(user._id, { ...account, username });
+    this.users.set(user._id, { ...account, username, admissionDate: profile?.admissionDate ?? null,
+      tenureYears: completedTenureYears(profile?.admissionDate) });
     if (profile) this.profiles.set(user._id, profile);
     return username;
   }
@@ -47,6 +49,13 @@ class MemoryPlatformStore {
     }
     if (value.active && !hasLoginCredentials(value)) throw Object.assign(new Error('USER_ACCESS_PENDING'), { code: 'USER_ACCESS_PENDING' });
     this.users.set(id, value);
+    if (Object.hasOwn(changes, 'admissionDate')) {
+      value.tenureYears = completedTenureYears(value.admissionDate);
+      const profile = { ...this.profiles.get(id) };
+      if (changes.admissionDate === null) delete profile.admissionDate;
+      else profile.admissionDate = changes.admissionDate;
+      this.profiles.set(id, profile);
+    }
     if (changes.passwordHash) for (const [key, session] of this.sessions) if (session.userId === id) this.sessions.delete(key);
     return value;
   }
@@ -175,6 +184,47 @@ async function setup(url) {
   assert.equal(result.status, 201);
   return { cookie: result.cookie, csrf: result.body.csrfToken, user: result.body.user };
 }
+
+test('admissão conta aniversários completos em São Paulo, inclusive no ano bissexto', () => {
+  assert.equal(completedTenureYears('2018-11-26', new Date('2026-11-26T02:59:59Z')), 7);
+  assert.equal(completedTenureYears('2018-11-26', new Date('2026-11-26T03:00:00Z')), 8);
+  assert.equal(completedTenureYears('2020-02-29', new Date('2025-02-28T22:00:00Z')), 4);
+  assert.equal(completedTenureYears('2020-02-29', new Date('2025-03-01T03:00:00Z')), 5);
+  assert.equal(completedTenureYears(null), 0);
+  assert.equal(completedTenureYears('2099-01-01'), 0);
+});
+
+test('admissão é opcional e pode ser corrigida somente na administração de acessos', async () => fixture(async ({ url }) => {
+  const path = '/v1/platform';
+  const admin = await setup(url);
+  const create = profile => request(url, `${path}/users`, {
+    ...admin, method: 'POST', data: { profile, email: 'pessoa@example.test', password: 'Senha-sintetica-forte' },
+  });
+  for (const admissionDate of ['2020-02-30', '2999-01-01', '1899-01-01', false]) {
+    assert.equal((await create({ admissionDate })).status, 400);
+  }
+  const created = await create({ firstName: 'Pessoa', admissionDate: '2018-02-28' });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.user.admissionDate, '2018-02-28');
+  const account = `${path}/users/${created.body.user.id}`;
+  const detail = await request(url, account, admin);
+  assert.equal(detail.body.profile.admissionDate, '2018-02-28');
+
+  const login = await request(url, `${path}/login`, {
+    method: 'POST', data: { email: 'pessoa@example.test', password: 'Senha-sintetica-forte' },
+  });
+  const member = { cookie: login.cookie, csrf: login.body.csrfToken };
+  assert.equal(login.body.user.tenureYears, completedTenureYears('2018-02-28'));
+  assert.equal(login.body.user.admissionDate, undefined);
+  const update = (data, auth) => request(url, account, { ...auth, method: 'PATCH', data });
+  assert.equal((await update({ admissionDate: '2017-01-01' }, member)).status, 403);
+  assert.equal((await update({ admissionDate: '2019-02-29' }, admin)).status, 400);
+  assert.equal((await update({ admissionDate: '2020-02-29' }, admin)).body.user.admissionDate, '2020-02-29');
+  assert.equal((await request(url, `${path}/session`, member)).body.user.tenureYears, completedTenureYears('2020-02-29'));
+  assert.equal((await update({ admissionDate: null }, admin)).body.user.admissionDate, null);
+  assert.equal((await request(url, account, admin)).body.profile.admissionDate, undefined);
+  assert.equal((await request(url, `${path}/session`, member)).body.user.tenureYears, 0);
+}));
 
 test('cadastro guiado normaliza usuário, separa dados pessoais e usa o mesmo limite de login por e-mail ou usuário', async () => fixture(async ({ store, url }) => {
   const path = '/v1/platform';
@@ -421,16 +471,16 @@ test('tarefas de Marketing mantêm checklist, histórico, conclusão e escopo da
   for (const company of [CNPJ_A, CNPJ_B]) {
     assert.equal((await request(url, `${platform}/companies`, { method: 'POST', ...admin, data: { cnpj: company, name: company } })).status, 201);
   }
-  async function member(name, moduleGrants, companyCnpjs) {
+  async function member(name, moduleGrants, companyCnpjs, admissionDate) {
     const credentials = { email: `${name.toLowerCase()}@example.test`, password: 'senha-exemplo-longa-123' };
     const created = await request(url, `${platform}/users`, { method: 'POST', ...admin,
-      data: { ...credentials, name, role: 'member', moduleGrants, companyCnpjs } });
+      data: { ...credentials, name, role: 'member', moduleGrants, companyCnpjs, profile: { admissionDate } } });
     assert.equal(created.status, 201);
     const login = await request(url, `${platform}/login`, { method: 'POST', data: credentials });
     assert.equal(login.status, 200);
     return { id: created.body.user.id, cookie: login.cookie, csrf: login.body.csrfToken };
   }
-  const editor = await member('Editora', { marketing: 'edit' }, [CNPJ_A]);
+  const editor = await member('Editora', { marketing: 'edit' }, [CNPJ_A], '2018-03-02');
   const reader = await member('Leitora', { marketing: 'view' }, []);
   const outsider = await member('Outro', { tecnologia: 'edit' }, [CNPJ_A, CNPJ_B]);
   const list = access => request(url, `${platform}/work-items?module=marketing`, access);
@@ -464,7 +514,8 @@ test('tarefas de Marketing mantêm checklist, histórico, conclusão e escopo da
   assert.deepEqual((await list(reader)).body.items.map(item => item.id), [task.id]);
   const choices = (await list(reader)).body.assignees;
   assert.deepEqual(choices.map(({ name }) => name).sort(), ['Arthur', 'Editora', 'Leitora']);
-  assert.ok(choices.every(choice => Object.keys(choice).sort().join(',') === 'id,name'));
+  assert.ok(choices.every(choice => Object.keys(choice).sort().join(',') === 'id,name,tenureYears'));
+  assert.equal(choices.find(choice => choice.id === editor.id).tenureYears, completedTenureYears('2018-03-02'));
 
   const finished = await edit(editor, task.id, { status: 'done', checklist: [{ ...task.checklist[0], done: true }], expectedUpdatedAt: task.updatedAt });
   assert.equal(finished.status, 200);
@@ -593,6 +644,7 @@ test('cadastro e carteira de uma empresa exigem administração e preservam o ac
   }
   const created = await request(url, '/v1/platform/users', { method: 'POST', ...admin, data: {
     ...credentials, name: 'Analista Fiscal', role: 'member', companyCnpjs: [CNPJ_B], moduleGrants: { fiscal: 'view' },
+    profile: { admissionDate: '2015-10-30' },
   } });
   assert.equal(created.status, 201);
   const id = created.body.user.id;
@@ -608,7 +660,8 @@ test('cadastro e carteira de uma empresa exigem administração e preservam o ac
 
   const detail = await request(url, customerPath, admin);
   assert.equal(detail.status, 200);
-  assert.deepEqual(detail.body.members, [{ id, name: 'Analista Fiscal', email: credentials.email, active: true, hasAccess: false }]);
+  assert.deepEqual(detail.body.members, [{ id, name: 'Analista Fiscal', email: credentials.email, active: true, hasAccess: false,
+    tenureYears: completedTenureYears('2015-10-30') }]);
   const edited = await request(url, customerPath, { method: 'PATCH', ...admin, data: { name: 'Cliente atualizado', active: false } });
   assert.equal(edited.status, 200);
   assert.equal(edited.body.company.name, 'Cliente atualizado');
