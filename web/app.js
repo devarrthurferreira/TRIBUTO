@@ -7,11 +7,13 @@ import { mountMarketingMetrics } from './marketing-metrics.js';
 import { mountMarketingCrm } from './marketing-crm.js';
 import { mountCrmPageBuilder } from './crm-page-builder.js';
 import { mountClub } from './club.js';
+import { CLUB_PATHS, clubPageFromPath } from './club-routes.js';
 import { mountPeople } from './people.js';
 
 const API = '/v1/platform';
 const DASHBOARD_PATH = '/home';
 const SECTOR_PREFIX = '/setor/';
+const CLUB_ORIGIN_KEY = 'maximum-club-origin-sector';
 const $ = (id) => document.getElementById(id);
 
 const modules = [
@@ -36,8 +38,12 @@ const peopleViews = new Map([['desempenho', 'development'], ['engajamento', 'eng
 const viewLabels = {
   overview: 'Início', ...Object.fromEntries(allModules.map(({ id, label }) => [id, label])),
   companies: 'Empresas/Clientes', 'company-detail': 'Ficha fiscal da empresa', 'client-detail': 'Cadastro do cliente',
-  club: 'Clube de Benefícios', users: 'Equipe e acessos', agents: 'Agentes de coleta',
+  users: 'Equipe e acessos', agents: 'Agentes de coleta',
   desempenho: 'Desempenho e Desenvolvimento', engajamento: 'Clima e Engajamento',
+};
+const clubTitles = {
+  home: 'Clube Maximum', benefits: 'Benefícios | Clube Maximum',
+  advantages: 'Vantagens | Clube Maximum', partners: 'Parceiros | Clube Maximum',
 };
 const actionLabels = {
   workItemRead: 'Consultar atividades',
@@ -76,7 +82,7 @@ function appendEmpty(container, title, description, symbol = '◷') {
   container.append(empty);
 }
 function displayError(error) {
-  if (error?.status === 401) { showAuth(false); return; }
+  if (error?.status === 401) { showAuth(false, '', Boolean(clubPageFromPath(location.pathname))); return; }
   notice(error?.message || 'Não foi possível concluir a operação.', 'error');
 }
 let noticeTimer;
@@ -175,12 +181,14 @@ function isRecent(value) { return !!value && Number.isFinite(new Date(value).get
 function companyName(cnpj) { return state.companies.find((company) => company.cnpj === cnpj)?.name || cnpjLabel(cnpj); }
 
 function viewFromLocation() {
+  if (clubPageFromPath(location.pathname)) return 'club';
   if (location.pathname.startsWith(SECTOR_PREFIX)) return location.pathname.slice(SECTOR_PREFIX.length);
   const fragment = location.hash.slice(1);
   return fragment && fragment !== 'conteudo' ? fragment : 'overview';
 }
 
 function viewUrl(view) {
+  if (view === 'club') return CLUB_PATHS[clubPageFromPath(location.pathname) ?? 'home'];
   if (allModules.some(({ id }) => id === view)) return `${SECTOR_PREFIX}${view}`;
   return view === 'overview' ? DASHBOARD_PATH : `${DASHBOARD_PATH}#${view}`;
 }
@@ -200,12 +208,23 @@ function setPortalContext(view) {
   renderClubRail(view === 'club', assignedSectors);
 }
 
+function clubOriginSector() {
+  const referrer = document.referrer ? new URL(document.referrer) : null;
+  const sourcePath = referrer?.origin === location.origin ? referrer.pathname : '';
+  const sector = allModules.find(({ id }) => sourcePath === `${SECTOR_PREFIX}${id}` && canView(id))?.id;
+  try {
+    if (clubPageFromPath(sourcePath)) return sessionStorage.getItem(CLUB_ORIGIN_KEY);
+    if (sector) sessionStorage.setItem(CLUB_ORIGIN_KEY, sector);
+    else sessionStorage.removeItem(CLUB_ORIGIN_KEY);
+  } catch {
+    // The current page can still show the sector from its referrer.
+  }
+  return sector;
+}
+
 function renderClubRail(active, assignedSectors) {
-  const referrer = active && document.referrer ? new URL(document.referrer) : null;
-  const previousSector = referrer?.origin === location.origin
-    ? allModules.find(({ id }) => referrer.pathname === `${SECTOR_PREFIX}${id}`)?.id : undefined;
   const preferredSectors = active
-    ? [previousSector, ...assignedSectors.map(({ id }) => id), 'tecnologia', ...allModules.map(({ id }) => id)].filter(Boolean)
+    ? [clubOriginSector(), ...assignedSectors.map(({ id }) => id), 'tecnologia', ...allModules.map(({ id }) => id)].filter(Boolean)
     : [];
   const sector = preferredSectors.find(canView);
   const talkSector = preferredSectors.find((id) => canUse(id, 'sectorTalkRead'));
@@ -243,7 +262,8 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   const query = new URLSearchParams(location.search);
   const preserveMarketingLink = preserveRoute && location.pathname === `${SECTOR_PREFIX}marketing`
     && (['tasks', 'metrics', 'crm'].includes(query.get('painel')) || query.has('atividade'));
-  if (!preserveMarketingLink && (location.pathname !== '/' || (!preserveRoute && location.hash))) {
+  const preserveClubLink = preserveRoute && clubPageFromPath(location.pathname);
+  if (!preserveMarketingLink && !preserveClubLink && (location.pathname !== '/' || (!preserveRoute && location.hash))) {
     const fragment = preserveRoute && !location.pathname.startsWith(SECTOR_PREFIX) ? location.hash : '';
     history.replaceState(null, '', `/${fragment}`);
   }
@@ -274,8 +294,11 @@ function applySession(session) {
   const view = viewFromLocation();
   const wantedPath = viewUrl(view).split('#')[0];
   if (location.pathname !== wantedPath) {
-    location.replace(`${wantedPath}${wantedPath === DASHBOARD_PATH ? location.hash : ''}`);
-    return;
+    if (view === 'club') history.replaceState(null, '', wantedPath);
+    else {
+      location.replace(`${wantedPath}${wantedPath === DASHBOARD_PATH ? location.hash : ''}`);
+      return;
+    }
   }
   state.session = session;
   $('authView').hidden = true;
@@ -386,9 +409,10 @@ function navigate(view, { replace = false } = {}) {
     return false;
   }
   state.view = detail ? 'company-detail' : clientDetail ? 'client-detail' : route;
-  document.title = state.view === 'overview'
-    ? 'Central Maximum | Maximum Contábil'
-    : `${viewLabels[state.view]} | Central Maximum`;
+  const clubPage = state.view === 'club' ? clubPageFromPath(location.pathname) : undefined;
+  document.title = clubPage ? clubTitles[clubPage]
+    : state.view === 'overview' ? 'Central Maximum | Maximum Contábil'
+      : `${viewLabels[state.view]} | Central Maximum`;
   if (detail) {
     if (state.selectedCompanyCnpj !== companyRoute[1]) {
       state.nfsePage = 1;
@@ -432,7 +456,7 @@ function navigate(view, { replace = false } = {}) {
   } : null, { home: state.view === 'overview' });
   $('conteudo').focus({ preventScroll: true });
   if (previousView !== state.view && (peopleArea || state.view === 'club')) window.scrollTo({ top: 0, behavior: 'instant' });
-  if (state.view === 'club') void club.open({ isAdmin: isAdmin() });
+  if (clubPage) void club.open({ isAdmin: isAdmin(), page: clubPage });
   else club.close();
   if (peopleArea) void people.open({ area: peopleArea, isAdmin: isAdmin() });
   else people.close();
@@ -1536,4 +1560,4 @@ mountPortal(() => {
   if (state.view === 'overview') openChat();
   else location.assign('/home?talk=1');
 }, () => sectorNavigation.open('whatsapp'));
-request('/session').then(applySession).catch((error) => showAuth(false, error.message));
+request('/session').then(applySession).catch((error) => showAuth(false, error.message, Boolean(clubPageFromPath(location.pathname))));

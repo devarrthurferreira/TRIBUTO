@@ -1,7 +1,26 @@
+import { CLUB_PATHS, clubPageFromPath } from './club-routes.js';
+
+const managementPreference = 'maximum.club.manager';
+
 const sections = {
-  benefits: { label: 'Benefícios', singular: 'benefício', title: 'Benefícios da Maximum', description: 'Conheça os benefícios internos e as orientações para usar cada um.', icon: 'gift', collection: 'benefits', kind: 'benefit' },
-  advantages: { label: 'Vantagens', singular: 'vantagem', title: 'Vantagens e descontos', description: 'Confira as condições oferecidas pelos parceiros da Maximum.', icon: 'tag', collection: 'benefits', kind: 'advantage' },
-  partners: { label: 'Parceiros', singular: 'parceiro', title: 'Parceiros e locais', description: 'Encontre endereços, contatos e os locais onde você pode aproveitar as vantagens.', icon: 'geo-alt', collection: 'partners' },
+  benefits: {
+    label: 'Benefícios', singular: 'benefício', title: 'Benefícios da Maximum', icon: 'gift', collection: 'benefits', kind: 'benefit',
+    description: 'Conheça os benefícios internos da equipe e veja como usar cada um.',
+    summary: 'Benefícios da equipe e orientações de acesso.',
+    search: 'Buscar por nome ou categoria', empty: 'Nenhum benefício publicado',
+  },
+  advantages: {
+    label: 'Vantagens', singular: 'vantagem', title: 'Vantagens e descontos', icon: 'tag', collection: 'benefits', kind: 'advantage',
+    description: 'Explore as ofertas disponíveis e confira as condições antes de usar.',
+    summary: 'Descontos e condições especiais dos parceiros.',
+    search: 'Buscar por oferta, categoria ou parceiro', empty: 'Nenhuma vantagem publicada',
+  },
+  partners: {
+    label: 'Parceiros', singular: 'parceiro', title: 'Parceiros e locais', icon: 'geo-alt', collection: 'partners',
+    description: 'Encontre os parceiros do Clube, consulte endereços e acesse seus canais de contato.',
+    summary: 'Endereços, mapas e contatos da rede parceira.',
+    search: 'Buscar por nome, segmento ou endereço', empty: 'Nenhum parceiro publicado',
+  },
 };
 const extraFields = {
   benefits: [
@@ -45,6 +64,22 @@ function button(label, className = 'club-button', symbol = '') {
 function isPublished(item) { return item.active !== false; }
 function matchText(value) { return String(value ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('pt-BR'); }
 
+function rememberManagement(enabled) {
+  try {
+    if (enabled) sessionStorage.setItem(managementPreference, '1');
+    else sessionStorage.removeItem(managementPreference);
+  } catch {} // Management still works when browser storage is disabled.
+}
+
+function restoreManagement() {
+  const referrer = document.referrer ? new URL(document.referrer) : null;
+  const internalNavigation = referrer?.origin === location.origin && clubPageFromPath(referrer.pathname);
+  const reloading = performance.getEntriesByType('navigation')[0]?.type === 'reload';
+  if (!internalNavigation && !reloading) return false;
+  try { return sessionStorage.getItem(managementPreference) === '1'; }
+  catch { return false; }
+}
+
 function safeLink(value) {
   try {
     const url = new URL(value);
@@ -83,7 +118,7 @@ function decorateCard(card, item, section, partner) {
   const heading = element('div', 'club-card-heading');
   const title = element('div');
   if (item.category) title.append(element('p', 'club-card-category', item.category));
-  title.append(element('h3', '', item.title));
+  title.append(element('h2', '', item.title));
   heading.append(mark, title);
   card.append(heading);
 
@@ -111,6 +146,13 @@ function decorateCard(card, item, section, partner) {
     appendLink(links, item.url, section.kind === 'advantage' ? 'Usar vantagem' : 'Acessar benefício', 'arrow-up-right');
   }
   if (links.childElementCount) card.append(links);
+}
+
+function entriesInSection(catalog, section, partners, includeHidden) {
+  return catalog[section.collection].filter((item) => {
+    if (!includeHidden && (!isPublished(item) || (item.partnerId && !partners.has(item.partnerId)))) return false;
+    return !section.kind || (item.kind || (item.partnerId ? 'advantage' : 'benefit')) === section.kind;
+  });
 }
 
 function formField(field, value, partners) {
@@ -151,38 +193,29 @@ export function mountClub(root, { request, onAuthError }) {
   let saving = false;
   let activeMutation = null;
   let editing = null;
-  let scrollFrame = 0;
-  let scrollTarget = null;
+  let page = 'home';
+  let panel = null;
 
   root.classList.add('club-shell');
   root.innerHTML = `
-    <nav class="club-navigation" aria-label="Navegação do Clube" data-club="navigation">
-      <button class="club-brand" type="button" data-club-jump="home" aria-label="Clube Maximum, início">
+    <nav class="club-navigation" aria-label="Navegação do Clube">
+      <a class="club-brand" href="${CLUB_PATHS.home}" aria-label="Clube Maximum, início">
         <span class="club-brand-icon"><i class="bi bi-gift" aria-hidden="true"></i></span>
         <span>Clube <strong>Maximum</strong></span>
-      </button>
+      </a>
       <div class="club-nav-links">
-        <button type="button" class="club-nav-link" data-club-jump="home" aria-current="location">Início</button>
-        <button type="button" class="club-nav-link" data-club-jump="benefits">Benefícios</button>
-        <button type="button" class="club-nav-link" data-club-jump="advantages">Vantagens</button>
-        <button type="button" class="club-nav-link" data-club-jump="partners">Parceiros</button>
+        <a class="club-nav-link" href="${CLUB_PATHS.home}" data-club-page="home">Início</a>
+        ${Object.entries(sections).map(([key, { label }]) => `<a class="club-nav-link" href="${CLUB_PATHS[key]}" data-club-page="${key}">${label}</a>`).join('')}
       </div>
       <button type="button" class="club-button club-manage" data-club="manage" title="Gerenciar Clube" aria-label="Gerenciar Clube" hidden><i class="bi bi-gear" aria-hidden="true"></i><span>Gerenciar Clube</span></button>
     </nav>
-    <header class="club-hero">
-      <div class="club-hero-copy">
-        <h1 id="clubTitle" tabindex="-1">Clube Maximum</h1>
-        <p>Um espaço para conhecer os benefícios da equipe e aproveitar descontos dos nossos parceiros.</p>
-        <button class="club-button club-hero-action" type="button" data-club-jump="benefits">Explorar benefícios <i class="bi bi-arrow-down" aria-hidden="true"></i></button>
-      </div>
-    </header>
     <div class="club-admin-bar" data-club="adminBar" hidden>
       <span><i class="bi bi-gear" aria-hidden="true"></i> Gestão do catálogo</span>
       <button type="button" class="club-button" data-club="import"><i class="bi bi-upload" aria-hidden="true"></i> Importar catálogo</button>
     </div>
+    <div data-club="content"></div>
     <p class="club-message" data-club="message" role="status" hidden></p>
     <div class="club-load-state" data-club="loadState" role="status" hidden></div>
-    <div class="club-sections" data-club="panels"></div>
     <dialog class="club-dialog" data-club="dialog" aria-labelledby="clubDialogTitle">
       <form data-club="form">
         <header class="club-dialog-head">
@@ -198,92 +231,71 @@ export function mountClub(root, { request, onAuthError }) {
       </form>
     </dialog>`;
   const ui = Object.fromEntries(Array.from(root.querySelectorAll('[data-club]'), (node) => [node.dataset.club, node]));
-  const panels = new Map();
   const navLinks = Array.from(root.querySelectorAll('.club-nav-link'));
 
-  for (const [key, section] of Object.entries(sections)) {
-    const panel = element('section', 'club-panel');
-    panel.dataset.section = key;
-    panel.setAttribute('aria-labelledby', `club-heading-${key}`);
-    panel.innerHTML = `
+  function renderHomePage() {
+    ui.content.innerHTML = `
+      <header class="club-hero">
+        <div class="club-hero-copy">
+          <h1 id="clubTitle">Clube Maximum</h1>
+          <p>Benefícios para a equipe, descontos e parceiros em um só lugar.</p>
+          <a class="club-button club-hero-action" href="${CLUB_PATHS.benefits}">Explorar benefícios <i class="bi bi-arrow-right" aria-hidden="true"></i></a>
+        </div>
+      </header>
+      <section class="club-home-directory" aria-labelledby="clubDirectoryTitle">
+        <h2 id="clubDirectoryTitle">Explore o Clube</h2>
+        <div class="club-home-grid">
+          ${Object.entries(sections).map(([key, section]) => `
+            <a class="club-home-card" data-section="${key}" href="${CLUB_PATHS[key]}">
+              <span class="club-panel-icon"><i class="bi bi-${section.icon}" aria-hidden="true"></i></span>
+              <i class="bi bi-arrow-up-right club-home-arrow" aria-hidden="true"></i>
+              <h3>${section.label}</h3>
+              <p>${section.summary}</p>
+              <span class="club-home-count" data-club-count="${key}" hidden></span>
+            </a>`).join('')}
+        </div>
+      </section>`;
+    ui.content.querySelector('.club-hero').after(ui.message, ui.loadState);
+  }
+
+  function renderCatalogPage(key) {
+    const section = sections[key];
+    const rootPanel = element('div', 'club-panel');
+    rootPanel.dataset.section = key;
+    rootPanel.innerHTML = `
       <header class="club-panel-head">
-        <span class="club-panel-icon"><i class="bi bi-${section.icon}" aria-hidden="true"></i></span>
         <div class="club-panel-copy">
-          <h2 id="club-heading-${key}" tabindex="-1">${section.title}</h2>
+          <span class="club-panel-icon"><i class="bi bi-${section.icon}" aria-hidden="true"></i></span>
+          <h1 id="clubTitle">${section.title}</h1>
           <p>${section.description}</p>
         </div>
-        <button type="button" class="club-button club-primary" data-panel="add" hidden>+ Adicionar ${section.singular}</button>
+        <button type="button" class="club-button club-primary" data-panel="add" hidden><i class="bi bi-plus-lg" aria-hidden="true"></i>Adicionar ${section.singular}</button>
       </header>
       <div class="club-tools" data-panel="tools" hidden>
-        <label class="club-search"><i class="bi bi-search" aria-hidden="true"></i><span class="sr-only">Buscar em ${section.label}</span><input type="search" data-panel="search" placeholder="Buscar em ${section.label.toLocaleLowerCase('pt-BR')}"></label>
-        <label class="club-filter" data-panel="filter" hidden><span class="sr-only">Filtrar ${section.label.toLocaleLowerCase('pt-BR')} por categoria</span><select data-panel="category"></select></label>
+        <label class="club-search"><i class="bi bi-search" aria-hidden="true"></i><span class="sr-only">${section.search}</span><input type="search" data-panel="search" placeholder="${section.search}"></label>
+        <label class="club-filter" data-panel="filter" hidden><span class="sr-only">${key === 'partners' ? 'Filtrar por segmento' : 'Filtrar por categoria'}</span><select data-panel="category"></select></label>
         <p class="club-results" data-panel="results" role="status"></p>
       </div>
       <div class="club-list" data-panel="list"></div>`;
-    const refs = Object.fromEntries(Array.from(panel.querySelectorAll('[data-panel]'), (node) => [node.dataset.panel, node]));
-    refs.search.addEventListener('input', () => renderResults(key));
-    refs.category.addEventListener('change', () => renderResults(key));
+    const refs = Object.fromEntries(Array.from(rootPanel.querySelectorAll('[data-panel]'), (node) => [node.dataset.panel, node]));
+    refs.search.addEventListener('input', renderResults);
+    refs.category.addEventListener('change', renderResults);
     refs.add.addEventListener('click', () => openEditor(key));
-    panels.set(key, { panel, ...refs });
-    ui.panels.append(panel);
+    refs.tools.before(ui.message, ui.loadState);
+    ui.content.replaceChildren(rootPanel);
+    return refs;
   }
 
-  function markActive(key) {
+  function renderPage() {
     for (const link of navLinks) {
-      if (link.dataset.clubJump === key) link.setAttribute('aria-current', 'location');
+      if (link.dataset.clubPage === page) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     }
+    panel = page === 'home' ? null : renderCatalogPage(page);
+    if (!panel) renderHomePage();
   }
 
-  function updateActiveFromScroll() {
-    scrollFrame = 0;
-    if (!opened) return;
-    const position = window.scrollY;
-    if (scrollTarget) {
-      if (Math.abs(position - scrollTarget.top) < 2) {
-        scrollTarget.reached = true;
-        markActive(scrollTarget.key);
-        return;
-      }
-      if (!scrollTarget.reached && performance.now() < scrollTarget.until) return;
-      scrollTarget = null;
-    }
-    const boundary = ui.navigation.getBoundingClientRect().bottom + 24;
-    let key = 'home';
-    for (const [name, { panel }] of panels) {
-      if (panel.getBoundingClientRect().top <= boundary) key = name;
-    }
-    if (position > 0 && position + window.innerHeight >= document.documentElement.scrollHeight - 2) key = 'partners';
-    markActive(key);
-  }
-
-  function goTo(key, { focus = true } = {}) {
-    const target = key === 'home' ? root : panels.get(key)?.panel;
-    if (!target) return;
-    markActive(key);
-    const heading = target.querySelector(key === 'home' ? 'h1' : 'h2');
-    if (focus) heading?.focus({ preventScroll: true });
-    const headerHeight = document.querySelector('.portal-header')?.getBoundingClientRect().height ?? 0;
-    const navHeight = key === 'home' ? 0 : ui.navigation.offsetHeight;
-    const offset = headerHeight + navHeight + 12;
-    const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
-    const top = Math.max(0, Math.min(maxScroll, window.scrollY + target.getBoundingClientRect().top - offset));
-    const smooth = focus && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    scrollTarget = { key, top, reached: !smooth, until: performance.now() + 900 };
-    window.scrollTo({ top, behavior: smooth ? 'smooth' : 'instant' });
-  }
-
-  for (const jump of root.querySelectorAll('[data-club-jump]')) {
-    jump.addEventListener('click', () => goTo(jump.dataset.clubJump));
-  }
-  window.addEventListener('scroll', () => {
-    if (opened && !scrollFrame) scrollFrame = window.requestAnimationFrame(updateActiveFromScroll);
-  }, { passive: true });
-
-  function showMessage(message, key) {
-    const list = panels.get(key)?.list;
-    if (list) list.before(ui.message);
-    else ui.panels.before(ui.message);
+  function showMessage(message) {
     ui.message.textContent = message;
     ui.message.hidden = !message;
   }
@@ -319,37 +331,54 @@ export function mountClub(root, { request, onAuthError }) {
     ui.manage.setAttribute('aria-pressed', String(managing));
     ui.manage.title = manageLabel;
     ui.adminBar.hidden = !managing || !catalog;
-    for (const [key, refs] of panels) {
-      refs.add.hidden = !managing || !catalog;
-      if (catalog) renderResults(key);
+    if (panel) {
+      panel.add.hidden = !managing || !catalog;
+      if (catalog) renderResults();
+    } else if (catalog) {
+      const partners = new Map(catalog.partners.filter(isPublished).map((partner) => [partner.id, partner]));
+      for (const count of ui.content.querySelectorAll('[data-club-count]')) {
+        const section = sections[count.dataset.clubCount];
+        const total = entriesInSection(catalog, section, partners, false).length;
+        count.textContent = total === 1 ? '1 disponível' : `${total} disponíveis`;
+        count.hidden = false;
+      }
     }
   }
 
   function emptyState(section, filtered) {
     const empty = element('div', 'club-empty');
-    empty.append(icon(section.icon), element('strong', '', filtered ? 'Nenhum resultado encontrado' : 'Ainda não há registros nesta seção'));
-    if (filtered) empty.append(element('p', '', 'Tente outra busca ou categoria.'));
+    const title = managing ? 'Nenhum registro cadastrado' : section.empty;
+    empty.append(icon(section.icon), element('strong', '', filtered ? 'Nenhum resultado encontrado' : title));
+    if (filtered) {
+      const clear = button('Limpar filtros');
+      clear.addEventListener('click', () => {
+        panel.search.value = '';
+        panel.category.value = '';
+        renderResults();
+        panel.search.focus();
+      });
+      empty.append(clear);
+    }
     return empty;
   }
 
-  function renderResults(key) {
-    if (!catalog) return;
-    const section = sections[key];
-    const { category, filter, list, results, search, tools } = panels.get(key);
+  function renderResults() {
+    if (!catalog || !panel) return;
+    const section = sections[page];
+    const { category, filter, list, results, search, tools } = panel;
     const partners = new Map(catalog.partners.filter((partner) => managing || isPublished(partner)).map((partner) => [partner.id, partner]));
-    const entries = catalog[section.collection].filter((item) => {
-      if (!managing && (!isPublished(item) || (item.partnerId && !partners.has(item.partnerId)))) return false;
-      return !section.kind || (item.kind || (item.partnerId ? 'advantage' : 'benefit')) === section.kind;
-    });
+    const entries = entriesInSection(catalog, section, partners, managing);
     const categories = [...new Set(entries.map(({ category: label }) => label).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
     tools.hidden = !entries.length;
     filter.hidden = !categories.length;
     if (category.dataset.options !== JSON.stringify(categories)) {
       const selected = category.value;
-      category.replaceChildren(new Option('Todas as categorias', ''), ...categories.map((label) => new Option(label, label)));
+      const allLabel = page === 'partners' ? 'Todos os segmentos' : 'Todas as categorias';
+      category.replaceChildren(new Option(allLabel, ''), ...categories.map((label) => new Option(label, label)));
       category.value = categories.includes(selected) ? selected : '';
       category.dataset.options = JSON.stringify(categories);
     }
+    if (tools.hidden) search.value = '';
     const term = matchText(search.value.trim());
     const matching = entries.filter((item) => {
       const words = [item.title, item.description, item.offer, item.address, item.category, partners.get(item.partnerId)?.title];
@@ -363,7 +392,7 @@ export function mountClub(root, { request, onAuthError }) {
     list.replaceChildren(...matching.map((item) => {
       const card = element('article', 'club-card');
       decorateCard(card, item, section, partners.get(item.partnerId));
-      if (managing) renderAdminActions(card, key, item);
+      if (managing) renderAdminActions(card, page, item);
       return card;
     }));
   }
@@ -484,6 +513,7 @@ export function mountClub(root, { request, onAuthError }) {
   ui.manage.addEventListener('click', () => {
     if (!isAdmin) return;
     managing = !managing;
+    rememberManagement(managing);
     showMessage('');
     render();
   });
@@ -516,9 +546,9 @@ export function mountClub(root, { request, onAuthError }) {
       }
       if (current !== generation || !opened) return;
       ui.dialog.close();
-      showMessage(message, key);
+      showMessage(message);
       await load(true);
-      if (opened) (importing ? ui.import : panels.get(key).add).focus({ preventScroll: true });
+      if (opened && (importing || key === page)) (importing ? ui.import : panel.add).focus({ preventScroll: true });
     } catch (error) {
       if (current !== generation || !opened) return;
       if (error.status === 401) onAuthError(error);
@@ -530,43 +560,41 @@ export function mountClub(root, { request, onAuthError }) {
       }
     }
   });
+  window.addEventListener('pageshow', (event) => {
+    if (opened && event.persisted && !saving) void load();
+  });
 
-  return {
-    open({ isAdmin: canManage }) {
-      if (opened && isAdmin === Boolean(canManage)) return;
-      opened = true;
-      isAdmin = Boolean(canManage);
-      managing = false;
-      catalog = null;
-      goTo('home', { focus: false });
-      void load();
-    },
-    close() {
-      if (!opened) return;
-      opened = false;
-      generation += 1;
-      isAdmin = false;
-      managing = false;
-      catalog = null;
-      editing = null;
-      activeMutation = null;
-      if (scrollFrame) window.cancelAnimationFrame(scrollFrame);
-      scrollFrame = 0;
-      scrollTarget = null;
-      if (ui.dialog.open) ui.dialog.close();
-      ui.fields.replaceChildren();
-      ui.manage.hidden = ui.adminBar.hidden = true;
-      for (const { list, search, category, results, tools, add } of panels.values()) {
-        list.replaceChildren();
-        search.value = '';
-        category.replaceChildren();
-        delete category.dataset.options;
-        results.textContent = '';
-        tools.hidden = add.hidden = true;
-      }
-      setLoadState('');
-      showMessage('');
-      updateBusy(false);
-    },
-  };
+  function open({ isAdmin: canManage, page: nextPage = 'home' }) {
+    if (opened && isAdmin === Boolean(canManage) && page === nextPage) return;
+    close();
+    opened = true;
+    isAdmin = Boolean(canManage);
+    managing = isAdmin && restoreManagement();
+    rememberManagement(managing);
+    page = nextPage;
+    renderPage();
+    void load();
+  }
+
+  function close() {
+    if (!opened) return;
+    opened = false;
+    generation += 1;
+    isAdmin = false;
+    managing = false;
+    rememberManagement(false);
+    catalog = null;
+    panel = null;
+    editing = null;
+    activeMutation = null;
+    if (ui.dialog.open) ui.dialog.close();
+    ui.fields.replaceChildren();
+    ui.content.replaceChildren();
+    ui.manage.hidden = ui.adminBar.hidden = true;
+    setLoadState('');
+    showMessage('');
+    updateBusy(false);
+  }
+
+  return { open, close };
 }

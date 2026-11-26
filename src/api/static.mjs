@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { MODULES } from '../platform/policy.mjs';
+import { clubPageFromPath } from '../../web/club-routes.js';
 
 const ALLOWED = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -22,6 +23,7 @@ const ALLOWED = new Map([
   ['/crm-page-tracking.js', ['crm-page-tracking.js', 'text/javascript; charset=utf-8']],
   ['/marketing.css', ['marketing.css', 'text/css; charset=utf-8']],
   ['/club.js', ['club.js', 'text/javascript; charset=utf-8']],
+  ['/club-routes.js', ['club-routes.js', 'text/javascript; charset=utf-8']],
   ['/club.css', ['club.css', 'text/css; charset=utf-8']],
   ['/people.js', ['people.js', 'text/javascript; charset=utf-8']],
   ['/people.css', ['people.css', 'text/css; charset=utf-8']],
@@ -44,7 +46,7 @@ const ALLOWED = new Map([
 
 export async function serveStatic(req, res, pathname) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return false;
-  const asset = ALLOWED.get(pathname);
+  const asset = ALLOWED.get(clubPageFromPath(pathname) ? '/home' : pathname);
   if (!asset) return false;
   const file = new URL(`../../web/${asset[0]}`, import.meta.url);
   try {
