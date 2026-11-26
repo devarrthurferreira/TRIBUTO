@@ -65,7 +65,8 @@ function copyLink(control, status) {
 }
 
 export function mountDossierAdmin(root, {
-  request, canCreate = false, canLink = false, canFees = false, allowUnboundLinks = false, companies = [], onAuthError,
+  request, canCreate = false, canLink = false, canFees = false, allowUnboundLinks = false, companies = [],
+  sectorLabel = 'Sucesso do Cliente', onAuthError,
 }) {
   let active = true;
   let currentPage = 1;
@@ -75,10 +76,11 @@ export function mountDossierAdmin(root, {
   let panelCleanup;
   let returnFocus;
   let busy = false;
+  let feeStep = false;
   const app = el('div', 'dossier-admin');
   const header = el('header', 'dossier-page-head');
   const headTitle = el('div');
-  headTitle.append(el('p', 'eyebrow', 'Sucesso do Cliente'), el('h2', '', 'Dossiês'),
+  headTitle.append(el('p', 'eyebrow', sectorLabel), el('h2', '', 'Dossiês'),
     el('p', '', 'Acompanhe os cadastros das empresas e os honorários de cada atendimento.'));
   const headActions = el('div', 'dossier-actions');
   const create = button('Novo dossiê', true);
@@ -131,10 +133,12 @@ export function mountDossierAdmin(root, {
     setNotice(panelStatus, '');
   }
 
-  function showPanel(title, opener) {
+  function showPanel(title, opener, { left = false, fees = false } = {}) {
     const alreadyOpen = dialog.open;
     if (!alreadyOpen) returnFocus = opener || document.activeElement;
     wipePanel();
+    dialog.classList.toggle('dossier-dialog-left', left);
+    feeStep = fees;
     panelTitle.textContent = title;
     dialog.setAttribute('aria-label', title);
     if (!alreadyOpen) dialog.showModal();
@@ -212,7 +216,7 @@ export function mountDossierAdmin(root, {
 
   function openForm(dossier, opener) {
     const title = dossier ? 'Editar dossiê' : 'Novo dossiê';
-    const version = showPanel(title, opener);
+    const version = showPanel(title, opener, { left: true });
     panelCleanup = mountDossierForm(panel, {
       initial: dossier,
       lockCompany: Boolean(dossier),
@@ -232,9 +236,15 @@ export function mountDossierAdmin(root, {
       },
       onSuccess(result) {
         void loadList(dossier ? currentPage : 1);
-        const id = result.dossier?.id || result.id || dossier?.id;
-        if (id) void openDetail(id, opener);
-        else dialog.close();
+        const next = { left: true, fees: !dossier && canFees };
+        const message = dossier ? 'Alterações salvas.'
+          : next.fees ? 'Dossiê salvo. Cadastre os honorários quando estiver pronto.' : 'Dossiê salvo.';
+        if (result.dossier?.id) {
+          showPanel('Dossiê', opener, next);
+          drawDetail(result.dossier, message);
+        } else if (result.id || dossier?.id) {
+          void openDetail(result.id || dossier.id, opener, { ...next, message });
+        } else dialog.close();
       },
     });
   }
@@ -251,7 +261,9 @@ export function mountDossierAdmin(root, {
     const status = dossier.feesStatus;
     const section = el('section', 'dossier-fees');
     const heading = el('div', 'dossier-section-head');
-    heading.append(el('h3', '', 'Honorários'), badge(status));
+    const title = el('h3', '', 'Honorários');
+    title.tabIndex = -1;
+    heading.append(title, badge(status));
     section.append(heading);
     const recipients = dossier.feeRecipients || [];
     if (recipients.length) {
@@ -285,7 +297,9 @@ export function mountDossierAdmin(root, {
     }
     if (['queued', 'sending', 'uncertain', 'sent', 'failed'].includes(status)) {
       const refresh = button('Atualizar situação');
-      refresh.addEventListener('click', () => { void openDetail(dossier.id); });
+      refresh.addEventListener('click', () => {
+        void openDetail(dossier.id, undefined, { left: dialog.classList.contains('dossier-dialog-left'), fees: feeStep });
+      });
       section.append(refresh);
     }
     if (dossier.archivedAt || ['queued', 'sending'].includes(status)) return section;
@@ -325,7 +339,8 @@ export function mountDossierAdmin(root, {
       section.append(current);
     }
     editor.append(form);
-    section.append(editor);
+    if (feeStep && !fees.version) heading.after(editor);
+    else section.append(editor);
     if (dossier.feeHistory?.length) {
       const history = el('details', 'dossier-summary-section');
       const entries = el('ul', 'dossier-history');
@@ -368,9 +383,16 @@ export function mountDossierAdmin(root, {
     const summary = renderDossierData(dossier, { collapsed: true });
     panel.replaceChildren(headings);
     if (dossier.archivedAt) panel.append(notice('Arquivado em ' + dateLabel(dossier.archivedAt) + '.'));
-    panel.append(summary);
-    if (canFees) panel.append(renderFees(dossier));
+    const fees = canFees ? renderFees(dossier) : null;
+    if (fees && feeStep) {
+      fees.classList.add('dossier-fees-next');
+      panel.append(fees, summary);
+    } else {
+      panel.append(summary);
+      if (fees) panel.append(fees);
+    }
     setNotice(panelStatus, message);
+    if (feeStep) fees?.querySelector('h3').focus();
   }
 
   function feeAction(dossier, suffix, method, body, action) {
@@ -401,12 +423,12 @@ export function mountDossierAdmin(root, {
     }
   }
 
-  async function openDetail(id, opener) {
-    const version = showPanel('Dossiê', opener);
+  async function openDetail(id, opener, { message = '', ...layout } = {}) {
+    const version = showPanel('Dossiê', opener, layout);
     setNotice(panelStatus, 'Carregando dossiê…');
     try {
       const { dossier } = await request('/dossiers/' + encodeURIComponent(id));
-      if (present(version)) drawDetail(dossier);
+      if (present(version)) drawDetail(dossier, message);
     } catch (failure) {
       if (present(version)) showFailure(panelStatus, failure);
     }

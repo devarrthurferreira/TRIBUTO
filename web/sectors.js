@@ -38,7 +38,7 @@ function sectionOptions(sector) {
   }
   if (sector.clubMood) options.push({ id: 'humor', label: 'Humor e presença' });
   if (sector.fiscalDocuments) options.push({ id: 'fiscal', label: 'Documentos fiscais' });
-  if (sector.dossier) options.push({ id: 'dossier', label: 'Dossiê' });
+  if (sector.dossier) options.push({ id: 'dossier', label: 'Dossiês' });
   if (sector.notifications) options.push({ id: 'notifications', label: 'Notificações e envios' });
   if (sector.admin && sector.id === 'tecnologia') {
     options.push({ id: 'users', label: 'Equipe e acessos', href: '/home#users' });

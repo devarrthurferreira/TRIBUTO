@@ -14,9 +14,11 @@ const FISCAL_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, fiscalDocumentsRead: '
 const MARKETING_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, marketingCrmRead: 'edit', marketingCrmManage: 'edit' });
 const RH_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, clubMoodRead: 'manage' });
 const TECHNOLOGY_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, smtpManage: 'manage' });
-const CUSTOMER_SUCCESS_ACTIONS = Object.freeze({ ...MODULE_ACTIONS,
+const DOSSIER_MODULES = Object.freeze(['sucesso-do-cliente', 'diretoria']);
+const DOSSIER_ACTIONS = Object.freeze({
   dossierRead: 'view', dossierCreate: 'edit', dossierLink: 'edit', dossierFees: 'edit',
 });
+const DOSSIER_MODULE_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, ...DOSSIER_ACTIONS });
 const ACTION_PREREQUISITES = new Map([
   ['workItemCreate', 'workItemRead'],
   ['workItemUpdate', 'workItemRead'],
@@ -49,7 +51,7 @@ function actionLevels(module) {
   if (module === 'marketing') return MARKETING_ACTIONS;
   if (module === 'rh') return RH_ACTIONS;
   if (module === 'tecnologia') return TECHNOLOGY_ACTIONS;
-  if (module === 'sucesso-do-cliente') return CUSTOMER_SUCCESS_ACTIONS;
+  if (DOSSIER_MODULES.includes(module)) return DOSSIER_MODULE_ACTIONS;
   return MODULE_ACTIONS;
 }
 
@@ -76,6 +78,10 @@ export function canPerform(user, module, action) {
   const blocked = user.moduleGrants[module]?.blockedActions;
   if (!Array.isArray(blocked)) return true;
   return !blocked.includes(action) && !blocked.includes(ACTION_PREREQUISITES.get(action));
+}
+
+export function canPerformDossier(user, action) {
+  return Object.hasOwn(DOSSIER_ACTIONS, action) && DOSSIER_MODULES.some(module => canPerform(user, module, action));
 }
 
 export function capabilitiesFor(user) {

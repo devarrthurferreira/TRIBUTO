@@ -1,12 +1,11 @@
 import { ApiError } from '../api/validation.mjs';
 import { validCnpj } from '../platform/brazilian-documents.mjs';
-import { canPerform } from '../platform/policy.mjs';
+import { canPerformDossier } from '../platform/policy.mjs';
 import { renderDossierHtml } from './documents.mjs';
 import { normalizeDossier, normalizeFees } from './fields.mjs';
 
 const PRIVATE_ROOT = '/dossiers';
 const PUBLIC_ENDPOINT = '/v1/dossier-link';
-const SUCCESS = 'sucesso-do-cliente';
 const UUID = '[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}';
 const DOSSIER_ROUTE = new RegExp(`^${PRIVATE_ROOT}/(${UUID})(/document|/fees|/fees/send|/archive|/restore)?$`);
 const LINK_ROUTE = new RegExp(`^${PRIVATE_ROOT}/links/(${UUID})$`);
@@ -14,8 +13,8 @@ const TOKEN = /^Bearer ([A-Za-z0-9_-]{43})$/;
 const BODY_LIMIT = 700_000;
 
 function requireAction(user, action) {
-  if (!canPerform(user, SUCCESS, action)) {
-    throw new ApiError(403, 'DOSSIER_FORBIDDEN', 'Seu acesso ao Sucesso do Cliente não permite esta operação.');
+  if (!canPerformDossier(user, action)) {
+    throw new ApiError(403, 'DOSSIER_FORBIDDEN', 'Seu perfil não tem permissão para esta operação no Dossiê.');
   }
 }
 
@@ -86,7 +85,7 @@ export function createDossierRouter(store) {
     async handleHttp({ req, res, route, user, send, readBody, logger }) {
       requireAction(user, 'dossierRead');
       const { method } = req;
-      const includeFees = canPerform(user, SUCCESS, 'dossierFees');
+      const includeFees = canPerformDossier(user, 'dossierFees');
       const detail = async id => ({ dossier: await store.read(user, id, { includeFees }) });
       try {
         if (route === PRIVATE_ROOT && method === 'GET') {

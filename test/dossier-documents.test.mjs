@@ -67,6 +67,19 @@ test('cadastro valida dependências, limites, documentos, UFs e data de calendá
   assert.equal(normalized.indicacao.nomeIndicador, '');
 });
 
+test('CNPJ em constituição fica vazio sem relaxar a validação de documentos', () => {
+  const dados = example();
+  const coligada = { tipo: 'coligada', nome: 'Unidade em constituição', regimeTributario: 'Simples Nacional' };
+  for (const cnpj of ['', '00000000000000', '00.000.000/0000-00']) {
+    const record = normalizeDossier({ ...dados, filiais: [{ ...coligada, cnpj }] });
+    assert.equal(record.filiais[0].cnpj, '');
+    assert.match(renderDossierHtml(record), /Unidade em constituição/);
+    assert.doesNotMatch(renderDossierHtml(record), /00\.000\.000\/0000-00/);
+  }
+  assert.throws(() => normalizeDossier({ ...dados, filiais: [{ ...coligada, cnpj: '11.222.333/0001-00' }] }), { status: 400 });
+  assert.throws(() => normalizeDossier({ ...dados, empresa: { ...dados.empresa, cnpj: '00.000.000/0000-00' } }), { status: 400 });
+});
+
 test('cálculo de honorários persiste centavos inteiros e recusa valores ou campos indevidos', () => {
   const input = { valorMensal: '1750.50', valorImplantacao: '0.07', vencimentoDia: '31', inicioCobranca: '2028-02-29', observacoes: '  Texto  ' };
   assert.deepEqual(normalizeFees(input), {

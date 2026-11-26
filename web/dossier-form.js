@@ -34,51 +34,59 @@ function progressiveCnpj(value) {
 const field = (key, label, properties) => ({ key, label, ...properties });
 const select = (key, label, options, properties) => field(key, label, { type: 'select', options, ...properties });
 const area = (key, label, properties) => field(key, label, { type: 'textarea', max: 4000, wide: true, ...properties });
-const choice = (key, label) => select(key, label, yesNo, { defaultValue: 'nao' });
+const choice = (key, label, { required = false, labels = ['Não', 'Sim'] } = {}) =>
+  field(key, label, { type: 'choice', options: yesNo.map((value, index) => [value, labels[index]]),
+    defaultValue: required ? '' : 'nao', required });
 const cnpj = (key, label, properties) => field(key, label, { type: 'cnpj', max: 18, placeholder: '00.000.000/0000-00', ...properties });
 const federal = (key, label, required = false) => select(key, label, states, { required });
 const repeater = (key, label, singular, fields, options) => ({ key, label, type: 'repeater', singular, fields, ...options });
 
 export const dossierSections = [
   {
-    title: 'Dados da empresa', description: 'Identifique a empresa e o início do atendimento.',
+    title: 'Dados da empresa', stepLabel: 'Dados da empresa',
+    description: 'Identifique a empresa e informe os dados de início do atendimento.',
     fields: [
       field('empresa.nome', 'Empresa', { required: true }), select('empresa.regimeTributario', 'Regime tributário', regimes, { required: true }),
       cnpj('empresa.cnpj', 'CNPJ', { required: true }), field('empresa.cidade', 'Cidade', { required: true, max: 100 }),
       federal('empresa.estado', 'Estado', true), field('grupo', 'Grupo pertencente', { required: true }),
-      field('dataInicio', 'Data de início', { type: 'date', required: true }), choice('retificacao', 'Terá retificação?'),
-      area('mesesRetificacao', 'Meses da retificação', { required: true, when: 'retificacao', placeholder: 'Ex.: Janeiro/2026, fevereiro/2026' }),
+      field('dataInicio', 'Data de início', { type: 'date', required: true }), choice('retificacao', 'Terá retificação?', { required: true }),
+      area('mesesRetificacao', 'Meses da retificação', { required: true, when: 'retificacao', reviewWhenHidden: true,
+        placeholder: 'Ex.: Janeiro/2026, fevereiro/2026' }),
     ],
   },
   {
-    title: 'Estrutura empresarial', description: 'Registre as filiais ou coligadas, quando houver.',
+    title: 'Estrutura empresarial', stepLabel: 'Filiais', reviewTitle: 'Filiais e coligadas',
+    description: 'Informe se a empresa possui filiais ou coligadas e registre seus dados.',
     fields: [
-      choice('possuiFiliais', 'Possui filiais ou coligadas?'),
-      field('quantidadeFiliais', 'Quantidade total informada', { type: 'number', min: 0, max: 9999999, when: 'possuiFiliais' }),
+      choice('possuiFiliais', 'Possui filiais ou coligadas?', { labels: ['Não possui', 'Sim, possui'] }),
+      field('quantidadeFiliais', 'Quantidade total informada', { type: 'number', min: 0, max: 9999999, when: 'possuiFiliais', reviewLabel: 'Quantidade' }),
       repeater('filiais', 'Filiais e coligadas', 'Filial ou coligada', [
-        select('tipo', 'Tipo', [['filial', 'Filial'], ['coligada', 'Coligada / agregada']], { defaultValue: 'filial' }),
-        field('nome', 'Nome da unidade'), cnpj('cnpj', 'CNPJ da unidade'),
+        field('tipo', 'Coligada / agregada', { type: 'classification', defaultValue: 'filial', wide: true }),
+        field('nome', 'Nome da unidade'), cnpj('cnpj', 'CNPJ da unidade', { pendingAllowed: true,
+          help: 'Deixe o CNPJ em branco se a empresa estiver em constituição.' }),
         select('regimeTributario', 'Regime tributário', regimes, { required: true }),
         field('cidade', 'Cidade', { max: 100 }), federal('estado', 'Estado'),
-      ], { when: 'possuiFiliais', required: true, max: 80 }),
+      ], { when: 'possuiFiliais', required: true, max: 80, description: 'Indique as filiais ou coligadas abaixo.' }),
     ],
   },
   {
-    title: 'Contatos e origem', description: 'Registre os contatos, a negociação e como o cliente chegou.',
+    title: 'Contatos e negociação', stepLabel: 'Contatos', reviewTitle: 'Contatos e origem',
+    description: 'Informe os contatos da empresa, a negociação e a origem.',
     fields: [
       repeater('contatos', 'Contatos', 'Contato', [
         field('nome', 'Nome do contato'), field('papel', 'Função na empresa'),
         field('telefone', 'Telefone', { type: 'tel', max: 40 }), field('email', 'E-mail', { type: 'email', max: 254 }),
         field('setor', 'Setor'),
-      ], { max: 40 }),
+      ], { max: 40, starter: true, description: 'Nome, função, telefone, e-mail e setor.' }),
       field('negociacaoCom', 'Com quem foi feita a negociação?', { wide: true }),
-      choice('indicacao.temIndicacao', 'Houve indicação?'),
+      choice('indicacao.temIndicacao', 'Indicação?'),
       field('indicacao.nomeIndicador', 'Nome do indicador', { required: true, when: 'indicacao.temIndicacao' }),
       select('origem', 'Origem', origins, { required: true }),
     ],
   },
   {
-    title: 'Informações gerais', description: 'Detalhe a atuação da empresa e suas recorrências.',
+    title: 'Informações gerais', stepLabel: 'Perfil',
+    description: 'Contexto comercial, atuação e recorrências.',
     fields: [
       field('informacoesGerais.faturamentoMedioMensal', 'Faturamento médio mensal', { placeholder: 'R$ 0,00', max: 48, inputMode: 'decimal' }),
       field('informacoesGerais.setorAtuacao', 'Setor de atuação'),
@@ -89,31 +97,34 @@ export const dossierSections = [
     ],
   },
   {
-    title: 'Informações operacionais', description: 'Informe os sistemas, os processos e os compromissos financeiros.',
+    title: 'Informações operacionais', stepLabel: 'Operação',
+    description: 'Sistemas, balanço, funcionários, bancos e regimes.',
     fields: [
       area('informacoesOperacionais.sistemasUtilizados', 'Sistemas operacionais e financeiros'),
       field('informacoesOperacionais.periodicidadeBalanco', 'Periodicidade de entrega do balanço'),
       field('informacoesOperacionais.numeroFuncionarios', 'Número de funcionários', { type: 'number', min: 0, max: 9999999 }),
       choice('informacoesOperacionais.separacaoCentroCusto', 'Possui separação por centro de custo?'),
+      area('informacoesOperacionais.contasBancarias', 'Quantas contas bancárias possui? Quais bancos?'),
       choice('informacoesOperacionais.regimeEspecial', 'Possui algum regime especial?'),
-      area('informacoesOperacionais.contasBancarias', 'Quantas contas bancárias possui e em quais bancos?'),
       area('informacoesOperacionais.parcelamentosEmprestimos', 'Parcelamentos e empréstimos ativos'),
     ],
   },
   {
-    title: 'Troca e promessas', description: 'Registre o motivo da mudança e os compromissos assumidos.',
+    title: 'Troca de contabilidade e promessas', stepLabel: 'Contexto', reviewTitle: 'Motivo e promessas',
+    description: 'Registre as dores, expectativas e compromissos assumidos.',
     fields: [
       area('motivoTrocaContabilidade', 'Motivo da troca de contabilidade'),
-      repeater('promessasRealizadas', 'Promessas realizadas', 'Tópico', [field('text', 'Promessa', { max: 1000, wide: true })], { asText: true, max: 60 }),
+      repeater('promessasRealizadas', 'Promessas realizadas', 'Tópico', [field('text', 'Promessa', { max: 1000, wide: true })], { asText: true, max: 60, starter: true }),
     ],
   },
   {
-    title: 'Considerações por setor', description: 'Organize dúvidas, pendências e observações por área.',
+    title: 'Considerações e dúvidas por setor', stepLabel: 'Setores', reviewTitle: 'Setores',
+    description: 'Separe os pontos identificados nas conversas.',
     fields: [
       ...sectors.map(([key, label]) => area('consideracoesSetores.' + key, label)),
-      repeater('topicosConsideracoesSetores', 'Tópicos adicionais', 'Tópico por setor', [
+      repeater('topicosConsideracoesSetores', 'Tópicos adicionais por setor', 'Tópico', [
         select('setor', 'Setor', [...sectors.map(([, label]) => label), 'Outros']), area('descricao', 'Consideração ou pendência'),
-      ], { max: 60 }),
+      ], { max: 60, starter: true, description: 'Inclua os pontos e indique o setor responsável.' }),
       area('demaisObservacoes', 'Demais observações e comentários'),
     ],
   },
@@ -132,54 +143,106 @@ function setPath(value, path, entry) {
 
 function formatValue(value, definition) {
   if (value === '' || value == null) return '';
-  if (definition.type === 'cnpj') return documentLabel(value);
+  if (definition.type === 'cnpj') {
+    if (definition.pendingAllowed && String(value).replace(/[.\s/-]/g, '') === '00000000000000') return '';
+    return documentLabel(value);
+  }
+  if (definition.type === 'classification') return affiliateLabel(value);
   if (definition.type === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value.split('-').reverse().join('/');
-  if (definition.options === yesNo) return value === 'sim' ? 'Sim' : 'Não';
+  if (definition.type === 'choice') return value === true || value === 'sim' ? 'Sim' : 'Não';
   const match = definition.options?.find(option => Array.isArray(option) && option[0] === value);
   return String(match?.[1] ?? value);
 }
 
-function appendDescription(list, label, value) {
-  if (!value) return;
+function appendDescription(list, label, value, showMissing) {
+  if (!value && !showMissing) return;
   const cell = el('div');
-  cell.append(el('dt', '', label), el('dd', '', value));
+  cell.append(el('dt', '', label), el('dd', '', value || 'Não informado'));
   list.append(cell);
 }
 
-export function renderDossierData(dossier, { collapsed = false } = {}) {
+export function renderDossierData(dossier, { collapsed = false, showMissing = false } = {}) {
   const panel = el('div', 'dossier-summary');
   for (const section of dossierSections) {
     const content = el('dl', 'dossier-values');
     for (const definition of section.fields) {
-      if (definition.when && atPath(dossier, definition.when) !== 'sim') continue;
-      const value = atPath(dossier, definition.key);
+      const visible = !definition.when || atPath(dossier, definition.when) === 'sim';
+      if (!visible && !(showMissing && definition.reviewWhenHidden)) continue;
+      const value = visible ? atPath(dossier, definition.key) : '';
       if (definition.type !== 'repeater') {
-        appendDescription(content, definition.label, formatValue(value, definition));
+        appendDescription(content, definition.reviewLabel || definition.label, formatValue(value, definition), showMissing);
         continue;
       }
+      if (showMissing && !value?.length) appendDescription(content, definition.label, '', true);
       for (const [index, row] of (value || []).entries()) {
         const group = el('div', 'dossier-value-wide');
         const children = el('dl', 'dossier-values');
         for (const entry of definition.fields) {
-          appendDescription(children, entry.label, formatValue(definition.asText ? row : row?.[entry.key], entry));
+          const item = definition.asText ? row : repeatValue(row, entry);
+          appendDescription(children, entry.type === 'classification' ? 'Tipo' : entry.label, formatValue(item, entry), showMissing);
         }
-        if (children.childElementCount) group.append(el('dt', '', definition.singular + ' ' + (index + 1)), el('dd'));
-        if (group.lastElementChild) {
-          group.lastElementChild.append(children);
-          content.append(group);
-        }
+        if (!children.childElementCount) continue;
+        const description = el('dd');
+        description.append(children);
+        group.append(el('dt', '', definition.singular + ' ' + (index + 1)), description);
+        content.append(group);
       }
     }
     if (!content.childElementCount) continue;
     const block = el(collapsed ? 'details' : 'section', 'dossier-summary-section');
-    block.append(el(collapsed ? 'summary' : 'h3', '', section.title), content);
+    block.append(el(collapsed ? 'summary' : 'h3', '', section.reviewTitle || section.title), content);
     panel.append(block);
   }
   return panel;
 }
 
+function makeChoice(definition, value) {
+  const wrapper = el('fieldset', 'dossier-field dossier-choice');
+  const legend = el('legend', '', definition.label);
+  const options = el('div', 'dossier-choice-options');
+  if (definition.required) legend.append(el('span', 'dossier-required', ' *'));
+  const initial = value === true ? 'sim' : value === false ? 'nao' : value ?? definition.defaultValue;
+  for (const [option, caption] of definition.options) {
+    const label = el('label');
+    const control = el('input');
+    control.type = 'radio';
+    control.name = definition.key;
+    control.value = option;
+    control.checked = option === initial;
+    control.required = definition.required;
+    label.append(control, el('span', '', caption));
+    options.append(label);
+  }
+  wrapper.append(legend, options);
+  return { wrapper, value: () => options.querySelector('input:checked')?.value || '' };
+}
+
+function affiliateLabel(value) {
+  return value === 'coligada' ? 'Coligada / agregada' : 'Filial';
+}
+
+function makeClassification(definition, value) {
+  const wrapper = el('div', 'dossier-field dossier-field-wide');
+  const label = el('label', 'dossier-check');
+  const control = el('input');
+  control.type = 'checkbox';
+  control.name = definition.key;
+  control.value = 'coligada';
+  control.checked = value === 'coligada';
+  label.append(control, el('span', '', definition.label));
+  wrapper.append(label, el('small', 'dossier-field-help', 'Desmarcado indica filial.'));
+  return { wrapper, control, value: () => control.checked ? 'coligada' : 'filial' };
+}
+
+function repeatValue(data, definition) {
+  if (definition.type === 'classification') return data?.[definition.key] || (data?.agregada ? 'coligada' : 'filial');
+  return data?.[definition.key];
+}
+
 let controlId = 0;
 function makeControl(definition, value) {
+  if (definition.type === 'choice') return makeChoice(definition, value);
+  if (definition.type === 'classification') return makeClassification(definition, value);
   const wrapper = el('div', 'dossier-field' + (definition.wide ? ' dossier-field-wide' : ''));
   const id = 'dossier-input-' + (++controlId);
   const label = el('label', '', definition.label);
@@ -226,12 +289,19 @@ function makeControl(definition, value) {
     control.title = 'Informe o CNPJ completo, com os dois últimos caracteres numéricos.';
   }
   wrapper.append(label, control);
+  if (definition.help) {
+    const help = el('small', 'dossier-field-help', definition.help);
+    help.id = id + '-help';
+    control.setAttribute('aria-describedby', help.id);
+    wrapper.append(help);
+  }
   return { wrapper, control, value: () => control.value.trim() };
 }
 
 function makeRepeater(definition, initial) {
   const wrapper = el('fieldset', 'dossier-repeater dossier-field-wide');
   wrapper.append(el('legend', '', definition.label));
+  if (definition.description) wrapper.append(el('p', 'dossier-field-help', definition.description));
   const list = el('div', 'dossier-repeat-list');
   const add = button('+ ' + definition.singular);
   const rows = [];
@@ -243,7 +313,9 @@ function makeRepeater(definition, initial) {
     empty.hidden = rows.length !== 0;
     add.disabled = rows.length >= max;
     for (const [index, row] of rows.entries()) {
-      row.caption.textContent = definition.singular + ' ' + (index + 1);
+      const type = row.classification?.value();
+      const heading = type ? affiliateLabel(type) : definition.singular;
+      row.caption.textContent = heading + ' ' + (index + 1);
       row.remove.setAttribute('aria-label', 'Remover ' + row.caption.textContent.toLocaleLowerCase('pt-BR'));
     }
   }
@@ -254,8 +326,10 @@ function makeRepeater(definition, initial) {
     const caption = el('h4');
     const remove = button('Remover');
     const grid = el('div', 'dossier-fields');
-    const values = definition.fields.map(entry => makeControl(entry, definition.asText ? data : data?.[entry.key]));
-    const row = { box, caption, remove, values };
+    const values = definition.fields.map(entry => makeControl(entry, definition.asText ? data : repeatValue(data, entry)));
+    const classification = values[definition.fields.findIndex(entry => entry.type === 'classification')];
+    const row = { box, caption, remove, values, classification };
+    classification?.control.addEventListener('change', refresh);
     remove.addEventListener('click', () => {
       rows.splice(rows.indexOf(row), 1);
       box.remove();
@@ -268,10 +342,11 @@ function makeRepeater(definition, initial) {
     list.append(box);
     rows.push(row);
     refresh();
-    if (focus) values[0]?.control.focus();
+    if (focus) values.find(entry => entry !== classification)?.control.focus();
   }
 
   for (const value of (initial || []).slice(0, max)) addRow(value);
+  if (!rows.length && definition.starter) addRow();
   refresh();
   add.addEventListener('click', () => { if (rows.length < max) addRow(undefined, true); });
   return {
@@ -305,9 +380,10 @@ export function mountDossierForm(root, { initial = {}, lockCompany = false, subm
   const next = button('Continuar', true, true);
   foot.append(back, next);
   const review = el('div', 'dossier-review');
-  const steps = [...dossierSections, { title: 'Revisão final', description: 'Confira as informações antes de enviar.', fields: [] }];
+  const steps = [...dossierSections, { title: 'Revisão final', stepLabel: 'Revisão',
+    description: 'Confira os dados antes de salvar. Os honorários são cadastrados em uma etapa separada.', fields: [] }];
   const tabs = steps.map(({ title }, index) => {
-    const tab = button(String(index + 1));
+    const tab = button(String(index + 1).padStart(2, '0'));
     tab.title = title;
     tab.setAttribute('aria-label', 'Etapa ' + (index + 1) + ' · ' + title);
     tab.addEventListener('click', () => { if (!submitting && index <= reached) showStep(index); });
@@ -319,7 +395,7 @@ export function mountDossierForm(root, { initial = {}, lockCompany = false, subm
     const header = el('div', 'dossier-step-heading');
     const title = el('h2', '', section.title);
     title.tabIndex = -1;
-    header.append(el('span', 'dossier-step-index', 'Etapa ' + (index + 1) + ' de ' + steps.length), title,
+    header.append(el('span', 'dossier-step-index', 'Etapa ' + String(index + 1).padStart(2, '0') + ' · ' + section.stepLabel), title,
       el('p', 'dossier-muted', section.description));
     page.append(header);
     if (index === steps.length - 1) {
@@ -376,7 +452,7 @@ export function mountDossierForm(root, { initial = {}, lockCompany = false, subm
     });
     back.hidden = index === 0;
     next.textContent = index === steps.length - 1 ? submitLabel : 'Continuar';
-    if (index === steps.length - 1) review.replaceChildren(renderDossierData(collect()));
+    if (index === steps.length - 1) review.replaceChildren(renderDossierData(collect(), { showMissing: true }));
     feedback();
     if (focus) pages[index].title.focus();
   }

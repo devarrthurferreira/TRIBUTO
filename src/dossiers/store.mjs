@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { ApiError, sha256 } from '../api/validation.mjs';
-import { canAccessCompany, canPerform } from '../platform/policy.mjs';
+import { canAccessCompany, canPerformDossier } from '../platform/policy.mjs';
 import { renderFeesMessage } from './documents.mjs';
 
 const TABLES = [
@@ -155,7 +155,7 @@ async function checkLiveLinkScope(executor, link, companyCnpj, lock = false) {
     _id: row.id, role: row.role, active: Boolean(row.active),
     companyCnpjs: JSON.parse(row.company_cnpjs || '[]'), moduleGrants: JSON.parse(row.module_grants || '{}'),
   };
-  if (!canPerform(issuer, 'sucesso-do-cliente', 'dossierLink')
+  if (!canPerformDossier(issuer, 'dossierLink')
     || (issuer.role !== 'admin' && !link.company_cnpj)
     || (companyCnpj && !canAccessCompany(issuer, companyCnpj))) throw expiredLink();
   if (companyCnpj) {

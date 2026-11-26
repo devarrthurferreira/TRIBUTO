@@ -51,6 +51,7 @@ function dateField(value, label, { required = false, code } = {}) {
 function cnpjField(value, label, required) {
   const raw = field(value, label, { required, max: 24 }).toUpperCase();
   const clean = raw.replace(/[.\s/-]/g, '');
+  if (!required && clean === '00000000000000') return '';
   if ((required || clean) && !validCnpj(clean)) invalid('Informe um ' + label + ' válido.');
   return clean;
 }

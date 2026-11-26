@@ -43,7 +43,7 @@ Leia [docs/API.md](docs/API.md) para o contrato de lotes e [docs/AGENT.md](docs/
 
 ## Dossiê e honorários
 
-Em **Sucesso do Cliente → Dossiê**, a equipe autorizada cadastra, consulta e imprime os dossiês da sua carteira. O link de preenchimento usa uma credencial temporária de uso único. O cliente recebe o protocolo após concluir o formulário. As fichas e o histórico ficam nas tabelas de dossiê do MySQL da Central.
+Em **Sucesso do Cliente → Dossiês** e **Diretoria → Dossiês**, a equipe autorizada cadastra, consulta e imprime os mesmos dossiês da sua carteira. O link de preenchimento usa uma credencial temporária de uso único. O cliente recebe o protocolo após concluir o formulário. As fichas e o histórico ficam nas tabelas de dossiê do MySQL da Central.
 
 A equipe cadastra os honorários e aciona o envio na própria ficha. A fila salva o resultado de cada destinatário para que a equipe acompanhe a aceitação pelo SMTP e possa reenviar somente o que ficou pendente. O e-mail inclui a identificação do cliente e as condições financeiras. O dossiê completo fica na Central.
 

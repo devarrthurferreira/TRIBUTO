@@ -40,6 +40,10 @@ const legacyModules = [
 const allModules = [...modules, ...legacyModules];
 const adminViews = new Set(['companies', 'users', 'agents']);
 const internalActivityModules = new Set(['tecnologia', 'sucesso-do-cliente']);
+const dossierWorkspaces = {
+  'sucesso-do-cliente': { heading: 'customerSuccessHeading', shortcut: 'dossierShortcut', root: 'dossierPanel', label: 'Sucesso do Cliente' },
+  diretoria: { heading: 'boardHeading', shortcut: 'boardDossierShortcut', root: 'boardDossierPanel', label: 'Diretoria' },
+};
 const viewLabels = {
   overview: 'Início', ...Object.fromEntries(allModules.map(({ id, label }) => [id, label])),
   companies: 'Empresas/Clientes', 'company-detail': 'Ficha fiscal da empresa', 'client-detail': 'Cadastro do cliente',
@@ -274,7 +278,8 @@ function isRhMoodLink(query = new URLSearchParams(location.search)) {
 function preservePortalLink(query = new URLSearchParams(location.search)) {
   const panel = query.get('painel');
   return isMaxHubPath(location.pathname) || Boolean(clubPageFromPath(location.pathname)) || isRhMoodLink(query)
-    || (location.pathname === `${SECTOR_PREFIX}sucesso-do-cliente` && panel === 'dossier')
+    || (location.pathname.startsWith(SECTOR_PREFIX) && panel === 'dossier'
+      && Object.hasOwn(dossierWorkspaces, location.pathname.slice(SECTOR_PREFIX.length)))
     || (location.pathname === `${SECTOR_PREFIX}tecnologia` && panel === 'notifications');
 }
 
@@ -509,11 +514,11 @@ function navigate(view, { replace = false } = {}) {
     crm: sector.id === 'marketing' && canUse('marketing', 'marketingCrmRead'),
     clubMood: sector.id === 'rh' && canUse('rh', 'clubMoodRead'),
     fiscalDocuments: sector.id === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead'),
-    dossier: sector.id === 'sucesso-do-cliente' && canUse('sucesso-do-cliente', 'dossierRead'),
+    dossier: Object.hasOwn(dossierWorkspaces, sector.id) && canUse(sector.id, 'dossierRead'),
     notifications: sector.id === 'tecnologia' && canUse('tecnologia', 'smtpManage'),
     talk: canUse(sector.id, 'sectorTalkRead'), whatsapp: canUse(sector.id, 'whatsappRead'),
     onPanelChange: { marketing: showMarketingPanel, rh: showRhPanel, 'sucesso-do-cliente': showCustomerSuccessPanel,
-      tecnologia: showTechnologyPanel }[sector.id],
+      tecnologia: showTechnologyPanel, diretoria: panel => showDossierPanel('diretoria', panel) }[sector.id],
   } : null, { home: state.view === 'overview' });
   $('conteudo').focus({ preventScroll: true });
   if (previousView !== state.view && ['maxhub', 'club'].includes(state.view)) window.scrollTo({ top: 0, behavior: 'instant' });
@@ -543,26 +548,32 @@ function syncProfileAvatar(profile) {
 let dossierCleanup;
 let smtpWorkspace;
 
-function showCustomerSuccessPanel(panel) {
-  const module = 'sucesso-do-cliente';
-  const active = panel === 'dossier' && canUse(module, 'dossierRead');
-  const overview = panel === 'overview';
-  $('customerSuccessHeading').hidden = active;
-  $('customerSuccessOverview').hidden = !overview || !canUse(module, 'workItemRead');
-  $('customerSuccessRestricted').hidden = !overview || canUse(module, 'workItemRead');
-  $('dossierShortcut').hidden = !overview || !canUse(module, 'dossierRead');
-  const root = $('dossierPanel');
+function showDossierPanel(module, panel) {
+  const { heading, shortcut, root: rootId, label } = dossierWorkspaces[module];
+  const readable = canUse(module, 'dossierRead');
+  const active = panel === 'dossier' && readable;
+  $(heading).hidden = active;
+  $(shortcut).hidden = panel !== 'overview' || !readable;
+  const root = $(rootId);
   root.hidden = !active;
   if (active) {
-    document.title = 'Dossiê | Sucesso do Cliente';
+    document.title = `Dossiês | ${label}`;
     dossierCleanup ??= mountDossierAdmin(root, {
       request, onAuthError: displayError, companies: () => state.companies, allowUnboundLinks: isAdmin(),
-      canCreate: canUse(module, 'dossierCreate'), canLink: canUse(module, 'dossierLink'), canFees: canUse(module, 'dossierFees'),
+      sectorLabel: label, canCreate: canUse(module, 'dossierCreate'), canLink: canUse(module, 'dossierLink'), canFees: canUse(module, 'dossierFees'),
     });
   } else {
     dossierCleanup?.();
     dossierCleanup = undefined;
   }
+}
+
+function showCustomerSuccessPanel(panel) {
+  const overview = panel === 'overview';
+  const activities = canUse('sucesso-do-cliente', 'workItemRead');
+  $('customerSuccessOverview').hidden = !overview || !activities;
+  $('customerSuccessRestricted').hidden = !overview || activities;
+  showDossierPanel('sucesso-do-cliente', panel);
 }
 
 function showTechnologyPanel(panel) {
@@ -1102,7 +1113,7 @@ function renderUserGrants(user, target = $('userGrantOptions')) {
       if (action === 'fiscalDocumentsRead' && id !== 'fiscal') continue;
       if (action.startsWith('marketingCrm') && id !== 'marketing') continue;
       if (action === 'clubMoodRead' && id !== 'rh') continue;
-      if (action.startsWith('dossier') && id !== 'sucesso-do-cliente') continue;
+      if (action.startsWith('dossier') && !Object.hasOwn(dossierWorkspaces, id)) continue;
       if (action === 'smtpManage' && id !== 'tecnologia') continue;
       if (legacyModules.some(module => module.id === id) && /^(sectorTalk|whatsapp)/.test(action)) continue;
       const input = node('input');
@@ -1645,7 +1656,9 @@ function setupEvents() {
     control.addEventListener('click', () => sectorNavigation.selectPanel(control.dataset.marketingGo));
   }
   $('openCustomerSuccessActivities').addEventListener('click', () => sectorNavigation.selectPanel('activities'));
-  $('openDossier').addEventListener('click', () => sectorNavigation.selectPanel('dossier'));
+  for (const id of ['openDossier', 'openBoardDossier']) {
+    $(id).addEventListener('click', () => sectorNavigation.selectPanel('dossier'));
+  }
   $('openSmtpNotifications').addEventListener('click', () => sectorNavigation.selectPanel('notifications'));
   $('openRhMood').addEventListener('click', () => sectorNavigation.selectPanel('humor'));
   $('fiscalCompanyLookup').addEventListener('input', renderFiscalCompanyQuickList);
