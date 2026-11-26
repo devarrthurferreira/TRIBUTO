@@ -5,48 +5,110 @@ export { normalizeDossier, normalizeFees } from './fields.mjs';
 
 const logo = readFileSync(new URL('../../web/maximum-logo.png', import.meta.url)).toString('base64');
 const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const saoPauloDateTime = new Intl.DateTimeFormat('pt-BR', {
+  dateStyle: 'short', timeStyle: 'medium', timeZone: 'America/Sao_Paulo',
+});
 const missing = 'Não informado';
 const documentStyle = `
-  :root { color-scheme: light; color: #2a2224; font: 15px/1.52 Arial, Helvetica, sans-serif; }
+  :root {
+    color-scheme: light;
+    color: #252024;
+    font: 15px/1.52 system-ui, -apple-system, "Segoe UI", sans-serif;
+    --wine: #640c15;
+    --line: #ebdfe1;
+    --warm: #faf6f6;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; padding: 24px 14px; background: #f7f4f4; }
-  .sheet { max-width: 930px; margin-inline: auto; background: #fff; border: 1px solid #e8dfe1; border-radius: 18px; overflow: hidden; }
-  header { color: #fff; background: #64080e; padding: 26px clamp(18px, 5vw, 40px); }
-  header img { width: 230px; max-width: 100%; height: auto; display: block; }
-  header p { margin: 18px 0 4px; color: #f0be99; font-size: .82rem; letter-spacing: .09em; text-transform: uppercase; }
-  h1 { margin: 0 0 5px; font-size: clamp(1.35rem, 4vw, 2.1rem); line-height: 1.16; overflow-wrap: anywhere; }
-  header small { color: #fde6e9; }
-  article { padding: 24px clamp(16px, 4vw, 40px); }
-  section { margin: 0 0 24px; }
-  h2 { margin: 0 0 6px; padding: 7px 0; color: #64080e; border-bottom: 2px solid #e9c6c0; font-size: 1.12rem; break-after: avoid; }
+  body { margin: 0; padding: clamp(5px, 2.2vw, 18px); background: #f5f3f3; }
+  .sheet {
+    max-width: 850px;
+    margin-inline: auto;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 15px;
+    box-shadow: 0 8px 30px #3c1c2410;
+  }
+  .cover {
+    padding: clamp(12px, 3.2vw, 24px);
+    color: #fff;
+    background: var(--wine);
+    border-radius: 14px 14px 0 0;
+  }
+  .brand {
+    display: grid;
+    place-items: center;
+    padding: 15px 10px;
+    border: 1px solid #ffffff40;
+    border-radius: 5px;
+  }
+  .brand img { width: 260px; max-width: 76%; height: auto; display: block; }
+  .eyebrow { margin: 17px 0 4px; color: #f4cca6; font-size: .75rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  h1 { margin: 0; font-size: clamp(1.26rem, 4vw, 1.85rem); line-height: 1.2; overflow-wrap: anywhere; }
+  .cover-meta { margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 2px 15px; color: #f8e8ea; font-size: .82rem; }
+  .cover-meta span { overflow-wrap: anywhere; }
+  article { padding: clamp(12px, 3.2vw, 27px); }
+  section + section { margin-top: 23px; }
+  h2 {
+    margin: 0;
+    padding: 8px 13px;
+    color: #fff;
+    background: var(--wine);
+    border-radius: 7px 7px 0 0;
+    font-size: 1rem;
+    break-after: avoid;
+  }
   dl { margin: 0; }
-  dl div { display: grid; grid-template-columns: minmax(9rem, 36%) minmax(0, 1fr); padding: 7px 0; gap: 10px 16px; border-bottom: 1px solid #eee6e7; }
-  dt { font-weight: 700; color: #52363a; }
+  .detail-row {
+    display: grid;
+    grid-template-columns: minmax(9rem, 37%) minmax(0, 1fr);
+    padding: 8px 12px;
+    gap: 3px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .detail-row:nth-child(even) { background: var(--warm); }
+  dt { font-weight: 650; color: #5c4147; }
   dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .records { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 12px; }
-  .records li { padding: 9px 14px; border: 1px solid #eee6e7; border-radius: 9px; }
-  .records li dl div:last-child { border: 0; }
-  .note { color: #694f53; }
-  .promises { overflow-wrap: anywhere; }
-  @media (max-width: 430px) {
-    dl div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .detail-row--long { display: block; }
+  .detail-row--long dt { margin-bottom: 5px; }
+  .records { margin: 12px 0 0; padding: 0; list-style: none; }
+  .record { border: 1px solid var(--line); border-radius: 7px; }
+  .record + .record { margin-top: 9px; }
+  .record h3 { margin: 0; padding: 6px 12px; color: var(--wine); background: #f5eaec; border-radius: 6px 6px 0 0; font-size: .9rem; break-after: avoid; overflow-wrap: anywhere; }
+  .record .detail-row:last-child { border: 0; }
+  .note { margin: 9px 12px 0; color: #684f55; }
+  .promises { margin: 10px 0 0; padding-inline: 34px 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .promises li + li { margin-top: 5px; }
+  @media screen and (max-width: 500px) {
+    .detail-row { grid-template-columns: minmax(0, 1fr); }
+    .cover-meta { display: grid; }
   }
   @media print {
-    @page { size: A4; margin: 12mm; }
-    :root { font-size: 10.5pt; line-height: 1.38; }
+    @page { size: A4; margin: 12mm 13mm; }
+    :root { font-size: 10pt; line-height: 1.38; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     body { padding: 0; background: #fff; }
-    .sheet { border: 0; border-radius: 0; }
-    header { print-color-adjust: exact; padding: 14pt 18pt; }
-    article { padding: 10pt 0; }
-    section { margin-bottom: 14px; }
-    dl div { padding: 4px 0; }
-    dl div, .records li { break-inside: avoid; }
+    .sheet { max-width: none; border: 0; border-radius: 0; box-shadow: none; }
+    .cover { padding: 12pt 15pt; break-inside: avoid; }
+    .brand { padding: 8pt; }
+    .brand img { width: 145pt; }
+    .eyebrow { margin-top: 9pt; }
+    h1 { font-size: 17pt; }
+    article { padding: 12pt 0 0; }
+    section + section { margin-top: 12pt; }
+    h2, .detail-row { padding: 5pt 8pt; }
+    .detail-row:not(.detail-row--long), .record--short { break-inside: avoid; }
+    .detail-row--long dd, .promises li { orphans: 3; widows: 3; }
   }
 `;
 
 function dateLabel(value) {
   if (!value) return missing;
   return String(value).split('-').reverse().join('/');
+}
+
+function timestampLabel(value) {
+  if (!value) return missing;
+  const timestamp = new Date(value);
+  return Number.isFinite(timestamp.getTime()) ? saoPauloDateTime.format(timestamp) : missing;
 }
 
 function cnpjLabel(value) {
@@ -62,26 +124,42 @@ function label(value) {
 }
 
 function dataList(rows) {
-  return '<dl>' + rows.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(label(value))}</dd></div>`).join('') + '</dl>';
+  return '<dl>' + rows.map(([key, value]) => {
+    const content = label(value);
+    const type = String(content).length > 300 ? ' detail-row--long' : '';
+    return `<div class="detail-row${type}"><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(content)}</dd></div>`;
+  }).join('') + '</dl>';
 }
 
 function section(title, html) {
   return `<section><h2>${escapeHtml(title)}</h2>${html}</section>`;
 }
 
-function records(items, toRows, emptyText) {
+function records(items, toRows, emptyText, itemLabel) {
   if (!items.length) return `<p class="note">${escapeHtml(emptyText)}</p>`;
-  return '<ul class="records">' + items.map(item => '<li>' + dataList(toRows(item)) + '</li>').join('') + '</ul>';
+  return '<ul class="records">' + items.map((item, index) => {
+    const rows = toRows(item);
+    const type = rows.some(([, value]) => String(value).length > 300) ? '' : ' record--short';
+    return `<li class="record${type}"><h3>${escapeHtml(itemLabel + ' ' + (index + 1))}</h3>${dataList(rows)}</li>`;
+  }).join('') + '</ul>';
 }
 
 export function renderDossierHtml(dossier) {
   const { empresa, informacoesGerais: geral, informacoesOperacionais: operacao, consideracoesSetores: setores } = dossier;
+  const wasUpdated = dossier.updatedAt && Date.parse(dossier.updatedAt) > Date.parse(dossier.createdAt);
+  const summaryRows = [
+    ['Ação', dossier.archivedAt ? 'Dossiê arquivado' : wasUpdated ? 'Dossiê atualizado' : 'Dossiê cadastrado'],
+    ['Protocolo', dossier.protocolo], ['Empresa', empresa.nome], ['Grupo pertencente', dossier.grupo],
+    ['Criação', timestampLabel(dossier.createdAt)],
+  ];
+  if (wasUpdated) summaryRows.push(['Última atualização', timestampLabel(dossier.updatedAt)]);
+  if (dossier.archivedAt) summaryRows.push(['Arquivamento', timestampLabel(dossier.archivedAt)]);
   const companyRows = [
     ['Empresa', empresa.nome], ['Regime tributário', empresa.regimeTributario],
-    ['CNPJ', cnpjLabel(empresa.cnpj)], ['Cidade e estado', `${empresa.cidade} · ${empresa.estado}`],
-    ['Grupo', dossier.grupo], ['Data de início', dateLabel(dossier.dataInicio)], ['Retificação', yesNoLabel(dossier.retificacao)],
+    ['CNPJ', cnpjLabel(empresa.cnpj)], ['Cidade e estado', `${empresa.cidade} – ${empresa.estado}`],
+    ['Grupo pertencente', dossier.grupo], ['Data de início', dateLabel(dossier.dataInicio)],
+    ['Terá retificação?', yesNoLabel(dossier.retificacao)], ['Meses da retificação', dossier.mesesRetificacao],
   ];
-  if (dossier.retificacao === 'sim') companyRows.push(['Meses da retificação', dossier.mesesRetificacao]);
 
   const contactRows = [
     ['Negociação realizada com', dossier.negociacaoCom], ['Indicação', yesNoLabel(dossier.indicacao.temIndicacao)],
@@ -93,16 +171,17 @@ export function renderDossierHtml(dossier) {
     ['Tipo', filial.tipo === 'coligada' ? 'Coligada / agregada' : 'Filial'],
     ['Nome', filial.nome], ['Regime tributário', filial.regimeTributario], ['CNPJ', cnpjLabel(filial.cnpj)],
     ['Cidade', filial.cidade], ['Estado', filial.estado],
-  ], 'Nenhuma filial ou coligada informada.');
+  ], 'Nenhuma filial ou coligada informada.', 'Unidade');
   const contacts = records(dossier.contatos, contato => [
     ['Nome', contato.nome], ['Função', contato.papel], ['Telefone', contato.telefone], ['E-mail', contato.email], ['Setor', contato.setor],
-  ], 'Nenhum contato informado.');
+  ], 'Nenhum contato informado.', 'Contato');
   const promises = dossier.promessasRealizadas.length
-    ? '<ul class="promises">' + dossier.promessasRealizadas.map(value => `<li>${escapeHtml(value)}</li>`).join('') + '</ul>'
+    ? '<ol class="promises">' + dossier.promessasRealizadas.map(value => `<li>${escapeHtml(value)}</li>`).join('') + '</ol>'
     : '<p class="note">Nenhuma promessa informada.</p>';
   const topics = records(dossier.topicosConsideracoesSetores, topic => [
     ['Setor', topic.setor], ['Descrição', topic.descricao],
-  ], 'Nenhum tópico adicional informado.');
+  ], 'Nenhum tópico adicional informado.', 'Tópico');
+  const documentTitle = dossier.protocolo || ('Dossiê · ' + empresa.nome);
 
   return `<!doctype html>
 <html lang="pt-BR">
@@ -111,29 +190,35 @@ export function renderDossierHtml(dossier) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-  <title>Dossiê · ${escapeHtml(empresa.nome)}</title>
+  <title>${escapeHtml(documentTitle)}</title>
   <style>${documentStyle}</style>
 </head>
 <body><main class="sheet">
-  <header><img alt="Maximum Assessoria Contábil" src="data:image/png;base64,${logo}"><p>Sucesso do Cliente · Dossiê interno</p>
-  <h1>${escapeHtml(empresa.nome)}</h1>${dossier.protocolo ? `<small>${escapeHtml(dossier.protocolo)}</small>` : ''}</header>
+  <header class="cover">
+    <div class="brand"><img width="512" height="107" alt="Maximum Assessoria Contábil" src="data:image/png;base64,${logo}"></div>
+    <p class="eyebrow">Dossiê do cliente</p>
+    <h1>${escapeHtml(empresa.nome)}</h1>
+    <p class="cover-meta">${dossier.protocolo ? `<span>Protocolo <strong>${escapeHtml(dossier.protocolo)}</strong></span>` : ''}
+      ${dossier.createdAt ? `<span>Criado em ${escapeHtml(timestampLabel(dossier.createdAt))}</span>` : ''}</p>
+  </header>
   <article>
-    ${section('Dados da empresa', dataList(companyRows))}
-    ${section('Filiais e coligadas', dataList([['Possui filiais ou coligadas', yesNoLabel(dossier.possuiFiliais)], ['Quantidade', dossier.quantidadeFiliais]]) + affiliation)}
-    ${section('Contatos e negociação', dataList(contactRows) + contacts)}
-    ${section('Informações gerais', dataList([
+    ${section('Resumo da movimentação', dataList(summaryRows))}
+    ${section('1. Dados da empresa', dataList(companyRows))}
+    ${section('2. Filiais e coligadas', dataList([['Possui filiais ou coligadas?', yesNoLabel(dossier.possuiFiliais)], ['Quantidade declarada', dossier.quantidadeFiliais]]) + affiliation)}
+    ${section('3. Contatos e negociação', dataList(contactRows) + contacts)}
+    ${section('4. Informações gerais', dataList([
       ['Faturamento médio mensal', geral.faturamentoMedioMensal], ['Setor de atuação', geral.setorAtuacao], ['Estados de atuação', geral.atuacaoEstados],
       ['E-commerce', yesNoLabel(geral.possuiEcommerce)], ['Licitações e contratos públicos', yesNoLabel(geral.licitacoesContratosPublicos)],
       ['Auditorias recorrentes', yesNoLabel(geral.auditoriasRecorrentes)],
     ]))}
-    ${section('Informações operacionais', dataList([
+    ${section('5. Informações operacionais', dataList([
       ['Sistemas utilizados', operacao.sistemasUtilizados], ['Periodicidade de entrega do balanço', operacao.periodicidadeBalanco],
       ['Número de funcionários', operacao.numeroFuncionarios], ['Separação por centro de custo', yesNoLabel(operacao.separacaoCentroCusto)],
       ['Contas bancárias e bancos', operacao.contasBancarias], ['Regime especial', yesNoLabel(operacao.regimeEspecial)],
       ['Parcelamentos e empréstimos ativos', operacao.parcelamentosEmprestimos],
     ]))}
-    ${section('Motivo e promessas', dataList([['Motivo da troca de contabilidade', dossier.motivoTrocaContabilidade]]) + promises)}
-    ${section('Considerações por setor', dataList([
+    ${section('6. Motivo e promessas', dataList([['Motivo da troca de contabilidade', dossier.motivoTrocaContabilidade]]) + promises)}
+    ${section('7. Considerações por setor', dataList([
       ['Societário', setores.societario], ['Pessoal', setores.pessoal], ['Fiscal', setores.fiscal], ['Contábil', setores.contabil],
       ['Sucesso do Cliente', setores.sucessoCliente], ['Programação', setores.programacao], ['Diretoria', setores.diretoria],
       ['Demais observações', dossier.demaisObservacoes],

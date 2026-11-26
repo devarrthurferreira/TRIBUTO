@@ -176,9 +176,11 @@ function validateModuleGrants(grants) {
     check(module, name);
     if (LEVELS.includes(grant)) return [id, grant];
     check(grant && typeof grant === 'object' && !Array.isArray(grant) && LEVELS.includes(grant.level), name);
+    const allowed = id === 'sucesso-do-cliente' ? [...module.actions, 'dossierFees'] : module.actions;
     const blocked = grant.blockedActions;
-    check(Array.isArray(blocked) && blocked.length <= module.actions.length && blocked.every(action => module.actions.includes(action)) && new Set(blocked).size === blocked.length, `${name}.blockedActions`);
-    return [id, blocked.length ? { level: grant.level, blockedActions: blocked } : grant.level];
+    check(Array.isArray(blocked) && blocked.length <= allowed.length && blocked.every(action => allowed.includes(action)) && new Set(blocked).size === blocked.length, `${name}.blockedActions`);
+    const applicable = blocked.filter(action => module.actions.includes(action));
+    return [id, applicable.length ? { level: grant.level, blockedActions: applicable } : grant.level];
   });
   return Object.fromEntries(entries);
 }
@@ -497,7 +499,10 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
         if (target._id === user._id && (changes.role && changes.role !== 'admin' || changes.active === false)) fail(409, 'SELF_LOCKOUT', 'Não é possível retirar o próprio acesso de administrador');
         const updated = await store.updateUser(target._id, changes);
         await store.audit('user.update', user._id, target._id, { fields: Object.keys(changes) });
-        return send(res, 200, { user: managedUser(updated) });
+        return send(res, 200, {
+          user: managedUser(updated),
+          ...(target._id === user._id ? { permissions: permissionsFor(updated), capabilities: capabilitiesFor(updated) } : {}),
+        });
       }
       if (req.method === 'GET' && route === '/agents') {
         requireAdmin(user);

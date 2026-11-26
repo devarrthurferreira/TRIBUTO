@@ -16,9 +16,13 @@ const RH_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, clubMoodRead: 'manage' });
 const TECHNOLOGY_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, smtpManage: 'manage' });
 const DOSSIER_MODULES = Object.freeze(['sucesso-do-cliente', 'diretoria']);
 const DOSSIER_ACTIONS = Object.freeze({
-  dossierRead: 'view', dossierCreate: 'edit', dossierLink: 'edit', dossierFees: 'edit',
+  dossierRead: 'view', dossierCreate: 'edit', dossierLink: 'edit',
+});
+const DOSSIER_FEES_ACTIONS = Object.freeze({
+  dossierFeesRead: 'view', dossierFees: 'edit',
 });
 const DOSSIER_MODULE_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, ...DOSSIER_ACTIONS });
+const DIRECTOR_MODULE_ACTIONS = Object.freeze({ ...DOSSIER_MODULE_ACTIONS, ...DOSSIER_FEES_ACTIONS });
 const ACTION_PREREQUISITES = new Map([
   ['workItemCreate', 'workItemRead'],
   ['workItemUpdate', 'workItemRead'],
@@ -27,8 +31,7 @@ const ACTION_PREREQUISITES = new Map([
   ['whatsappTicketUpdate', 'whatsappRead'],
   ['marketingCrmManage', 'marketingCrmRead'],
   ['dossierCreate', 'dossierRead'],
-  ['dossierLink', 'dossierRead'],
-  ['dossierFees', 'dossierRead']
+  ['dossierLink', 'dossierRead']
 ]);
 
 export const MODULES = Object.freeze([
@@ -51,7 +54,8 @@ function actionLevels(module) {
   if (module === 'marketing') return MARKETING_ACTIONS;
   if (module === 'rh') return RH_ACTIONS;
   if (module === 'tecnologia') return TECHNOLOGY_ACTIONS;
-  if (DOSSIER_MODULES.includes(module)) return DOSSIER_MODULE_ACTIONS;
+  if (module === 'diretoria') return DIRECTOR_MODULE_ACTIONS;
+  if (module === 'sucesso-do-cliente') return DOSSIER_MODULE_ACTIONS;
   return MODULE_ACTIONS;
 }
 
@@ -74,6 +78,14 @@ export function canAccess(user, module, level = 'view') {
 export function canPerform(user, module, action) {
   const rules = actionLevels(module);
   if (!Object.hasOwn(rules, action) || !canAccess(user, module, rules[action])) return false;
+  if (Object.hasOwn(DOSSIER_FEES_ACTIONS, action)) {
+    const grant = user.moduleGrants?.diretoria;
+    const level = grantLevel(grant);
+    if (LEVELS.indexOf(level) < LEVELS.indexOf(rules[action])) return false;
+    const blocked = grant?.blockedActions;
+    // The existing fee block historically protected both viewing and editing.
+    return !Array.isArray(blocked) || !['dossierRead', 'dossierFeesRead', 'dossierFees'].some(key => blocked.includes(key));
+  }
   if (user.role === 'admin') return true;
   const blocked = user.moduleGrants[module]?.blockedActions;
   if (!Array.isArray(blocked)) return true;
@@ -81,6 +93,7 @@ export function canPerform(user, module, action) {
 }
 
 export function canPerformDossier(user, action) {
+  if (Object.hasOwn(DOSSIER_FEES_ACTIONS, action)) return canPerform(user, 'diretoria', action);
   return Object.hasOwn(DOSSIER_ACTIONS, action) && DOSSIER_MODULES.some(module => canPerform(user, module, action));
 }
 

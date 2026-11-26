@@ -381,7 +381,7 @@ export function mountDossierForm(root, { initial = {}, lockCompany = false, subm
   foot.append(back, next);
   const review = el('div', 'dossier-review');
   const steps = [...dossierSections, { title: 'Revisão final', stepLabel: 'Revisão',
-    description: 'Confira os dados antes de salvar. Os honorários são cadastrados em uma etapa separada.', fields: [] }];
+    description: 'Confira os dados antes de salvar o dossiê.', fields: [] }];
   const tabs = steps.map(({ title }, index) => {
     const tab = button(String(index + 1).padStart(2, '0'));
     tab.title = title;

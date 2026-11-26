@@ -1,7 +1,7 @@
 import { destroyChat, initChat, openChat } from './chat.js';
 import { mountPortal, setChatNotification } from './portal.js';
 import { crmSectionFromQuery, mountSectorNavigation } from './sectors.js';
-import { latestAdmissionDate, mountUserWizard } from './user-wizard.js';
+import { latestAdmissionDate, mountUserWizard, showRoleGrantOptions } from './user-wizard.js';
 import { mountMarketingTasks } from './marketing-tasks.js';
 import { mountMarketingMetrics } from './marketing-metrics.js';
 import { mountMarketingCrm } from './marketing-crm.js';
@@ -70,6 +70,7 @@ const actionLabels = {
   dossierRead: 'Consultar dossiês da carteira',
   dossierCreate: 'Cadastrar e editar dossiês',
   dossierLink: 'Gerar e revogar links de dossiê',
+  dossierFeesRead: 'Visualizar honorários',
   dossierFees: 'Gerenciar e enviar honorários',
   smtpManage: 'Configurar e verificar o SMTP',
 };
@@ -77,7 +78,7 @@ const actionDependencies = {
   workItemCreate: 'workItemRead', workItemUpdate: 'workItemRead',
   sectorTalkSend: 'sectorTalkRead', whatsappReply: 'whatsappRead', whatsappTicketUpdate: 'whatsappRead',
   marketingCrmManage: 'marketingCrmRead',
-  dossierCreate: 'dossierRead', dossierLink: 'dossierRead', dossierFees: 'dossierRead',
+  dossierCreate: 'dossierRead', dossierLink: 'dossierRead', dossierFeesRead: 'dossierRead', dossierFees: 'dossierFeesRead',
 };
 const editLevelActions = new Set(['workItemCreate', 'workItemUpdate', 'whatsappReply', 'whatsappTicketUpdate', 'marketingCrmRead', 'marketingCrmManage', 'dossierCreate', 'dossierLink', 'dossierFees']);
 const manageLevelActions = new Set(['clubMoodRead', 'smtpManage']);
@@ -560,7 +561,9 @@ function showDossierPanel(module, panel) {
     document.title = `Dossiês | ${label}`;
     dossierCleanup ??= mountDossierAdmin(root, {
       request, onAuthError: displayError, companies: () => state.companies, allowUnboundLinks: isAdmin(),
-      sectorLabel: label, canCreate: canUse(module, 'dossierCreate'), canLink: canUse(module, 'dossierLink'), canFees: canUse(module, 'dossierFees'),
+      sector: module, sectorLabel: label, canCreate: canUse(module, 'dossierCreate'), canLink: canUse(module, 'dossierLink'),
+      canFeesRead: module === 'diretoria' && canUse(module, 'dossierFeesRead'),
+      canFees: module === 'diretoria' && canUse(module, 'dossierFees'),
     });
   } else {
     dossierCleanup?.();
@@ -1114,6 +1117,7 @@ function renderUserGrants(user, target = $('userGrantOptions')) {
       if (action.startsWith('marketingCrm') && id !== 'marketing') continue;
       if (action === 'clubMoodRead' && id !== 'rh') continue;
       if (action.startsWith('dossier') && !Object.hasOwn(dossierWorkspaces, id)) continue;
+      if (action.startsWith('dossierFees') && id !== 'diretoria') continue;
       if (action === 'smtpManage' && id !== 'tecnologia') continue;
       if (legacyModules.some(module => module.id === id) && /^(sectorTalk|whatsapp)/.test(action)) continue;
       const input = node('input');
@@ -1143,7 +1147,7 @@ function renderUserGrants(user, target = $('userGrantOptions')) {
 function updateGrantEditorRole() {
   const fullAccess = $('userRole').value === 'admin';
   $('userFullAccessNote').hidden = !fullAccess;
-  $('userModuleGrants').hidden = fullAccess;
+  showRoleGrantOptions($('userGrantOptions'), fullAccess);
   $('userCompanyGrants').hidden = fullAccess;
 }
 function openUserDialog(user) {
@@ -1200,10 +1204,11 @@ async function saveUserAccess(event) {
       if ($('userEmail').value.trim()) body.email = $('userEmail').value.trim();
       if ($('userPendingPassword').value) body.password = $('userPendingPassword').value;
     }
-    const { user } = await request(`/users/${encodeURIComponent(editId)}`, { method: 'PATCH', body });
+    const { user, permissions, capabilities } = await request(`/users/${encodeURIComponent(editId)}`, { method: 'PATCH', body });
     if (state.session?.user.id === user.id) {
-      state.session.user.name = user.name;
-      state.session.user.tenureYears = user.tenureYears;
+      Object.assign(state.session.user, user);
+      if (permissions) state.session.permissions = permissions;
+      if (capabilities) state.session.capabilities = capabilities;
       renderSessionNames(state.session.user);
     }
     $('userDialog').close();

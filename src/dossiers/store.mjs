@@ -90,13 +90,13 @@ function feesStatus(row, deliveryState) {
   return deliveryState || 'saved';
 }
 
-function summary(row, deliveryState) {
+function summary(row) {
   return {
     id: row.id, protocolo: row.protocol,
     empresa: { nome: row.company_name, cnpj: row.company_cnpj, regimeTributario: row.company_regime },
     dataInicio: day(row.start_date), grupo: row.group_name, origem: row.origin, source: row.source,
     createdAt: sqlDate(row.created_at), updatedAt: sqlDate(row.updated_at), archivedAt: sqlDate(row.archived_at),
-    revision: row.revision, feesStatus: feesStatus(row, deliveryState),
+    revision: row.revision,
   };
 }
 
@@ -211,7 +211,7 @@ export function createDossierStore({ platformStore, smtpStore }) {
       for (const statement of TABLES) await pool.query(statement);
     },
 
-    async list(user, { query = '', page = 1, limit = 20, archived = false } = {}) {
+    async list(user, { query = '', page = 1, limit = 20, archived = false, includeFees = false } = {}) {
       const args = [];
       const clauses = [scope(user, args), archived ? 'archived_at IS NOT NULL' : 'archived_at IS NULL'];
       if (query) {
@@ -229,27 +229,31 @@ export function createDossierStore({ platformStore, smtpStore }) {
           [...args, limit, offset]).then(([records]) => records),
         pool.execute(`SELECT COUNT(*) AS total FROM platform_dossiers WHERE ${filter}`, args),
       ]);
-      const versions = rows.filter(row => row.fees_version > 0 && !row.fees_need_review)
-        .map(row => ({ id: row.id, version: row.fees_version }));
+      const hasFeesAccess = includeFees && canPerformDossier(user, 'dossierFeesRead');
+      const versions = (hasFeesAccess ? rows : []).filter(row => row.fees_version > 0 && !row.fees_need_review)
+        .map(row => ({ id: row.id, version: row.fees_version, companyCnpj: row.company_cnpj }));
       const statuses = versions.length ? await smtpStore.honorariumStatuses(versions) : new Map();
-      return { items: rows.map(row => summary(row, statuses.get(row.id))), total: Number(total), page, hasMore: offset + rows.length < Number(total) };
+      const items = rows.map(row => ({
+        ...summary(row), ...(hasFeesAccess ? { feesStatus: feesStatus(row, statuses.get(row.id)) } : {}),
+      }));
+      return { items, total: Number(total), page, hasMore: offset + rows.length < Number(total) };
     },
 
     async read(user, id, { includeFees = false } = {}) {
       const row = await dossierRow(pool, id);
       checkDossier(row, user);
+      const record = { ...summary(row), ...JSON.parse(row.dossier_json) };
+      if (!includeFees || !canPerformDossier(user, 'dossierFeesRead')) return record;
       const version = row.fees_version;
-      const status = version && !row.fees_need_review ? await smtpStore.honorariumStatus(id, version) : null;
-      const record = { ...summary(row, status), ...JSON.parse(row.dossier_json) };
-      if (!includeFees) return record;
-      const [honorarios, feeRecipients, [history]] = await Promise.all([
+      const [honorarios, { recipients: feeRecipients, status }, [history]] = await Promise.all([
         version ? currentFees(pool, id, version) : null,
-        smtpStore.honorariumRecipients(id, version),
+        smtpStore.honorariumDetails(id, version, row.company_cnpj),
         pool.execute(`SELECT version, saved_at FROM platform_dossier_fee_versions
           WHERE dossier_id = ? ORDER BY version DESC LIMIT 20`, [id]),
       ]);
       return {
         ...record,
+        feesStatus: feesStatus(row, status),
         honorarios: honorarios && { ...honorarios, needsReview: Boolean(row.fees_need_review) },
         feeRecipients,
         feeHistory: history.map(entry => ({ version: entry.version, savedAt: sqlDate(entry.saved_at) })),
@@ -311,6 +315,9 @@ export function createDossierStore({ platformStore, smtpStore }) {
     },
 
     async saveFees(user, id, revision, fees) {
+      if (!canPerformDossier(user, 'dossierFees')) {
+        throw new ApiError(403, 'DOSSIER_FORBIDDEN', 'A edição de honorários exige permissão da Diretoria.');
+      }
       return platformStore.transaction(async connection => {
         const row = await dossierRow(connection, id, true);
         checkDossier(row, user, revision);
@@ -332,6 +339,9 @@ export function createDossierStore({ platformStore, smtpStore }) {
     },
 
     async sendFees(user, id, revision) {
+      if (!canPerformDossier(user, 'dossierFees')) {
+        throw new ApiError(403, 'DOSSIER_FORBIDDEN', 'O envio de honorários exige permissão da Diretoria.');
+      }
       return platformStore.transaction(async connection => {
         const row = await dossierRow(connection, id, true);
         checkDossier(row, user, revision);
@@ -342,7 +352,7 @@ export function createDossierStore({ platformStore, smtpStore }) {
         const version = row.fees_version;
         const honorarios = await currentFees(connection, id, version);
         const message = renderFeesMessage({ ...JSON.parse(row.dossier_json), protocolo: row.protocol, honorarios });
-        const queued = await smtpStore.queueHonorarium(connection, { id, version, message });
+        const queued = await smtpStore.queueHonorarium(connection, { id, version, message, companyCnpj: row.company_cnpj });
         if (queued) await platformStore.insertAudit(connection, 'dossier.fees.queue', user._id, id, { version });
         return queued;
       });

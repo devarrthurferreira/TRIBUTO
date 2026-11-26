@@ -65,13 +65,17 @@ function listOptions(req) {
   return { query, page, limit, archived: searchParams.get('archived') === '1' };
 }
 
-function returnDocument(res, dossier) {
+function returnDocument(res, dossier, inline) {
   const html = renderDossierHtml(dossier);
+  const presentation = inline
+    ? "sandbox allow-same-origin allow-modals; frame-ancestors 'self'"
+    : "sandbox; frame-ancestors 'none'";
   res.writeHead(200, {
     'content-type': 'text/html; charset=utf-8',
-    'content-disposition': `attachment; filename="${dossier.protocolo}.html"`,
+    'content-disposition': `${inline ? 'inline' : 'attachment'}; filename="${dossier.protocolo}.html"`,
     'cache-control': 'private, no-store',
-    'content-security-policy': "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
+    'content-security-policy': `${presentation}; default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'`,
+    'x-frame-options': inline ? 'SAMEORIGIN' : 'DENY',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
   });
@@ -90,14 +94,20 @@ export function createDossierRouter(store) {
     async handleHttp({ req, res, route, user, send, readBody, logger }) {
       requireAction(user, 'dossierRead');
       const { method } = req;
-      const includeFees = canPerformDossier(user, 'dossierFees');
+      const sectors = new URL(req.url || PRIVATE_ROOT, 'http://localhost').searchParams.getAll('sector');
+      const includeFees = sectors.length === 1 && sectors[0] === 'diretoria' && canPerformDossier(user, 'dossierFeesRead');
+      const requireFeesEdit = () => {
+        if (!includeFees || !canPerformDossier(user, 'dossierFees')) {
+          throw new ApiError(403, 'DOSSIER_FORBIDDEN', 'A edição e o envio de honorários exigem permissão da Diretoria.');
+        }
+      };
       const detail = async id => ({ dossier: await store.read(user, id, { includeFees }) });
       try {
         if (route === PRIVATE_ROOT + '/import' && method === 'POST') {
           return await importDossiers({ req, res, user, send, readBody, store });
         }
         if (route === PRIVATE_ROOT && method === 'GET') {
-          return send(res, 200, await store.list(user, listOptions(req)));
+          return send(res, 200, await store.list(user, { ...listOptions(req), includeFees }));
         }
         if (route === PRIVATE_ROOT && method === 'POST') {
           requireAction(user, 'dossierCreate');
@@ -126,7 +136,10 @@ export function createDossierRouter(store) {
             await store.update(user, id, checkedRevision(revision), normalizeDossier(dossier));
             return send(res, 200, await detail(id));
           }
-          if (action === '/document' && method === 'GET') return returnDocument(res, await store.read(user, id));
+          if (action === '/document' && method === 'GET') {
+            const inline = new URL(req.url, 'http://localhost').searchParams.get('view') === '1';
+            return returnDocument(res, await store.read(user, id), inline);
+          }
           if (method === 'POST' && (action === '/archive' || action === '/restore')) {
             requireAction(user, 'dossierCreate');
             const { revision } = expectFields(await readBody(req), ['revision']);
@@ -134,13 +147,13 @@ export function createDossierRouter(store) {
             return send(res, 200, await detail(id));
           }
           if (action === '/fees' && method === 'PUT') {
-            requireAction(user, 'dossierFees');
+            requireFeesEdit();
             const body = await readBody(req);
             await store.saveFees(user, id, checkedRevision(body.revision), normalizeFees(body));
             return send(res, 200, await detail(id));
           }
           if (action === '/fees/send' && method === 'POST') {
-            requireAction(user, 'dossierFees');
+            requireFeesEdit();
             const { revision } = expectFields(await readBody(req), ['revision']);
             await store.sendFees(user, id, checkedRevision(revision));
             return send(res, 202, await detail(id));
@@ -148,6 +161,9 @@ export function createDossierRouter(store) {
         }
         throw new ApiError(404, 'NOT_FOUND', 'Rota inexistente.');
       } catch (error) {
+        if (!includeFees && error?.code === 'HONORARIUM_IN_TRANSIT') {
+          throw new ApiError(409, 'DOSSIER_BUSY', 'Aguarde a conclusão da operação em andamento e tente novamente.');
+        }
         return sanitizedFailure(error, logger);
       }
     },

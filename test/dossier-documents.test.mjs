@@ -98,11 +98,14 @@ test('cálculo de honorários persiste centavos inteiros e recusa valores ou cam
 
 test('documento ao imprimir tem dados completos e e-mail contém somente identificação e honorários', () => {
   const dossier = { ...normalizeDossier(example()), protocolo: 'DOS-123 & TESTE',
+    createdAt: '2026-11-23T01:17:30.000Z', updatedAt: '2026-11-24T00:42:50.000Z',
     honorarios: { ...normalizeFees({ valorMensal: '1750.50', vencimentoDia: '30', observacoes: 'Termo <img onerror=teste>' }), version: 2 } };
   const html = renderDossierHtml(dossier);
   for (const copy of ['Maximum Assessoria Contábil', 'DOS-123 &amp; TESTE', '12.ABC.345/01DE-35', '01/12/2026', 'Janeiro e fevereiro',
     'Coligada / agregada', 'contato@example.invalid', 'ERP de teste', 'Planejamento fiscal', 'Revisar escriturações',
-    'Integração de teste', '&lt;img onerror=&quot;alert(1)&quot;&gt;', '@media print', 'data:image/png;base64,']) {
+    'Integração de teste', '&lt;img onerror=&quot;alert(1)&quot;&gt;', '@media print', 'data:image/png;base64,',
+    '<title>DOS-123 &amp; TESTE</title>', 'Resumo da movimentação', 'Dossiê atualizado', '22/11/2026, 22:17:30',
+    '23/11/2026, 21:42:50', '7. Considerações por setor', '@page { size: A4;']) {
     assert.ok(html.includes(copy), copy);
   }
   assert.ok(!html.includes('<script>') && !html.includes('Termo') && !html.includes('1.750,50'));

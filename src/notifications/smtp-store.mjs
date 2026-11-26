@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, randomUUID } from 'node:crypto';
 import { ApiError } from '../api/validation.mjs';
+import { canAccessCompany, canPerformDossier } from '../platform/policy.mjs';
 
 export const HONORARIUM_RECIPIENTS = Object.freeze([
   ['Bruna Rezende', 'administrativo@maximumcontabil.com.br'],
@@ -9,7 +10,6 @@ export const HONORARIUM_RECIPIENTS = Object.freeze([
   ['Thalita Ribeiro', 'sucessodocliente1@maximumcontabil.com.br'],
 ].map(([name, email]) => Object.freeze({ name, email })));
 
-const recipientEmails = new Set(HONORARIUM_RECIPIENTS.map(({ email }) => email));
 const PASSWORD_AAD = Buffer.from('maximum-notifications/smtp-password/v1');
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS platform_notification_smtp (
@@ -100,6 +100,20 @@ function summary(states) {
   return null;
 }
 
+async function directorRecipients(executor) {
+  const [rows] = await executor.execute(`SELECT email, active, role, company_cnpjs, module_grants
+    FROM platform_users WHERE active = 1 AND email IN (${HONORARIUM_RECIPIENTS.map(() => '?').join(', ')})`,
+  HONORARIUM_RECIPIENTS.map(({ email }) => email));
+  const users = new Map(rows.map(row => [row.email.toLowerCase(), {
+    active: Boolean(row.active), role: row.role,
+    companyCnpjs: JSON.parse(row.company_cnpjs || '[]'), moduleGrants: JSON.parse(row.module_grants || '{}'),
+  }]));
+  return HONORARIUM_RECIPIENTS.flatMap(person => {
+    const user = users.get(person.email);
+    return canPerformDossier(user, 'dossierFeesRead') ? [{ person, user }] : [];
+  });
+}
+
 export class SmtpMySqlStore {
   #key;
 
@@ -163,24 +177,38 @@ export class SmtpMySqlStore {
     finally { password.fill(0); }
   }
 
-  async queueHonorarium(connection, { id, version, message }) {
+  async queueHonorarium(connection, { id, version, message, companyCnpj }) {
+    const recipients = (await directorRecipients(connection)).filter(({ user }) => canAccessCompany(user, companyCnpj));
+    if (!recipients.length) {
+      throw new ApiError(409, 'HONORARIUM_NO_RECIPIENTS', 'Nenhum endereço da lista de envio tem acesso aos honorários desta empresa na Diretoria.');
+    }
+    const emails = recipients.map(({ person }) => person.email);
     const [[existing]] = await connection.execute(`SELECT 1 FROM platform_honorarium_messages
       WHERE dossier_id = ? AND fee_version = ? FOR UPDATE`, [id, version]);
+    let requeued = 0;
+    let pending = emails;
     if (existing) {
       const [result] = await connection.execute(`UPDATE platform_honorarium_deliveries SET status = 'queued',
         attempts = 0, next_at = UTC_TIMESTAMP(3), lease_until = NULL, claim = NULL
-        WHERE dossier_id = ? AND fee_version = ? AND status = 'failed'`, [id, version]);
-      return Boolean(result.affectedRows);
+        WHERE dossier_id = ? AND fee_version = ? AND status = 'failed'
+          AND recipient IN (${emails.map(() => '?').join(', ')})`, [id, version, ...emails]);
+      requeued = result.affectedRows;
+      const [previous] = await connection.execute(`SELECT recipient FROM platform_honorarium_deliveries
+        WHERE dossier_id = ? AND fee_version = ?`, [id, version]);
+      const recorded = new Set(previous.map(({ recipient }) => recipient));
+      pending = emails.filter(email => !recorded.has(email));
+    } else {
+      const { subject, text, html } = message;
+      if (typeof subject !== 'string' || !subject.trim() || subject.length > 340 || CONTROL_CHAR.test(subject)
+        || typeof text !== 'string' || !text.trim() || typeof html !== 'string' || !html.trim()
+        || Buffer.byteLength(text) > 64_000 || Buffer.byteLength(html) > 128_000) {
+        throw new ApiError(400, 'HONORARIUM_MESSAGE', 'Não foi possível preparar a mensagem de honorários.');
+      }
+      await connection.execute(`INSERT INTO platform_honorarium_messages (dossier_id, fee_version, subject, text_body, html_body)
+        VALUES (?, ?, ?, ?, ?)`, [id, version, subject, text, html]);
     }
-    const { subject, text, html } = message;
-    if (typeof subject !== 'string' || !subject.trim() || subject.length > 340 || CONTROL_CHAR.test(subject)
-      || typeof text !== 'string' || !text.trim() || typeof html !== 'string' || !html.trim()
-      || Buffer.byteLength(text) > 64_000 || Buffer.byteLength(html) > 128_000) {
-      throw new ApiError(400, 'HONORARIUM_MESSAGE', 'Não foi possível preparar a mensagem de honorários.');
-    }
-    await connection.execute(`INSERT INTO platform_honorarium_messages (dossier_id, fee_version, subject, text_body, html_body)
-      VALUES (?, ?, ?, ?, ?)`, [id, version, subject, text, html]);
-    const rows = HONORARIUM_RECIPIENTS.map(({ email }) => [randomUUID(), id, version, email]);
+    if (!pending.length) return Boolean(requeued);
+    const rows = pending.map(email => [randomUUID(), id, version, email]);
     await connection.execute(`INSERT INTO platform_honorarium_deliveries (id, dossier_id, fee_version, recipient)
       VALUES ${rows.map(() => '(?, ?, ?, ?)').join(', ')}`, rows.flat());
     return true;
@@ -196,32 +224,34 @@ export class SmtpMySqlStore {
       WHERE dossier_id = ? AND fee_version = ? AND status IN ('queued','failed')`, [id, version]);
   }
 
-  async honorariumRecipients(id, version, executor = this.pool) {
-    if (!version) return HONORARIUM_RECIPIENTS.map(person => ({ ...person, status: 'not_queued', sentAt: null }));
-    const [rows] = await executor.execute(`SELECT recipient, status, sent_at FROM platform_honorarium_deliveries
-      WHERE dossier_id = ? AND fee_version = ?`, [id, version]);
+  async honorariumDetails(id, version, companyCnpj) {
+    const [directors, [rows]] = await Promise.all([
+      directorRecipients(this.pool),
+      version ? this.pool.execute(`SELECT recipient, status, sent_at FROM platform_honorarium_deliveries
+        WHERE dossier_id = ? AND fee_version = ?`, [id, version]) : [[]],
+    ]);
     const byEmail = new Map(rows.map(row => [row.recipient, row]));
-    return HONORARIUM_RECIPIENTS.map(person => {
+    const recipients = directors.filter(({ user }) => canAccessCompany(user, companyCnpj)).map(({ person }) => {
       const row = byEmail.get(person.email);
       return { ...person, status: row?.status ?? 'not_queued', sentAt: databaseDate(row?.sent_at) };
     });
-  }
-
-  async honorariumStatus(id, version, executor = this.pool) {
-    if (!version) return null;
-    const [rows] = await executor.execute(`SELECT DISTINCT status FROM platform_honorarium_deliveries
-      WHERE dossier_id = ? AND fee_version = ?`, [id, version]);
-    return summary(rows.map(row => row.status));
+    return { recipients, status: summary(recipients.map(({ status }) => status)) };
   }
 
   async honorariumStatuses(items) {
     const active = items.filter(({ version }) => version);
     if (!active.length) return new Map();
-    const [rows] = await this.pool.execute(`SELECT DISTINCT dossier_id, status FROM platform_honorarium_deliveries
-      WHERE (dossier_id, fee_version) IN (${active.map(() => '(?, ?)').join(', ')})`,
-    active.flatMap(({ id, version }) => [id, version]));
+    const [directors, [rows]] = await Promise.all([
+      directorRecipients(this.pool),
+      this.pool.execute(`SELECT dossier_id, recipient, status FROM platform_honorarium_deliveries
+        WHERE (dossier_id, fee_version) IN (${active.map(() => '(?, ?)').join(', ')})`,
+      active.flatMap(({ id, version }) => [id, version])),
+    ]);
+    const directorsByEmail = new Map(directors.map(({ person, user }) => [person.email, user]));
+    const companiesById = new Map(active.map(({ id, companyCnpj }) => [id, companyCnpj]));
     const byId = new Map();
-    for (const { dossier_id: id, status } of rows) {
+    for (const { dossier_id: id, recipient, status } of rows) {
+      if (!canAccessCompany(directorsByEmail.get(recipient), companiesById.get(id))) continue;
       if (!byId.has(id)) byId.set(id, []);
       byId.get(id).push(status);
     }
@@ -245,16 +275,20 @@ export class SmtpMySqlStore {
         FROM platform_honorarium_deliveries WHERE status = 'queued' AND next_at <= UTC_TIMESTAMP(3)
         ORDER BY next_at, id LIMIT 1 FOR UPDATE`);
       if (!delivery) return null;
-      const [[message]] = await connection.execute(`SELECT subject, text_body, html_body FROM platform_honorarium_messages
-        WHERE dossier_id = ? AND fee_version = ?`, [delivery.dossier_id, delivery.fee_version]);
+      const [[dossier]] = await connection.execute('SELECT company_cnpj FROM platform_dossiers WHERE id = ?', [delivery.dossier_id]);
+      const directors = await directorRecipients(connection);
+      const allowed = Boolean(dossier) && directors.some(({ person, user }) =>
+        person.email === delivery.recipient && canAccessCompany(user, dossier.company_cnpj));
+      const [[message]] = allowed ? await connection.execute(`SELECT subject, text_body, html_body FROM platform_honorarium_messages
+        WHERE dossier_id = ? AND fee_version = ?`, [delivery.dossier_id, delivery.fee_version]) : [[]];
       const claim = randomUUID();
       await connection.execute(`UPDATE platform_honorarium_deliveries SET status = 'sending',
         claim = ?, lease_until = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 2 MINUTE), attempts = attempts + 1 WHERE id = ?`,
       [claim, delivery.id]);
       return {
-        id: delivery.id, recipient: delivery.recipient, allowed: recipientEmails.has(delivery.recipient),
+        id: delivery.id, recipient: delivery.recipient, allowed: allowed && Boolean(message),
         attempts: Number(delivery.attempts) + 1, claim,
-        message: { subject: message.subject, text: message.text_body, html: message.html_body },
+        message: message && { subject: message.subject, text: message.text_body, html: message.html_body },
       };
     });
   }

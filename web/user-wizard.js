@@ -8,6 +8,12 @@ export function latestAdmissionDate() {
   return localDate.format(new Date());
 }
 
+export function showRoleGrantOptions(container, administrator) {
+  for (const row of container.querySelectorAll('.grant-module')) {
+    row.hidden = administrator && row.dataset.module !== 'diretoria';
+  }
+}
+
 function formatCpf(value) {
   return digits(value).slice(0, 11).replace(/^(\d{3})(\d)/, '$1.$2').replace(/^(\d{3}\.\d{3})(\d)/, '$1.$2').replace(/(\d{3}\.\d{3}\.\d{3})(\d)/, '$1-$2');
 }
@@ -89,7 +95,7 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
   function updateRole() {
     const administrator = fields.Role.value === 'admin';
     id('newUserRoleNote').hidden = !administrator;
-    id('newUserModuleGrants').hidden = administrator;
+    showRoleGrantOptions(id('newUserGrantOptions'), administrator);
     id('newUserPortfolioNote').hidden = !administrator;
     id('newUserPortfolio').hidden = administrator;
   }
@@ -182,7 +188,10 @@ export function mountUserWizard({ request, renderGrants, readGrants, renderCompa
     if (step < 3) return showStep(step + 1);
     const profile = buildProfile();
     const role = fields.Role.value;
-    const moduleGrants = role === 'admin' ? {} : readGrants(id('newUserGrantOptions'));
+    const selections = readGrants(id('newUserGrantOptions'));
+    const moduleGrants = role === 'admin'
+      ? (selections.diretoria ? { diretoria: selections.diretoria } : {})
+      : selections;
     const companyCnpjs = role === 'admin' ? [] : [...companyOptions.querySelectorAll('input:checked')].map(input => input.value);
     showError();
     toggleSaving(true);
