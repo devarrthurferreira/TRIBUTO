@@ -42,6 +42,15 @@ export function createPeopleRouter(store) {
             return send(res, 200, { removed: true });
           }
         }
+        if (route === '/people/feedback/requests' && req.method === 'POST') {
+          const { recipientId, text } = noteFields(await readBody(req));
+          return send(res, 201, { item: await store.createNote('feedback', userId, { recipientId, text, isRequest:true }) });
+        }
+        const reply = /^\/people\/feedback\/([a-f\d-]{36})\/reply$/i.exec(route);
+        if (reply && req.method === 'POST') {
+          const { text } = reviewResponseFields(await readBody(req));
+          return send(res, 201, found(await store.replyToFeedback(userId, reply[1], text)));
+        }
         if (route === '/people/feedback' || route === '/people/reviews') {
           const review = route === '/people/reviews';
           const kind = review ? 'review' : 'feedback';

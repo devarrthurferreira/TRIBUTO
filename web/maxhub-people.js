@@ -3,7 +3,7 @@ import { appendPersonName, personOptionLabel } from './person-name.js';
 const sections = {
   reviews: { title: 'Avaliações', icon: 'journal-text', intro: 'Responda às avaliações enviadas pelo RH.', resource: 'reviews' },
   'my-reviews': { title: 'Minhas avaliações', icon: 'person-badge', intro: 'Responda às avaliações enviadas pelo RH.', resource: 'reviews' },
-  feedback: { title: 'Feedbacks', icon: 'chat-dots', intro: 'Converse em particular sobre entregas, aprendizados e próximos passos.', resource: 'feedback' },
+  feedback: { title: 'Feedbacks do período', icon: 'chat-dots', intro: 'Consulte os feedbacks e as solicitações do período selecionado.', resource: 'feedback' },
   pdi: { title: 'Planos de Desenvolvimento', icon: 'folder2-open', intro: 'Planeje o que quer desenvolver e acompanhe o andamento dos seus PDIs.', resource: 'plans', action: 'Novo PDI' },
   meetings: { title: 'Reuniões 1:1', icon: 'clock-history', intro: 'Agende conversas individuais e registre o que será tratado.', resource: 'meetings', action: 'Agendar reunião' },
   objectives: { title: 'Objetivos', icon: 'graph-up', intro: 'Defina objetivos e faça check-ins para acompanhar seu progresso.', resource: 'goals', action: 'Novo objetivo' },
@@ -273,7 +273,8 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
 
   function dialog({ title, fields, submit = 'Salvar', run, success = 'Registro atualizado.', afterSuccess, drawer = false }) {
     dialogVersion++;
-    ui.dialog.classList.remove('maxpeople-feedback-sent');
+    ui.dialog.classList.remove('maxpeople-feedback-sent', 'maxpeople-feedback-detail');
+    ui.dialog.querySelector(':scope > .maxpeople-confetti')?.remove();
     activeDialog = { run, success, afterSuccess };
     ui.dialog.classList.toggle('maxpeople-feedback-drawer', drawer);
     ui.dialogTitle.textContent = title;
@@ -501,17 +502,18 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
   function celebrateFeedback() {
     const confetti = node('div', 'maxpeople-confetti');
     confetti.setAttribute('aria-hidden', 'true');
-    dialog({ title: 'Parabéns! Seu feedback foi enviado.', fields: [confetti] });
+    dialog({ title: 'Parabéns! Seu feedback foi enviado.', fields: [] });
     ui.dialog.classList.add('maxpeople-feedback-sent');
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    for (let i = 0; i < 46; i++) {
+    ui.dialog.append(confetti);
+    for (let i = 0; i < 95; i++) {
       const piece = node('i');
       confetti.append(piece);
       const x = Math.random() * confetti.clientWidth;
       piece.animate([
         { transform: 'translate('+x+'px,-20px) rotate(0deg)', opacity: 1 },
-        { transform: 'translate('+(x + Math.random()*64-32)+'px,'+(confetti.clientHeight+20)+'px) rotate(300deg)', opacity: 0 }
-      ], { duration: 1150 + Math.random()*800, delay: Math.random()*400, fill: 'both' });
+        { transform: 'translate('+(x + Math.sin(i)*110)+'px,'+(confetti.clientHeight+20)+'px) rotate(300deg)', opacity: 0 }
+      ], { duration: 2200 + Math.random()*1100, delay: Math.random()*800, fill: 'both' });
     }
   }
 
@@ -648,6 +650,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
       scores.append(rating);
     }
     if (scores.childElementCount) contents.push(scores);
+    if (item.reply) contents.push(meta('chat-dots','Resposta · '+day(item.reply.createdAt)),description(item.reply.text));
     return card(title, null, contents);
   }
 
@@ -704,9 +707,63 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     meetings: renderMeeting, objectives: renderGoal, surveys: renderSurvey };
   const canCreate = section.action && (area !== 'surveys' || admin);
   if (canCreate) ui.headingAction.append(button(section.action, () => creators[area](), { primary: true, icon: 'plus-lg' }));
+  let drawFeedback;
   if (area === 'feedback') {
-    ui.headingAction.append(button('Enviar feedback', startFeedback, { primary: true, icon: 'send' }));
-    startFeedback();
+    ui.headingAction.append(button('Solicitar feedback', () => dialog({
+      title:'Solicitar feedback', fields:[personalField('De quem deseja receber feedback?'),field('Sobre o que deseja feedback?', 'text', 'textarea', {required:true, maxLength:4000, rows:4})],
+      submit:'Enviar solicitação', success:'Solicitação enviada.',
+      run: data => request(path+'/requests',{method:'POST',body:{recipientId:text(data,'recipientId'),text:text(data,'text')}})
+    })), button('Enviar feedback', startFeedback, { primary: true, icon: 'send' }));
+    const tabs = node('div','fb-tabs');
+    const search = node('input'); search.type='search'; search.placeholder='Filtrar por pessoa ou mensagem';
+    search.setAttribute('aria-label',search.placeholder);
+    const period = field('Período','feedbackMonth','month',{});
+    const month = period.querySelector('input');
+    const controls=node('div','fb-controls'); controls.append(search,period);
+    ui.items.before(tabs,controls);
+    let category='received', selectedId;
+    const groups={received:'Recebidos',sent:'Enviados',request_received:'Solicitações recebidas',request_sent:'Solicitações enviadas'};
+    const localMonth=new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit'});
+    function counterpart(item) {
+      return (feedbackDirection(item,userId)==='sent'?item.recipient:item.sender)?.name || 'Pessoa anônima';
+    }
+    function showDetails(item) {
+      const canReply=feedbackDirection(item,userId)==='received' && !item.reply;
+      const fields=[renderFeedback(item)];
+      if(canReply) fields.push(field(item.isRequest?'Seu retorno':'Responder feedback','reply','textarea',{required:true,maxLength:4000,rows:3}));
+      dialog({title:item.isRequest?'Solicitação de feedback':'Feedback',fields,submit:'Enviar resposta',success:'Resposta enviada.',
+        run:canReply ? data=>request(itemPath(item)+'/reply',{method:'POST',body:{text:text(data,'reply')}}) : undefined});
+      ui.dialog.classList.add('maxpeople-feedback-detail');
+    }
+    const buttons=new Map();
+    for(const [key,label] of Object.entries(groups)){
+      const tabButton=button(label,()=>{category=key;selectedId=null;draw();});
+      buttons.set(key,tabButton);tabs.append(tabButton);
+    }
+    drawFeedback=()=>{
+      ui.toolbar.hidden=true;
+      const inPeriod=items.filter(item=>!month.value || localMonth.format(new Date(item.createdAt))===month.value);
+      const matches=inPeriod.filter(item=>[counterpart(item),item.text,item.description,item.reply?.text].join(' ').toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase()));
+      const group=item=>(item.isRequest?'request_':'')+feedbackDirection(item,userId);
+      for(const [key,tabButton] of buttons){
+        tabButton.textContent=groups[key]+' ('+matches.filter(item=>group(item)===key).length+')';
+        tabButton.setAttribute('aria-pressed',String(key===category));
+      }
+      const visible=matches.filter(item=>group(item)===category);
+      if(!visible.length){showState('Nenhum registro nesta seleção.');return;}
+      const selected=visible.find(item=>item.id===selectedId)||visible[0];
+      const layout=node('div','fb-layout'), list=node('div','fb-list'), preview=node('div','fb-preview');
+      visible.forEach(item=>{
+        const row=button('',()=>{selectedId=item.id;drawFeedback();showDetails(item);});
+        row.className='fb-row'; row.dataset.selected=String(selected.id===item.id);
+        const person=counterpart(item);
+        row.append(node('span','fb-avatar',person.split(/\s+/).slice(0,2).map(word=>word[0]).join('')),node('strong','',person),node('small','',day(item.createdAt)));
+        list.append(row);
+      });
+      preview.append(renderFeedback(selected),button(feedbackDirection(selected,userId)==='received' && !selected.reply?'Responder':'Ver detalhes',()=>showDetails(selected)));
+      layout.append(list,preview);ui.items.replaceChildren(layout);
+    };
+    search.oninput=month.onchange=()=>{if(loaded)draw();};
   }
   if (usesFilter) for (const [value, label] of Object.entries(filters[area])) ui.filter.add(new Option(label, value));
 
@@ -718,6 +775,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
   }
 
   function draw() {
+    if (drawFeedback) { drawFeedback(); return; }
     const visible = visibleItems();
     ui.count.textContent = visible.length === 1 ? '1 registro' : `${visible.length} registros`;
     ui.toolbar.hidden = !usesFilter;

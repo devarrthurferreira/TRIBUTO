@@ -52,6 +52,14 @@ const SCHEMA = [
     KEY idx_people_notes_sender (kind, sender_id, created_at),
     KEY idx_people_notes_recipient (kind, recipient_id, created_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_people_feedback_requests (
+    note_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+    FOREIGN KEY (note_id) REFERENCES platform_people_notes(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_people_feedback_replies (
+    note_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+    body TEXT NOT NULL, created_at DATETIME(3) NOT NULL
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS platform_people_feedback_details (
     note_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
     description TEXT NOT NULL, ratings JSON NOT NULL,
@@ -96,12 +104,14 @@ const NOTE_PEOPLE = `FROM platform_people_notes note
     JOIN platform_users sender ON sender.id = note.sender_id JOIN platform_users recipient ON recipient.id = note.recipient_id
     LEFT JOIN platform_user_employment sender_employment ON sender_employment.user_id = sender.id
     LEFT JOIN platform_user_employment recipient_employment ON recipient_employment.user_id = recipient.id`;
-const FEEDBACK = `SELECT ${NOTE_FIELDS}, details.description, details.ratings ${NOTE_PEOPLE}
+const FEEDBACK = `SELECT ${NOTE_FIELDS}, details.description, details.ratings, req.note_id AS request_id, reply.body AS reply_text, reply.created_at AS reply_at ${NOTE_PEOPLE}
+    LEFT JOIN platform_people_feedback_requests req ON req.note_id = note.id
+    LEFT JOIN platform_people_feedback_replies reply ON reply.note_id = note.id
     LEFT JOIN platform_people_feedback_details details ON details.note_id = note.id`;
 const ANONYMOUS_FEEDBACK = `SELECT feedback.id, feedback.recipient_id, recipient.name AS recipient_name, feedback.body,
-    feedback.description, feedback.ratings, feedback.created_at, feedback.sender_key = ? AS sent_by_me,
+    feedback.description, feedback.ratings, reply.body AS reply_text, reply.created_at AS reply_at, feedback.created_at, feedback.sender_key = ? AS sent_by_me,
     recipient_employment.admission_date AS recipient_admission_date
-    FROM platform_people_anonymous_feedback feedback JOIN platform_users recipient ON recipient.id = feedback.recipient_id
+    FROM platform_people_anonymous_feedback feedback LEFT JOIN platform_people_feedback_replies reply ON reply.note_id = feedback.id JOIN platform_users recipient ON recipient.id = feedback.recipient_id
     LEFT JOIN platform_user_employment recipient_employment ON recipient_employment.user_id = recipient.id`;
 const REVIEWS = `SELECT ${NOTE_FIELDS}, assignment.note_id AS assignment_id, assignment.response, assignment.responded_at ${NOTE_PEOPLE}
     LEFT JOIN platform_people_review_assignments assignment ON assignment.note_id = note.id`;
@@ -148,7 +158,7 @@ function feedbackRecord(row, userId, anonymous = false) {
   // Show the local calendar date without exposing an anonymous sender's exact time of entry.
   const createdAt = anonymous && !sent ? `${maxHubDay(new Date(note.createdAt))}T12:00:00.000Z` : note.createdAt;
   return {
-    ...note, createdAt, anonymous, direction: sent ? 'sent' : 'received',
+    ...note, createdAt, anonymous, isRequest: Boolean(row.request_id), reply: row.reply_text ? {text:row.reply_text, createdAt:iso(row.reply_at)} : null, direction: sent ? 'sent' : 'received',
     sender: anonymous ? null : { id: row.sender_id, name: row.sender_name, tenureYears: completedTenureYears(row.sender_admission_date) },
     description: row.description ?? '',
     ratings: typeof row.ratings === 'string' ? JSON.parse(row.ratings) : row.ratings ?? {},
@@ -284,11 +294,27 @@ export class PeopleMySqlStore {
     return rows.map(reviewRecord);
   }
 
+  async replyToFeedback(userId, id, text) {
+    return this.platformStore.transaction(async connection => {
+      const [records] = await connection.execute(`SELECT id FROM platform_people_notes
+        WHERE id = ? AND kind = 'feedback' AND recipient_id = ?
+        UNION ALL SELECT id FROM platform_people_anonymous_feedback WHERE id = ? AND recipient_id = ?`, [id,userId,id,userId]);
+      if (!records.length) return null;
+      try {
+        await connection.execute('INSERT INTO platform_people_feedback_replies (note_id, body, created_at) VALUES (?, ?, ?)', [id,text,new Date()]);
+      } catch (error) {
+        if (error.code === 'ER_DUP_ENTRY') throw new ApiError(409,'ALREADY_REPLIED','Este registro já foi respondido.');
+        throw error;
+      }
+      return { saved:true };
+    });
+  }
+
   #anonymousFeedbackKey(userId) {
     return createHmac('sha256', this.#respondentSecret).update(`feedback-sender:${userId}`).digest();
   }
 
-  async createNote(kind, userId, { recipientId, title = null, text, description = '', anonymous = false, ratings = {} }) {
+  async createNote(kind, userId, { recipientId, title = null, text, description = '', anonymous = false, ratings = {}, isRequest = false }) {
     return this.platformStore.transaction(async connection => {
       await requireOtherParticipant(connection, userId, recipientId);
       const id = randomUUID();
@@ -313,7 +339,8 @@ export class PeopleMySqlStore {
         await connection.execute('INSERT INTO platform_people_feedback_details (note_id, description, ratings) VALUES (?, ?, ?)',
           [id, description, JSON.stringify(ratings)]);
       }
-      await awardMaxcoin(connection, userId, 'feedback', id);
+      if (isRequest) await connection.execute('INSERT INTO platform_people_feedback_requests (note_id) VALUES (?)', [id]);
+      else await awardMaxcoin(connection, userId, 'feedback', id);
       const [[row]] = await connection.execute(`${FEEDBACK} WHERE note.id = ?`, [id]);
       return feedbackRecord(row, userId);
     });

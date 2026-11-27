@@ -159,3 +159,24 @@
 @media(max-width:1150px) { .people-dialog.maxpeople-feedback-drawer { width:min(780px,95vw); } }
 @media(max-width:700px) { .people-dialog.maxpeople-feedback-drawer { width:100vw; border-radius:0; } .maxpeople-ratings-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:380px) { .maxpeople-ratings-grid { grid-template-columns:1fr; } }
+
+.fb-tabs,.fb-controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px 16px; }
+.fb-tabs { border-bottom:1px solid var(--people-edge); }
+.fb-tabs button { border:0; background:transparent; border-radius:0; }
+.fb-tabs [aria-pressed=true] { color:var(--people-accent); box-shadow:inset 0 -2px var(--people-accent); }
+.fb-controls input { min-width:0; padding:9px; border:1px solid var(--people-edge); border-radius:6px; color:var(--ink); background:var(--portal-surface); }
+.fb-controls input[type=search] { flex:1; }
+.fb-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:22px; padding:16px; }
+.fb-list,.fb-preview { min-width:0; }
+.fb-preview .people-card { overflow-wrap:anywhere; background:var(--people-hover); }
+.fb-preview > button { margin-top:12px; }
+.fb-row { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:12px; padding:14px; width:100%; text-align:left; color:var(--ink); background:transparent; border:0; border-radius:8px; cursor:pointer; }
+.fb-row[data-selected=true],.fb-row:hover { background:var(--people-hover); }
+.fb-avatar { display:grid; place-items:center; width:38px; height:38px; border-radius:50%; background:var(--portal-surface); color:var(--people-accent); font-weight:700; }
+.people-dialog.maxpeople-feedback-detail { position:fixed; inset:0; margin:auto; width:min(620px,94vw); height:fit-content; max-height:90dvh; overflow:auto; overflow-wrap:anywhere; }
+.people-dialog.maxpeople-feedback-sent { width:100vw; height:100dvh; max-width:none; max-height:none; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; }
+.people-dialog.maxpeople-feedback-sent[open] { display:grid; place-items:center; }
+.maxpeople-feedback-sent > form { position:relative; z-index:1; width:min(420px,90vw); border-radius:18px; overflow:hidden; background:var(--portal-surface,#fff); }
+.maxpeople-feedback-sent > .maxpeople-confetti { position:absolute; inset:0; }
+.maxpeople-confetti i { height:12px; width:7px; }
+@media(max-width:700px){.fb-layout{grid-template-columns:1fr}.fb-row{gap:8px}.fb-tabs{gap:4px}}
