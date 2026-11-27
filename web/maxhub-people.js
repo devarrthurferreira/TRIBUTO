@@ -16,6 +16,10 @@ const statuses = {
 const surveyKinds = {
   engagement: 'Pesquisa de engajamento', satisfaction: 'Pesquisa de satisfação', quick_survey: 'Pesquisa rápida', super_survey: 'Super pesquisa',
 };
+const developmentTypes = [
+  'Técnico', 'Comportamental', 'Liderança', 'Comunicação',
+  'Gestão de projetos', 'Relacionamento com clientes', 'Desenvolvimento de carreira',
+];
 const filters = {
   feedback: { all: 'Todos', received: 'Recebidos', sent: 'Enviados' },
   pdi: { all: 'Todos os status', draft: 'Rascunhos', active: 'Vigentes', completed: 'Concluídos' },
@@ -229,6 +233,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
       </form>
     </dialog>`;
   const ui = Object.fromEntries(Array.from(panel.querySelectorAll('[data-ui]'), element => [element.dataset.ui, element]));
+  ui.dialog.classList.toggle('maxpeople-plan-drawer', area === 'pdi');
   panel.querySelector('h2').textContent = section.title;
   panel.querySelector('.maxpeople-heading-mark').append(glyph(section.icon));
   ui.intro.textContent = section.intro;
@@ -284,7 +289,10 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     ui.submit.textContent = submit;
     setDialogBusy(false);
     if (!ui.dialog.open) ui.dialog.showModal();
-    (ui.fields.querySelector('input, textarea, select') || ui.close).focus();
+    const firstField = ui.fields.querySelector('input, textarea, select');
+    const focusTarget = area === 'pdi' && firstField?.type === 'checkbox' ? ui.close : firstField;
+    (focusTarget || ui.close).focus();
+    if (area === 'pdi') ui.fields.scrollTop = 0;
     return dialogVersion;
   }
 
@@ -581,7 +589,26 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     }
     for(const control of [start,duration,unit]) control.oninput=estimate;
     if(!item?.dueAt) estimate();
-    fields.push(field('Tipo de desenvolvimento','type','text',{required:true,maxLength:80,value:s.type || '',placeholder:'Técnico, comportamental, liderança…'}),start,duration,unit,due);
+    const savedType = s.type || '';
+    const selectedType = savedType && !developmentTypes.includes(savedType) ? 'custom' : savedType;
+    const typeField = field('Tipo de desenvolvimento', 'type', 'select', {
+      required: true,
+      value: selectedType,
+      choices: { '': 'Selecione um tipo', ...Object.fromEntries(developmentTypes.map(type => [type, type])), custom: 'Outro tipo' },
+    });
+    const customTypeField = field('Qual tipo de desenvolvimento?', 'customType', 'text', {
+      value: selectedType === 'custom' ? savedType : '', required: true, maxLength: 80,
+    });
+    const typeSelect = typeField.querySelector('select');
+    const customTypeInput = customTypeField.querySelector('input');
+    function showCustomType() {
+      const custom = typeSelect.value === 'custom';
+      customTypeField.hidden = !custom;
+      customTypeInput.disabled = !custom;
+    }
+    typeSelect.addEventListener('change', showCustomType);
+    showCustomType();
+    fields.push(typeField, customTypeField, start, duration, unit, due);
     if (!item) {
       const previous=items.find(p=>p.ownerId===userId && p.leaderId);
       fields.push(personalField('Liderança direta',true,previous && {id:previous.leaderId,name:previous.leaderName}),
@@ -592,7 +619,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
       title: item ? 'Editar PDI' : 'Novo PDI', fields, submit: 'Salvar PDI', success: 'PDI salvo.',
       run: data => request(item ? itemPath(item) : path, { method: item ? 'PATCH' : 'POST', body: {
         title:text(data,'title'),description:text(data,'description'),dueAt:text(data,'dueAt') || null,
-        structure:{type:text(data,'type'),start:text(data,'start'),duration:Number(data.get('duration')),unit:text(data,'unit'),blocks},
+        structure:{type:text(data, data.has('customType') ? 'customType' : 'type'),start:text(data,'start'),duration:Number(data.get('duration')),unit:text(data,'unit'),blocks},
         ...(item ? {version:item.updatedAt} : {status:text(data,'status'),leaderId:text(data,'recipientId')}),
       } }),
     });
@@ -709,33 +736,85 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
   }
 
   function renderPlan(item) {
-    const s=item.structure;
-    const tasks=(s?.blocks || []).flatMap(b=>b.tasks);
-    const done=tasks.filter(t=>t.done).length;
-    const percent=tasks.length ? Math.round(100*done/tasks.length) : item.status==='completed' ? 100 : 0;
-    const dates=day(s?.start || item.createdAt)+' — '+(day(item.dueAt) || 'Sem prazo');
-    const editable=item.ownerId===userId && item.status!=='completed';
-    function openPlan(){
-      const fields=[description(item.description),meta('clock-history',dates),description(s ? s.type+' · '+s.duration+' '+s.unit : ''),
-        description('Colaborador: '+item.ownerName),description('Liderança direta: '+(item.leaderName || 'Não informada'))];
-      const blocks=structuredClone(s?.blocks || []);
-      for(const block of blocks){
-        fields.push(node('h3','',block.name));
-        for(const task of block.tasks){
-          const label=node('label','hub-profile-check');const check=node('input');
-          check.type='checkbox';check.checked=task.done;check.disabled=!editable;check.onchange=()=>{task.done=check.checked;};
-          label.append(check,document.createTextNode(task.name));fields.push(label);
-        }
+    const structure = item.structure;
+    const tasks = (structure?.blocks || []).flatMap(block => block.tasks);
+    const completed = tasks.filter(task => task.done).length;
+    const progress = count => tasks.length ? Math.round(100 * count / tasks.length) : item.status === 'completed' ? 100 : 0;
+    const start = day(structure?.start || item.createdAt);
+    const deadline = day(item.dueAt) || 'Sem prazo';
+    const editable = item.ownerId === userId && item.status !== 'completed';
+
+    function openPlan() {
+      const summary = node('dl', 'pdi-facts');
+      const duration = structure?.duration;
+      const unit = duration === 1 ? { dias: 'dia', semanas: 'semana', meses: 'mês' }[structure.unit] : structure?.unit;
+      const owner = appendPersonName(node('span'), item.ownerName || 'Não informado', null, item.ownerId);
+      const lead = appendPersonName(node('span'), item.leaderName || 'Não informada', null, item.leaderId);
+      for (const [label, value] of [
+        ['Status', statusBadge(item.status)], ['Tipo de desenvolvimento', structure?.type || 'Não informado'],
+        ['Início', start || 'Não informado'], ['Término previsto', deadline],
+        ['Duração estimada', duration ? `${duration} ${unit}` : 'Não informada'],
+        ['Colaborador', owner], ['Liderança direta', lead],
+      ]) {
+        const cell = node('div');
+        const detail = node('dd');
+        detail.append(value);
+        cell.append(node('dt', '', label), detail);
+        summary.append(cell);
       }
-      dialog({title:item.title,fields,submit:'Salvar progresso',run:editable && tasks.length ? ()=>request(itemPath(item),{method:'PATCH',body:{structure:{...s,blocks},version:item.updatedAt}}) : undefined});
+
+      const overview = node('section', 'pdi-overview');
+      overview.append(node('h3', '', 'Sobre o plano'), description(item.description || 'Descrição não informada.'), summary);
+      const checklist = node('section', 'pdi-checklist');
+      const progressText = node('p', 'people-meta');
+      progressText.setAttribute('aria-live', 'polite');
+      const bar = meter(progress(completed), 'Progresso do plano');
+      const updateProgress = count => {
+        bar.value = progress(count);
+        progressText.textContent = tasks.length ? `${bar.value}% · ${count} de ${tasks.length} tarefas concluídas` : 'Nenhuma tarefa cadastrada.';
+      };
+      let count = completed;
+      updateProgress(count);
+      checklist.append(node('h3', '', 'Blocos e tarefas'), progressText, bar);
+      const blocks = structuredClone(structure?.blocks || []);
+      for (const block of blocks) {
+        const group = node('fieldset', 'pdi-block');
+        group.append(node('legend', '', block.name));
+        for (const task of block.tasks) {
+          const label = node('label', 'pdi-task');
+          const check = node('input');
+          check.type = 'checkbox';
+          check.checked = task.done;
+          check.disabled = !editable;
+          check.addEventListener('change', () => {
+            count += check.checked ? 1 : -1;
+            task.done = check.checked;
+            updateProgress(count);
+          });
+          label.append(check, node('span', '', task.name));
+          group.append(label);
+        }
+        if (!block.tasks.length) group.append(description('Este bloco ainda não tem tarefas.'));
+        checklist.append(group);
+      }
+      dialog({
+        title: item.title, fields: [overview, checklist], submit: 'Salvar progresso', success: 'Progresso salvo.',
+        run: editable && tasks.length ? () => request(itemPath(item), {
+          method: 'PATCH', body: { structure: { ...structure, blocks }, version: item.updatedAt },
+        }) : undefined,
+      });
     }
-    const actions=[button('Ver plano',openPlan,{primary:true})];
-    if(editable){
-      actions.push(button('Editar',()=>editPlan(item)));
-      actions.push(button(item.status==='draft'?'Ativar PDI':'Concluir PDI',()=>changePlan(item,item.status==='draft')));
+
+    const actions = [button('Ver plano', openPlan, { primary: true, subject: item.title })];
+    if (editable) {
+      actions.push(button('Editar', () => editPlan(item)));
+      actions.push(button(item.status === 'draft' ? 'Ativar PDI' : 'Concluir PDI', () => changePlan(item, item.status === 'draft')));
     }
-    const element=card(item.title,item.status,[meta('clock-history',dates),description(percent+'% · '+done+' de '+tasks.length+' tarefas'),meter(percent,'Progresso do plano')],actions);
-    element.onclick=e=>{if(!e.target.closest('button,a')) openPlan();};
+    const element = card(item.title, item.status, [
+      meta('clock-history', `${start} — ${deadline}`), description(`${progress(completed)}% · ${completed} de ${tasks.length} tarefas`),
+      meter(progress(completed), 'Progresso do plano'),
+    ], actions);
+    element.onclick = event => { if (!event.target.closest('button,a')) openPlan(); };
     return element;
   }
 
