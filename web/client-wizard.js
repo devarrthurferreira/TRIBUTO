@@ -15,14 +15,14 @@ const regimes = new Map([
 
 const steps = [
   ['Adicionar dados', 'person-badge'], ['Certificado', 'shield-lock'], ['Módulos de acesso', 'grid'],
-  ['NFC-e', scheduleSummary(client.consumerSchedule)], ['Consultas de NF', 'receipt'], ['Notas de serviço', 'file-earmark'], ['Dados de acesso', 'key'],
+  ['Consultas de NF', 'receipt'], ['Notas de serviço', 'file-earmark'], ['Dados de acesso', 'key'],
 ];
 
 const schedules = new Map([
   ['disabled', ['Desativada', '']], ['day', ['Diurno', '08:00']], ['night', ['Noturno', '22:00']],
 ]);
 
-const scheduleTitles = ['NFC-e', scheduleSummary(client.consumerSchedule)], ['Consultas de NF', 'Notas de serviço'];
+const scheduleTitles = ['Consultas de NF', 'Notas de serviço'];
 const accessStatuses = {
   unconfigured: 'Acesso ainda não configurado',
   activation_pending: 'Aguardando definição da senha',
