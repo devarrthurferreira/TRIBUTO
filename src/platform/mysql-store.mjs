@@ -57,13 +57,13 @@ function workItem(row) {
     title: row.title, description: row.description, status: row.status,
     dueAt: row.due_at, assigneeId: row.assignee_id, createdBy: row.created_by,
     createdAt: sqlDate(row.created_at), updatedAt: sqlDate(row.updated_at),
-    ...(row.module === 'marketing' ? { ...parse(row.details_json, {}), completedAt: sqlDate(row.completed_at) } : {})
+    ...(['marketing', 'sucesso-do-cliente'].includes(row.module) ? { ...parse(row.details_json, {}), completedAt: sqlDate(row.completed_at) } : {})
   };
 }
 
 const WORK_ITEM_SELECT = `SELECT task.*, details.details_json, details.completed_at
   FROM platform_work_items task LEFT JOIN platform_marketing_task_details details ON details.work_item_id = task.id`;
-const MARKETING_DETAIL_FIELDS = ['priority', 'tags', 'checklist', 'campaign', 'referenceUrl', 'socialChannel', 'desiredReach', 'estimatedReach'];
+const MARKETING_DETAIL_FIELDS = ['memberIds', 'prospectName', 'priority', 'tags', 'checklist', 'campaign', 'referenceUrl', 'socialChannel', 'desiredReach', 'estimatedReach'];
 
 function marketingDetails(item) {
   return Object.fromEntries(MARKETING_DETAIL_FIELDS.filter(key => item[key] !== undefined).map(key => [key, item[key]]));
@@ -381,6 +381,14 @@ export class PlatformMySqlStore {
   }
   async clearLoginFailures(key) { await this.pool.execute('DELETE FROM platform_login_attempts WHERE id = ?', [key]); }
 
+  async companyRegistrationsByMonth() {
+    // A classic CNPJ has both a company and an optional linked client profile.
+    return this.rows(`SELECT DATE_FORMAT(DATE_SUB(created_at, INTERVAL 3 HOUR), '%Y-%m') AS month,
+      COUNT(*) AS registrations FROM (
+        SELECT created_at FROM platform_companies
+        UNION ALL SELECT created_at FROM platform_client_profiles WHERE client_type = 'pj' AND fiscal_cnpj IS NULL
+      ) AS companies GROUP BY month ORDER BY month`, []);
+  }
   async listCompanies(allowed = null) {
     const params = [];
     return (await this.rows(`SELECT * FROM platform_companies WHERE ${scope('cnpj', allowed, params)} ORDER BY name`, params)).map(company);
@@ -452,7 +460,7 @@ export class PlatformMySqlStore {
       due_at, assignee_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [item._id, item.module, item.companyCnpj ?? '', item.title, item.description, item.status, item.dueAt,
       item.assigneeId, item.createdBy, item.createdAt, item.updatedAt]);
-    if (item.module !== 'marketing') return insert(this.pool);
+    if (!['marketing', 'sucesso-do-cliente'].includes(item.module)) return insert(this.pool);
     await this.transaction(async connection => {
       await insert(connection);
       await saveMarketingDetails(connection, item, item.completedAt);
@@ -463,7 +471,7 @@ export class PlatformMySqlStore {
     if (expected) return this.transaction(async connection => {
       // Lock the task before reading or changing its optional details.
       const [[locked]] = await connection.execute('SELECT * FROM platform_work_items WHERE id = ? FOR UPDATE', [id]);
-      if (!locked || locked.module !== 'marketing' || sqlDate(locked.updated_at) !== new Date(expected.updatedAt).toISOString()
+      if (!locked || !['marketing', 'sucesso-do-cliente'].includes(locked.module) || sqlDate(locked.updated_at) !== new Date(expected.updatedAt).toISOString()
         || (locked.company_cnpj || null) !== expected.companyCnpj || locked.assignee_id !== expected.assigneeId) return null;
       const [[row]] = await connection.execute(`${WORK_ITEM_SELECT} WHERE task.id = ?`, [id]);
       const current = workItem(row);

@@ -184,9 +184,11 @@ function validateModuleGrants(grants) {
   });
   return Object.fromEntries(entries);
 }
+const hasTaskBoard = module => ['marketing', 'sucesso-do-cliente'].includes(module);
 function publicWorkItem(item) {
   return { id: item._id, module: item.module, companyCnpj: item.companyCnpj, title: item.title, description: item.description || '', status: item.status, dueAt: item.dueAt || null, assigneeId: item.assigneeId || null, createdBy: item.createdBy, createdAt: item.createdAt, updatedAt: item.updatedAt,
-    ...(item.module === 'marketing' ? { priority: item.priority || 'normal', tags: item.tags || [], checklist: item.checklist || [],
+    ...(item.module === 'sucesso-do-cliente' ? {memberIds:item.memberIds || [], prospectName:item.prospectName || ''} : {}),
+    ...(hasTaskBoard(item.module) ? { priority: item.priority || 'normal', tags: item.tags || [], checklist: item.checklist || [],
       campaign: item.campaign || '', referenceUrl: item.referenceUrl || '', completedAt: item.completedAt || null,
       socialChannel: item.socialChannel || '', desiredReach: item.desiredReach ?? null, estimatedReach: item.estimatedReach ?? null } : {}) };
 }
@@ -240,6 +242,20 @@ function marketingMetricMetadata(input, { partial = false } = {}) {
   }
   if (input.dueAt !== undefined) fields.dueAt = dueAt(input.dueAt);
   return fields;
+}
+
+async function successFields(store, input, company) {
+  const result = {};
+  if (input.prospectName !== undefined) {
+    result.prospectName = field(input.prospectName, 'empresa ainda não cadastrada', 0, 160);
+    check(!company || !result.prospectName, 'vínculo da empresa');
+  }
+  if (input.memberIds !== undefined) {
+    check(Array.isArray(input.memberIds) && input.memberIds.length <= 30, 'membros');
+    result.memberIds = [...new Set(input.memberIds)];
+    for (const id of result.memberIds) await validateTaskAssignee(store, id, 'sucesso-do-cliente', company);
+  }
+  return result;
 }
 
 async function validateTaskAssignee(store, assigneeId, module, companyCnpj) {
@@ -351,6 +367,10 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
         const newHash = await hashPassword(input.newPassword);
         await store.changePassword(user._id, newHash, session._id);
         return send(res, 200, { ok: true });
+      }
+      if (req.method === 'GET' && route === '/sucesso-do-cliente/crescimento') {
+        if (!canAccess(user, 'sucesso-do-cliente')) fail(403, 'FORBIDDEN', 'Sem acesso ao módulo');
+        return send(res, 200, { months: await store.companyRegistrationsByMonth() });
       }
       if (req.method === 'GET' && route === '/modules') return send(res, 200, { modules: MODULES.filter(x => canAccess(user, x.id)) });
       if (req.method === 'GET' && route === '/dashboard') {
@@ -544,7 +564,7 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
         if (companyCnpj && !canAccessCompany(user, companyCnpj)) fail(403, 'FORBIDDEN', 'Sem acesso à empresa');
         const modules = MODULES.filter(x => canPerform(user, x.id, 'workItemRead')).map(x => x.id);
         const scope = { modules, companyCnpjs: user.role === 'admin' ? null : user.companyCnpjs, module, companyCnpj };
-        if (module === 'marketing') {
+        if (hasTaskBoard(module)) {
           const page = pageNumber(url.searchParams, 'page', 1, 10_000);
           const [items, people] = await Promise.all([
             store.listWorkItems({ ...scope, limit: MARKETING_PAGE_SIZE + 1, offset: (page - 1) * MARKETING_PAGE_SIZE }),
@@ -565,7 +585,7 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
         if (!canPerform(user, input.module, 'workItemCreate') || !canAccessWorkItemCompany(user, input.module, companyCnpj)) fail(403, 'FORBIDDEN', 'Sem permissão para criar tarefas nesta empresa e módulo');
         if (companyCnpj && !await store.companyExists(companyCnpj)) fail(400, 'UNKNOWN_COMPANY', 'Empresa não cadastrada');
         const now = new Date();
-        const marketing = input.module === 'marketing';
+        const marketing = hasTaskBoard(input.module);
         const status = marketing && input.status !== undefined ? input.status : 'open';
         check(WORK_ITEM_STATUSES.includes(status), 'status');
         const item = { _id: randomUUID(), module: input.module, companyCnpj, title: field(input.title, 'title', 3, 200), description: input.description === undefined ? '' : field(input.description, 'description', 0, 2000), status, dueAt: input.dueAt === undefined ? null : dueAt(input.dueAt), assigneeId: input.assigneeId ?? null, createdBy: user._id, createdAt: now, updatedAt: now,
@@ -576,6 +596,7 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
           check(!marketing || item.assigneeId === null, 'responsável');
           item.assigneeId = null;
         }
+        if (item.module === 'sucesso-do-cliente') Object.assign(item, await successFields(store, input, companyCnpj));
         await store.createWorkItem(item);
         if (!marketing) await store.audit('work_item.create', user._id, item._id, { companyCnpj: item.companyCnpj, module: item.module });
         return send(res, 201, { item: publicWorkItem(item) });
@@ -587,7 +608,7 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
           fail(404, 'NOT_FOUND', 'Tarefa não encontrada');
         }
         const result = { item: publicWorkItem(item) };
-        if (item.module === 'marketing') result.history = await store.listWorkItemHistory(item._id);
+        if (hasTaskBoard(item.module)) result.history = await store.listWorkItemHistory(item._id);
         return send(res, 200, result);
       }
       if (req.method === 'PATCH' && itemMatch) {
@@ -595,7 +616,7 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
         if (!item) fail(404, 'NOT_FOUND', 'Tarefa não encontrada');
         if (!canPerform(user, item.module, 'workItemUpdate') || !canAccessWorkItemCompany(user, item.module, item.companyCnpj)) fail(403, 'FORBIDDEN', 'Sem permissão para editar tarefas nesta empresa e módulo');
         const input = await body(req);
-        const marketing = item.module === 'marketing';
+        const marketing = hasTaskBoard(item.module);
         const changes = marketing ? marketingAttributes(input) : {};
         if (marketing && input.companyCnpj !== undefined) {
           const destination = workItemCompany(item.module, input.companyCnpj);
@@ -605,6 +626,7 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
             changes.companyCnpj = destination;
           }
         }
+        if (item.module === 'sucesso-do-cliente') Object.assign(changes, await successFields(store, input, changes.companyCnpj ?? item.companyCnpj));
         if (input.title !== undefined) changes.title = field(input.title, 'title', 3, 200);
         if (input.description !== undefined) changes.description = field(input.description, 'description', 0, 2000);
         if (input.status !== undefined) { check(WORK_ITEM_STATUSES.includes(input.status), 'status'); changes.status = input.status; }

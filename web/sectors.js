@@ -26,12 +26,12 @@ function crmSlug(section, campaignView) {
 }
 
 function activityPanel(sector) {
-  return sector.id === 'marketing' ? 'tasks' : 'activities';
+  return ['marketing', 'sucesso-do-cliente'].includes(sector.id) ? 'tasks' : 'activities';
 }
 
 function sectionOptions(sector) {
   const options = [{ id: 'overview', label: 'Visão geral' }];
-  if (sector.activities) options.push({ id: activityPanel(sector), label: sector.id === 'marketing' ? 'Tarefas' : 'Atividades' });
+  if (sector.activities) options.push({ id: activityPanel(sector), label: activityPanel(sector) === 'tasks' ? 'Tarefas' : 'Atividades' });
   if (sector.id === 'marketing') {
     if (sector.activities) options.push({ id: 'metrics', label: 'Métricas' });
     if (sector.crm) options.push({ id: 'crm', label: 'CRM' });

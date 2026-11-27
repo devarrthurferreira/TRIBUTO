@@ -28,6 +28,7 @@ const ALLOWED = new Map([
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ...MODULES.map(({ id }) => [`/setor/${id}`, ['index.html', 'text/html; charset=utf-8']]),
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
+  ['/customer-success.js', ['customer-success.js', 'text/javascript; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/user-wizard.js', ['user-wizard.js', 'text/javascript; charset=utf-8']],
   ['/user-wizard.css', ['user-wizard.css', 'text/css; charset=utf-8']],

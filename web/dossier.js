@@ -264,6 +264,11 @@ export function mountDossierAdmin(root, {
       .filter(Boolean).join(' · ');
     title.append(el('h3', '', dossier.empresa?.nome || 'Empresa'), el('p', 'dossier-muted', origin));
     const meta = el('div', 'dossier-list-meta');
+    if (sector === 'sucesso-do-cliente') {
+      const context = [dossier.grupo, dossier.origem].filter(value => value && value !== 'Não informado');
+      if (context.length) title.append(el('p','dossier-muted',context.join(' · ')));
+      if (dossier.dataInicio) meta.append(el('strong','','Início '+dossier.dataInicio.slice(0,10).split('-').reverse().join('/')));
+    }
     if (canFeesRead && dossier.feesStatus) meta.append(badge(dossier.feesStatus));
     meta.append(el('span', 'dossier-muted', dateLabel(dossier.createdAt)));
     const open = button('Abrir dossiê');

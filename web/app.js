@@ -2,6 +2,7 @@ import { destroyChat, initChat, openChat } from './chat.js';
 import { mountPortal, setChatNotification } from './portal.js';
 import { crmSectionFromQuery, mountSectorNavigation } from './sectors.js';
 import { latestAdmissionDate, mountUserWizard, showRoleGrantOptions } from './user-wizard.js';
+import { mountSuccessOverview, mountSuccessTasks } from './customer-success.js';
 import { mountMarketingTasks } from './marketing-tasks.js';
 import { mountMarketingMetrics } from './marketing-metrics.js';
 import { mountMarketingCrm } from './marketing-crm.js';
@@ -466,6 +467,7 @@ function preservePortalLink(query = new URLSearchParams(location.search)) {
 }
 
 function showAuth(setupRequired, message = '', preserveRoute = false) {
+  $('successWorkspace').replaceChildren();
   club.close();
   maxhub.close();
   destroyChat();
@@ -641,6 +643,7 @@ async function logout() {
 
 function navigate(view, { replace = false } = {}) {
   const previousView = state.view;
+  $('successWorkspace').querySelector('dialog[open]')?.close();
   const companyRoute = /^company-(\d{14})$/.exec(view);
   const clientRoute = /^client-([a-z\d]{11,14}|[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})$/i.exec(view);
   const detail = !!companyRoute && canUse('fiscal', 'fiscalDocumentsRead');
@@ -709,7 +712,7 @@ function navigate(view, { replace = false } = {}) {
     onPanelChange: panel => {
       ({ marketing: showMarketingPanel, rh: showRhPanel, 'sucesso-do-cliente': showCustomerSuccessPanel,
         tecnologia: showTechnologyPanel, diretoria: value => showDossierPanel('diretoria', value) }[sector.id])?.(panel);
-      showSectorSummary(sector, panel);
+      if (sector.id !== 'sucesso-do-cliente') showSectorSummary(sector, panel);
     },
   } : null, { home: state.view === 'overview' });
   if (!clientDetail) $('conteudo').focus({ preventScroll: true });
@@ -724,7 +727,7 @@ function navigate(view, { replace = false } = {}) {
   if (state.view === 'client-detail') void loadClientDetail(state.selectedClientKey).catch(displayError);
   if (state.view === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead')) void loadFiscalDocuments().catch(displayError);
   if (state.view === 'company-detail') void loadCompanyDetail().catch(displayError);
-  if (state.view !== 'marketing' && canUse(state.view, 'workItemRead')) void loadWorkItems(state.view).catch(displayError);
+  if (!['marketing', 'sucesso-do-cliente'].includes(state.view) && canUse(state.view, 'workItemRead')) void loadWorkItems(state.view).catch(displayError);
   return surface;
 }
 
@@ -763,11 +766,16 @@ function showDossierPanel(module, panel) {
 }
 
 function showCustomerSuccessPanel(panel) {
-  const overview = panel === 'overview';
-  const activities = canUse('sucesso-do-cliente', 'workItemRead');
-  $('customerSuccessOverview').hidden = !overview || !activities;
-  $('customerSuccessRestricted').hidden = !overview || activities;
   showDossierPanel('sucesso-do-cliente', panel);
+  $('customerSuccessHeading').hidden = true;
+  $('dossierShortcut').hidden = true;
+  const root = $('successWorkspace');
+  root.replaceChildren();
+  if (panel === 'overview') mountSuccessOverview(root, { request, name: firstName(state.session.user.name),
+    tasks: canUse('sucesso-do-cliente', 'workItemRead'), dossiers: canUse('sucesso-do-cliente', 'dossierRead') });
+  if (panel === 'tasks') mountSuccessTasks(root, { request,
+    create: canUse('sucesso-do-cliente', 'workItemCreate'), update: canUse('sucesso-do-cliente', 'workItemUpdate') });
+
 }
 
 function showTechnologyPanel(panel) {
@@ -1894,7 +1902,7 @@ function setupEvents() {
   for (const control of $('view-marketing').querySelectorAll('[data-marketing-go]')) {
     control.addEventListener('click', () => sectorNavigation.selectPanel(control.dataset.marketingGo));
   }
-  $('openCustomerSuccessActivities').addEventListener('click', () => sectorNavigation.selectPanel('activities'));
+  $('openCustomerSuccessActivities').addEventListener('click', () => sectorNavigation.selectPanel('tasks'));
   for (const id of ['openDossier', 'openBoardDossier']) {
     $(id).addEventListener('click', () => sectorNavigation.selectPanel('dossier'));
   }
