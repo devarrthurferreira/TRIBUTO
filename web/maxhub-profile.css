@@ -288,3 +288,18 @@
 .bio-socials .bi-telephone::before {content:"\f5c1"}
 .hub-profile-overview {grid-template-columns:auto minmax(0,1fr) auto auto}
 @media(max-width:700px){.hub-profile-overview {grid-template-columns:auto 1fr}.profile-pet{margin:0}}
+
+.hub-profile-identity-line { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.hub-behavioral-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid var(--hub-edge);
+  border-radius: 999px;
+  background: var(--hub-hover);
+  color: var(--hub-accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.hub-behavioral-badge[hidden] { display: none; }

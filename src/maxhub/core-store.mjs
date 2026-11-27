@@ -3,6 +3,11 @@ import { completedTenureYears } from '../platform/employment.mjs';
 import { awardMaxcoin, MAXCOIN_RULES, maxcoinLabel } from './points.mjs';
 
 const SCHEMAS = [
+  `CREATE TABLE IF NOT EXISTS platform_maxhub_behavioral_profiles (
+    user_id CHAR(36) NOT NULL PRIMARY KEY,
+    label VARCHAR(100) NOT NULL,
+    assignment_key VARCHAR(80) NULL UNIQUE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS platform_public_bios (
     user_id CHAR(36) PRIMARY KEY, token CHAR(36) NOT NULL UNIQUE, email VARCHAR(254) NOT NULL, phone VARCHAR(32) NOT NULL
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
@@ -62,6 +67,11 @@ export class MaxHubCoreStore {
 
   async initialize() {
     for (const schema of SCHEMAS) await this.pool.query(schema);
+    // Resolve the initial assignment once. Subsequent email and name changes do not move it.
+    await this.pool.execute(`INSERT INTO platform_maxhub_behavioral_profiles (user_id, label, assignment_key)
+      SELECT id, ?, ? FROM platform_users WHERE email = ? AND LOWER(TRIM(name)) = ? AND active = 1
+      ON DUPLICATE KEY UPDATE assignment_key = platform_maxhub_behavioral_profiles.assignment_key`,
+    ['Analista Planejador', 'initial-behavioral-profile', 'programacao@maximumcontabil.com.br', 'arthur ferreira']);
   }
 
   visit(userId, day) {
@@ -108,9 +118,10 @@ export class MaxHubCoreStore {
 
   async profile(user) {
     const [[row]] = await this.pool.execute(`SELECT profile.bio, profile.photo_mime IS NOT NULL AS has_avatar,
-      details.skills_json, details.links_json, details.education_json, employment.admission_date,
+      behavior.label AS behavioral_profile, details.skills_json, details.links_json, details.education_json, employment.admission_date,
       (SELECT COALESCE(SUM(points), 0) FROM platform_maxhub_points WHERE user_id = ?) AS points
       FROM platform_users person LEFT JOIN platform_maxhub_profiles profile ON profile.user_id = person.id
+      LEFT JOIN platform_maxhub_behavioral_profiles behavior ON behavior.user_id = person.id
       LEFT JOIN platform_maxhub_profile_details details ON details.user_id = person.id
       LEFT JOIN platform_user_employment employment ON employment.user_id = person.id
       WHERE person.id = ?`, [user._id, user._id]);
@@ -118,6 +129,7 @@ export class MaxHubCoreStore {
     return {
       id: user._id, name: user.name, bio: row?.bio ?? '', hasAvatar: Number(row?.has_avatar) === 1,
       admissionDate: row?.admission_date ?? null, tenureYears: completedTenureYears(row?.admission_date),
+      behavioralProfile: row?.behavioral_profile ?? null,
       skills: storedList(row?.skills_json), personalLinks: storedList(row?.links_json), education: storedList(row?.education_json),
       badges: badges.filter(({ minimum }) => points >= minimum).map(({ label, description, icon }) => ({ label, description, icon })),
       points, sector: userSector(user.moduleGrants),
@@ -174,13 +186,14 @@ export class MaxHubCoreStore {
   }
 
   async teamProfile(id) {
-    const [[row]] = await this.pool.execute(`SELECT u.name, u.module_grants, p.bio,
+    const [[row]] = await this.pool.execute(`SELECT u.name, u.module_grants, p.bio, behavior.label AS behavioral_profile,
       p.photo_mime IS NOT NULL AS has_avatar, d.skills_json, d.links_json, d.education_json, e.admission_date
       FROM platform_users u LEFT JOIN platform_maxhub_profiles p ON p.user_id=u.id
+      LEFT JOIN platform_maxhub_behavioral_profiles behavior ON behavior.user_id=u.id
       LEFT JOIN platform_maxhub_profile_details d ON d.user_id=u.id
       LEFT JOIN platform_user_employment e ON e.user_id=u.id WHERE u.id=? AND u.active=1`, [id]);
     if (!row) return null;
-    return {id, education:storedList(row.education_json), personalLinks:storedList(row.links_json), name:row.name, bio:row.bio, hasAvatar:Boolean(Number(row.has_avatar)), skills:storedList(row.skills_json),
+    return {id, behavioralProfile:row.behavioral_profile ?? null, education:storedList(row.education_json), personalLinks:storedList(row.links_json), name:row.name, bio:row.bio, hasAvatar:Boolean(Number(row.has_avatar)), skills:storedList(row.skills_json),
       sector:sectors.find(s=>s.id===userSector(row.module_grants))?.label, tenureYears:completedTenureYears(row.admission_date)};
   }
 

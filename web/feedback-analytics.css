@@ -1,0 +1,58 @@
+.fb-metrics {
+  --fb-received: #9a284e;
+  --fb-company: #39758d;
+  --fb-sent: #39758d;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: clamp(10px, 1.6cqi, 20px);
+  color: var(--ink);
+}
+[data-theme="dark"] .fb-metrics {
+  --fb-received: #ef8fae;
+  --fb-company: #82c5df;
+  --fb-sent: #82c5df;
+}
+.fb-metrics-card {
+  min-width: 0;
+  padding: clamp(15px, 2.4cqi, 28px);
+  border: 1px solid var(--people-edge);
+  border-radius: 16px;
+  background: var(--people-surface);
+}
+.fb-metrics-card header {display:flex; align-items:center; justify-content:space-between; gap:12px}
+.fb-metrics-card h3 {margin:0; font-size:clamp(14px,1.7cqi,18px); line-height:1.35; font-weight:600}
+.fb-metrics-card header > i {color:var(--people-accent); font-size:21px}
+.fb-metrics-count {display:block; margin-top:.3rem; font-size:clamp(26px,3.4cqi,40px); line-height:1.2; font-variant-numeric:tabular-nums}
+.fb-chart-legend {display:flex; flex-wrap:wrap; align-items:center; gap:6px 16px; margin:20px 0 0; padding:0; list-style:none; color:var(--muted); font-size:12px}
+.fb-chart-legend li {display:flex; align-items:center; gap:6px}
+.fb-key {width:13px; height:9px; border-radius:2px; background:var(--fb-received)}
+.fb-key-company {border:2px dashed var(--fb-company); background:transparent}
+.fb-key-sent {background:var(--fb-sent)}
+.fb-radar,.fb-bars {display:block; width:100%; height:auto; margin:8px auto}
+.fb-radar text,.fb-bars text {fill:var(--ink); font-family:inherit; font-size:10.5px}
+.fb-radar .fb-scale-label {fill:var(--muted); font-size:9px}
+.fb-chart-grid {fill:none; stroke:var(--people-edge); stroke-width:1}
+.fb-series {stroke-width:2.5; fill-opacity:.1; stroke-linejoin:round}
+.fb-series-received {stroke:var(--fb-received); fill:var(--fb-received)}
+.fb-series-company {stroke:var(--fb-company); fill:var(--fb-company); stroke-dasharray:6 3}
+.fb-point-received,.fb-bar-received {fill:var(--fb-received)}
+.fb-point-company,.fb-bar-sent {fill:var(--fb-company)}
+.fb-chart-values {margin-top:12px; color:var(--muted); font-size:12px}
+.fb-chart-values summary {width:fit-content; cursor:pointer; color:var(--people-accent); font-weight:600}
+.fb-chart-values table {width:100%; margin-top:10px; border-collapse:collapse; color:var(--ink); font-variant-numeric:tabular-nums}
+.fb-chart-values td,.fb-chart-values th {padding:7px 5px; border-bottom:1px solid var(--people-edge); text-align:right}
+.fb-chart-values th:first-child {text-align:left}
+.fb-chart-values tbody th {font-weight:500}
+.fb-chart-empty {margin:24px 0; color:var(--muted); font-size:14px}
+.fb-chart-note {margin:8px 0 0; color:var(--muted); font-size:12px; line-height:1.5}
+.fb-time-plot {min-width:0}
+.fb-time-scroll {overflow-x:auto}
+.fb-time-scroll .fb-bars {width:revert; min-width:100%; max-width:none}
+@container(max-width:780px) { .fb-metrics-card:nth-child(n+3) {grid-column:1/-1} }
+@container(max-width:420px) {
+  .fb-metrics {gap:8px}
+  .fb-metrics-card {padding:12px}
+  .fb-metrics-card header {gap:6px}
+  .fb-metrics-card header > i {font-size:16px}
+}

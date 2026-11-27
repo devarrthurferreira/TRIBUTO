@@ -42,6 +42,13 @@ export function createPeopleRouter(store) {
             return send(res, 200, { removed: true });
           }
         }
+        if (route === '/people/feedback/analytics' && req.method === 'GET') {
+          const month = new URL(req.url, 'http://localhost').searchParams.get('month');
+          if (month !== null && !/^[1-9]\d{3}-(?:0[1-9]|1[0-2])$/.test(month)) {
+            throw new ApiError(400, 'PEOPLE_INVALID_MONTH', 'Informe um mês válido.');
+          }
+          return send(res, 200, await store.feedbackAnalytics(userId, month));
+        }
         if (route === '/people/feedback/requests' && req.method === 'POST') {
           const { recipientId, text } = noteFields(await readBody(req));
           return send(res, 201, { item: await store.createNote('feedback', userId, { recipientId, text, isRequest:true }) });

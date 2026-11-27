@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import http from 'node:http';
 import test from 'node:test';
 import { sha256 } from '../src/api/validation.mjs';
 import { goalDetails, goalFields, meetingFields, noteFields, planFields, surveyFields, surveyRating } from '../src/people/fields.mjs';
+import { PeopleMySqlStore } from '../src/people/mysql-store.mjs';
 import { createPeopleRouter } from '../src/people/routes.mjs';
 import { createPlatformRouter } from '../src/platform/routes.mjs';
 
@@ -39,6 +40,53 @@ test('Feedback valida anonimato explícito e notas inteiras para os oito itens d
   }
 });
 
+test('Indicadores contam feedbacks por mês local e preservam a privacidade dos avaliadores', async () => {
+  const secret = Buffer.alloc(32, 1);
+  const key = name => createHmac('sha256', secret).update('feedback-sender:' + name).digest();
+  const queries = [];
+  const store = new PeopleMySqlStore({
+    pool: {query: async () => {}, execute: async () => {}},
+    one: async () => ({secret_key: secret}),
+    rows: async (sql, args) => {
+      queries.push({sql, args});
+      if (sql.includes('UNION ALL')) return [
+        {created_at:'2026-01-01 02:59:59', received:1, sent:0, ratings:'{"culture":1}'},
+        {created_at:'2026-01-01 03:00:00', received:1, sent:0, ratings:{culture:5}},
+        {created_at:'2026-01-02 12:00:00', received:1, sent:0, ratings:{}},
+        {created_at:'2026-01-04 12:00:00', received:0, sent:1, ratings:{culture:1}},
+      ];
+      if (sql.includes('GROUP BY n.sender_id')) return [
+        {sender_id:'alice', culture_count:1, culture_sum:5, teamwork_count:1, teamwork_sum:3},
+        {sender_id:'bob', culture_count:1, culture_sum:1, teamwork_count:1, teamwork_sum:4},
+      ];
+      return [
+        {sender_key:key('alice'), culture_count:2, culture_sum:6, teamwork_count:1, teamwork_sum:4},
+        {sender_key:key('carol'), culture_count:1, culture_sum:3},
+      ];
+    },
+  });
+  await store.initialize();
+  const result = await store.feedbackAnalytics('owner', '2026-01');
+  assert.equal(result.received, 2);
+  assert.equal(result.sent, 1);
+  assert.equal(result.months.length, 6);
+  assert.equal(result.months[0].month, '2025-08');
+  assert.deepEqual(result.months.slice(-2), [
+    {month:'2025-12', received:1, sent:0}, {month:'2026-01', received:2, sent:1},
+  ]);
+  assert.deepEqual(result.criteria.culture, {received:5, company:3});
+  assert.deepEqual(result.criteria.teamwork, {received:null, company:null});
+  assert.deepEqual(result.criteria.communication, {received:null, company:null});
+  assert.deepEqual(queries[1].args.map(date => date.toISOString()), ['2026-01-01T03:00:00.000Z', '2026-02-01T03:00:00.000Z']);
+  assert.deepEqual(queries[0].args[4], new Date('2025-08-01T03:00:00Z'));
+  assert.match(queries[0].sql, /NOT EXISTS[\s\S]+platform_people_feedback_requests/);
+  queries.length = 0;
+  const all = await store.feedbackAnalytics('owner');
+  assert.equal(all.received, 3);
+  assert.deepEqual(all.criteria.culture, {received:3, company:3});
+  assert.deepEqual(queries[1].args, []);
+});
+
 test('Pessoas usa a sessão e o CSRF da Central, preserva o titular e protege a publicação de pesquisas', async () => {
   const [person, admin, rh, rhViewer] = [
     { role: 'member' }, { role: 'admin' }, { role: 'member', moduleGrants: { rh: 'edit' } },
@@ -61,6 +109,7 @@ test('Pessoas usa a sessão e o CSRF da Central, preserva o titular e protege a 
     async checkInGoal(owner, id, fields) {
       return owner === person._id && id === goalId ? { item: { id, progress: fields.progress }, checkIn: fields } : null;
     },
+    async feedbackAnalytics(owner, month) { return { owner, month }; },
     async listNotes(kind, owner, all) { return [{ kind, owner, all }]; },
     async createNote(kind, owner, fields) { return { kind, owner, ...fields }; },
     async listAvailableReviews(owner) { return owner === person._id && pending ? [reviewAssignment] : []; },
@@ -110,6 +159,10 @@ test('Pessoas usa a sessão e o CSRF da Central, preserva o titular e protege a 
     assert.deepEqual((await request('/feedback', personSession, { method: 'POST', body: feedback })).data.item,
       { kind: 'feedback', owner: person._id, recipientId: rh._id, text: 'Excelente parceria', description: '', anonymous: false, ratings: {} });
     assert.deepEqual((await request('/feedback?scope=all', adminSession)).data.items, [{ kind: 'feedback', owner: admin._id, all: false }]);
+    assert.equal((await request('/feedback/analytics')).status, 401);
+    assert.equal((await request('/feedback/analytics?month=2026-13', personSession)).status, 400);
+    assert.deepEqual((await request('/feedback/analytics?month=2026-01&userId=other', personSession)).data,
+      {owner: person._id, month:'2026-01'});
     const review = { recipientId: person._id, title: 'Desenvolvimento', text: 'Próximos passos' };
     for (const session of [personSession, rhViewerSession]) {
       assert.equal((await request('/reviews?scope=all', session)).status, 403);

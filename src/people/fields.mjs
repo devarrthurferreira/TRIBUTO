@@ -4,7 +4,7 @@ const GOAL_STATUSES = new Set(['planned', 'in_progress', 'done']);
 const SURVEY_KINDS = new Set(['engagement', 'satisfaction', 'quick_survey', 'super_survey']);
 const PLAN_STATUSES = new Set(['draft', 'active', 'completed']);
 const USER_ID = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i;
-const FEEDBACK_RATINGS = new Set([
+export const FEEDBACK_RATINGS = new Set([
   'culture', 'customer', 'teamwork', 'communication',
   'commitment', 'engagement', 'leadership', 'active_listening',
 ]);

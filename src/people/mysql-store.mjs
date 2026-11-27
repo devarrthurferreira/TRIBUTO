@@ -2,7 +2,7 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { ApiError } from '../api/validation.mjs';
 import { awardMaxcoin, maxHubDay } from '../maxhub/points.mjs';
 import { completedTenureYears } from '../platform/employment.mjs';
-import { goalDetails } from './fields.mjs';
+import { FEEDBACK_RATINGS, goalDetails } from './fields.mjs';
 
 export const MIN_SURVEY_RESPONSES = 3;
 
@@ -118,6 +118,38 @@ const ANONYMOUS_FEEDBACK = `SELECT feedback.id, feedback.recipient_id, recipient
     recipient_employment.admission_date AS recipient_admission_date
     FROM platform_people_anonymous_feedback feedback LEFT JOIN platform_people_feedback_replies reply ON reply.note_id = feedback.id JOIN platform_users recipient ON recipient.id = feedback.recipient_id
     LEFT JOIN platform_user_employment recipient_employment ON recipient_employment.user_id = recipient.id`;
+// Use only participant keys, dates and ratings for analytics. Feedback text stays in the inbox.
+const NAMED_FEEDBACK_FROM = `FROM platform_people_notes n
+  LEFT JOIN platform_people_feedback_details d ON d.note_id = n.id
+  WHERE n.kind = 'feedback' AND NOT EXISTS
+    (SELECT 1 FROM platform_people_feedback_requests r WHERE r.note_id = n.id)`;
+
+function ratingColumns(column) {
+  return [...FEEDBACK_RATINGS].map(key => {
+    const value = `JSON_EXTRACT(${column}, '$.${key}')`;
+    return `COUNT(${value}) AS ${key}_count, SUM(${value}) AS ${key}_sum`;
+  }).join(', ');
+}
+
+function shiftMonth(month, offset) {
+  const date = new Date(month + '-01T12:00:00.000Z');
+  date.setUTCMonth(date.getUTCMonth() + offset);
+  return date.toISOString().slice(0, 7);
+}
+
+// Find the first instant of the local month without relying on MariaDB's optional time-zone tables.
+function monthBoundary(month) {
+  const midnight = Date.parse(month + '-01T00:00:00Z');
+  let lower = midnight;
+  let upper = midnight + 86_400_000;
+  while (upper - lower > 1) {
+    const middle = lower + Math.floor((upper - lower) / 2);
+    if (maxHubDay(new Date(middle)).slice(0, 7) < month) lower = middle;
+    else upper = middle;
+  }
+  return new Date(upper);
+}
+
 const REVIEWS = `SELECT ${NOTE_FIELDS}, assignment.note_id AS assignment_id, assignment.response, assignment.responded_at ${NOTE_PEOPLE}
     LEFT JOIN platform_people_review_assignments assignment ON assignment.note_id = note.id`;
 const MEETINGS = `SELECT meeting.*, organizer.name AS organizer_name, participant.name AS participant_name,
@@ -303,6 +335,68 @@ export class PeopleMySqlStore {
     const rows = await this.platformStore.rows(`${REVIEWS} WHERE note.kind = 'review'${scope} ORDER BY note.created_at DESC, note.id`,
       all ? [] : [userId, userId]);
     return rows.map(reviewRecord);
+  }
+
+  async feedbackAnalytics(userId, month) {
+    const lastMonth = month || maxHubDay().slice(0, 7);
+    const months = Array.from({length: 6}, (_, i) => ({month: shiftMonth(lastMonth, i - 5), received: 0, sent: 0}));
+    const bounds = month ? [monthBoundary(month), monthBoundary(shiftMonth(month, 1))] : [];
+    const personalBounds = month ? [monthBoundary(months[0].month), bounds[1]] : [];
+    const namedPeriod = month ? ' AND n.created_at >= ? AND n.created_at < ?' : '';
+    const anonymousPeriod = month ? ' AND a.created_at >= ? AND a.created_at < ?' : '';
+    const senderKey = this.#anonymousFeedbackKey(userId);
+    const [personal, namedRaters, anonymousRaters] = await Promise.all([
+      this.platformStore.rows(`SELECT n.created_at, n.recipient_id = ? AS received, n.sender_id = ? AS sent, d.ratings
+        ${NAMED_FEEDBACK_FROM} AND (n.recipient_id = ? OR n.sender_id = ?)${namedPeriod}
+        UNION ALL
+        SELECT a.created_at, a.recipient_id = ? AS received, a.sender_key = ? AS sent, a.ratings
+        FROM platform_people_anonymous_feedback a WHERE (a.recipient_id = ? OR a.sender_key = ?)${anonymousPeriod}`,
+        [userId, userId, userId, userId, ...personalBounds, userId, senderKey, userId, senderKey, ...personalBounds]),
+      this.platformStore.rows(`SELECT n.sender_id, ${ratingColumns('d.ratings')} ${NAMED_FEEDBACK_FROM}
+        AND d.ratings IS NOT NULL${namedPeriod} GROUP BY n.sender_id`, bounds),
+      this.platformStore.rows(`SELECT a.sender_key, ${ratingColumns('a.ratings')} FROM platform_people_anonymous_feedback a
+        WHERE 1=1${anonymousPeriod} GROUP BY a.sender_key`, bounds),
+    ]);
+    const buckets = new Map(months.map(bucket => [bucket.month, bucket]));
+    const metrics = Object.fromEntries([...FEEDBACK_RATINGS].map(key => [key, {
+      receivedSum: 0, receivedCount: 0, companySum: 0, companyCount: 0, raters: new Set(),
+    }]));
+    let received = 0;
+    let sent = 0;
+    for (const row of personal) {
+      const rowMonth = maxHubDay(new Date(iso(row.created_at))).slice(0, 7);
+      const bucket = buckets.get(rowMonth);
+      if (bucket) {
+        bucket.received += Number(row.received);
+        bucket.sent += Number(row.sent);
+      }
+      if (month && rowMonth !== month) continue;
+      received += Number(row.received);
+      sent += Number(row.sent);
+      if (!Number(row.received)) continue;
+      const ratings = typeof row.ratings === 'string' ? JSON.parse(row.ratings) : row.ratings;
+      for (const key of FEEDBACK_RATINGS) {
+        if (!ratings?.[key]) continue;
+        metrics[key].receivedCount++;
+        metrics[key].receivedSum += ratings[key];
+      }
+    }
+    for (const row of [...namedRaters, ...anonymousRaters]) {
+      // Deduplicate the same rater across named and anonymous notes inside the store.
+      const rater = (row.sender_key || this.#anonymousFeedbackKey(row.sender_id)).toString('hex');
+      for (const key of FEEDBACK_RATINGS) {
+        const count = Number(row[key + '_count']);
+        if (!count) continue;
+        metrics[key].raters.add(rater);
+        metrics[key].companySum += Number(row[key + '_sum']);
+        metrics[key].companyCount += count;
+      }
+    }
+    const criteria = Object.fromEntries(Object.entries(metrics).map(([key, m]) => [key, {
+      received: m.receivedCount ? m.receivedSum / m.receivedCount : null,
+      company: m.raters.size >= MIN_SURVEY_RESPONSES ? m.companySum / m.companyCount : null,
+    }]));
+    return {received, sent, criteria, months};
   }
 
   async replyToFeedback(userId, id, text) {

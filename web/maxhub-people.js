@@ -1,4 +1,5 @@
 import { profileTrigger, appendPersonName, personOptionLabel } from './person-name.js';
+import { renderFeedbackAnalytics } from './feedback-analytics.js';
 
 const sections = {
   reviews: { title: 'Avaliações', icon: 'journal-text', intro: 'Responda às avaliações enviadas pelo RH.', resource: 'reviews' },
@@ -855,6 +856,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
   const canCreate = section.action && (area !== 'surveys' || admin);
   if (canCreate) ui.headingAction.append(button(section.action, () => creators[area](), { primary: true, icon: 'plus-lg' }));
   let drawFeedback;
+  let refreshAnalytics;
   if (area === 'feedback') {
     ui.headingAction.append(button('Solicitar feedback', () => dialog({
       title:'Solicitar feedback', fields:[personalField('De quem deseja receber feedback?'),field('Sobre o que deseja feedback?', 'text', 'textarea', {required:true, maxLength:4000, rows:4})],
@@ -868,6 +870,26 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     const month = period.querySelector('input');
     const controls=node('div','fb-controls'); controls.append(search,period);
     ui.items.before(tabs,controls);
+    const analytics = node('div');
+    panel.append(analytics);
+    let analyticsVersion = 0;
+    refreshAnalytics = async () => {
+      const current = ++analyticsVersion;
+      const periodQuery = month.value ? '?' + new URLSearchParams({ month: month.value }) : '';
+      analytics.setAttribute('aria-busy', 'true');
+      analytics.replaceChildren(node('p', 'people-meta', 'Carregando indicadores de feedback…'));
+      try {
+        const data = await request(path + '/analytics' + periodQuery);
+        if (disposed || current !== analyticsVersion) return;
+        analytics.replaceChildren(renderFeedbackAnalytics(data, feedbackCriteria));
+      } catch (error) {
+        if (disposed || current !== analyticsVersion || readError(error)) return;
+        analytics.replaceChildren(node('p', 'people-error', 'Não foi possível carregar os indicadores de feedback.'),
+          button('Tentar novamente', refreshAnalytics));
+      } finally {
+        if (!disposed && current === analyticsVersion) analytics.setAttribute('aria-busy', 'false');
+      }
+    };
     let category='received', selectedId;
     const groups={received:'Recebidos',sent:'Enviados',request_received:'Solicitações recebidas',request_sent:'Solicitações enviadas'};
     const localMonth=new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit'});
@@ -913,7 +935,11 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
       preview.append(renderFeedback(selected),button(feedbackDirection(selected,userId)==='received' && !selected.reply?'Responder':'Ver detalhes',()=>selected.isRequest && !selected.reply && feedbackDirection(selected,userId)==='received' ? createFeedback(selected.sender,selected.id) : showDetails(selected)));
       layout.append(list,preview);ui.items.replaceChildren(layout);
     };
-    search.oninput=month.onchange=()=>{if(loaded)draw();};
+    search.oninput = () => { if (loaded) draw(); };
+    month.onchange = () => {
+      if (loaded) draw();
+      void refreshAnalytics();
+    };
   }
   if (usesFilter) for (const [value, label] of Object.entries(filters[area])) ui.filter.add(new Option(label, value));
 
@@ -940,6 +966,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
 
   async function load() {
     const current = ++version;
+    void refreshAnalytics?.();
     ui.items.setAttribute('aria-busy', 'true');
     if (!loaded) showState('Carregando…');
     try {

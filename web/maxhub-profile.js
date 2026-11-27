@@ -33,8 +33,14 @@ const markup = `
       </button>
       <div class="hub-profile-name">
         <h2 id="maxHubProfileTitle">Meu perfil</h2>
-        <strong data-profile="name"></strong>
-        <p data-profile="sector" hidden></p><small>Perfil comportamental · Em breve</small>
+        <div class="hub-profile-identity-line">
+          <strong data-profile="name"></strong>
+          <span class="hub-behavioral-badge" data-profile="behavior" hidden>
+            <i class="bi bi-person-badge" aria-hidden="true"></i>
+            <span class="sr-only">Perfil comportamental</span><span data-profile="behaviorLabel"></span>
+          </span>
+        </div>
+        <p data-profile="sector" hidden></p>
       </div>
       <aside class="profile-pet"><i class="bi bi-stars"></i> Pet Maximum <small>Em breve</small></aside>
       <button type="button" class="hub-btn" data-profile="share" hidden>Compartilhar perfil</button>
@@ -264,7 +270,13 @@ export function mountMaxHubProfile(root, ctx, { avatar, readImage, sectorNames }
   for (const [value, label] of educationTypes) ui.educationType.append(new Option(label, value));
   ui.educationType.append(new Option('Outro tipo', 'other'));
 
+  function renderBehavioralBadge() {
+    ui.behaviorLabel.textContent = current.behavioralProfile || '';
+    ui.behavior.hidden = !current.behavioralProfile;
+  }
+
   function renderIdentity() {
+    renderBehavioralBadge();
     ui.avatarImage.replaceChildren(avatar(current, { large: true }));
     ui.name.replaceChildren();
     appendPersonName(ui.name, current.name, current.tenureYears);
@@ -650,6 +662,7 @@ export function mountMaxHubProfile(root, ctx, { avatar, readImage, sectorNames }
       if (id && id !== (ctx.session.user.id || ctx.session.user._id)) {
         current = await ctx.request('/maxhub/directory/'+encodeURIComponent(id));
         if (!ctx.active()) return;
+        renderBehavioralBadge();
         ui.avatar.replaceWith(avatar(current,{large:true}));
         root.querySelector('#maxHubProfileTitle').textContent = 'Perfil da equipe';
         appendPersonName(ui.name,current.name,current.tenureYears);
