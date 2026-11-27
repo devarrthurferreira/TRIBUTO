@@ -127,3 +127,46 @@
   }
   .app-shell[data-sector-active] .main-content { padding-inline: 13px; }
 }
+
+
+/* Permission-aware overview, using the existing theme tokens. */
+.sector-summary[hidden] { display:none !important; }
+.sector-summary { --so-accent:#a52b40; --so-done:#278464; --so-active:#7466bb; --so-neutral:#9298a7; --so-late:#ca5262; display:grid; gap:16px; margin:0 0 28px; min-width:0; }
+.so-hero { display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px; padding:clamp(20px,3vw,36px); border:1px solid var(--portal-edge); border-radius:22px; background:linear-gradient(125deg,var(--portal-surface),var(--portal-floor)); box-shadow:0 8px 30px var(--portal-aura); }
+.so-kicker { text-transform:uppercase; letter-spacing:.1em; font-size:10px; font-weight:700; color:var(--so-accent); margin:0 0 9px; }
+.so-hero h2 { margin:0; font-size:clamp(26px,4vw,40px); line-height:1.15; letter-spacing:-.04em; color:var(--ink); }
+.so-hero p:not(.so-kicker) { margin:9px 0 0; font-size:13px; color:var(--muted); }
+.so-hero-actions { display:grid; gap:9px; justify-items:end; font-size:11px; color:var(--muted); }
+.so-shortcuts { display:flex; flex-wrap:wrap; gap:8px; }
+.so-shortcuts:empty,.so-stats:empty,.so-charts:empty,.so-details:empty { display:none; }
+.so-shortcut { font:inherit; font-size:12px; font-weight:600; padding:9px 13px; background:var(--portal-surface); color:var(--ink); border:1px solid var(--portal-edge); border-radius:9px; cursor:pointer; transition:background .18s,border-color .18s; }
+.so-shortcut:hover { background:var(--portal-hover); border-color:var(--so-accent); }
+.so-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(155px,100%),1fr)); gap:12px; }
+.so-stat,.so-card { background:var(--portal-surface); color:var(--ink); border:1px solid var(--portal-edge); border-radius:15px; padding:18px; box-shadow:0 3px 12px var(--portal-aura); min-width:0; }
+.so-stat { display:grid; gap:6px; align-content:start; }
+.so-stat > span { font-size:12px; font-weight:600; color:var(--muted); }
+.so-stat strong { font-size:clamp(25px,3vw,34px); letter-spacing:-.05em; font-variant-numeric:tabular-nums; line-height:1.2; }
+.so-stat small,.so-note { font-size:11px; color:var(--muted); line-height:1.55; }
+.so-note { margin:0; }
+.so-charts { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr)); gap:14px; }
+.so-card h3 { margin:0 0 16px; font-size:15px; font-weight:700; }
+.so-chart-row { display:grid; gap:5px; margin:0 0 12px; }
+.so-chart-label { display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:12px; }
+.so-chart-label strong { font-variant-numeric:tabular-nums; }
+.so-bar { appearance:none; width:100%; height:9px; border:0; border-radius:99px; overflow:hidden; background:var(--portal-floor); --so-bar-color:var(--so-accent); color:var(--so-bar-color); }
+.so-bar[data-tone="done"] { --so-bar-color:var(--so-done); }
+.so-bar[data-tone="active"] { --so-bar-color:var(--so-active); }
+.so-bar[data-tone="neutral"] { --so-bar-color:var(--so-neutral); }
+.so-bar[data-tone="late"] { --so-bar-color:var(--so-late); }
+.so-bar::-webkit-progress-bar { background:var(--portal-floor); border-radius:99px; }
+.so-bar::-webkit-progress-value { background:var(--so-bar-color); border-radius:99px; }
+.so-bar::-moz-progress-bar { background:var(--so-bar-color); border-radius:99px; }
+.so-details { display:grid; gap:12px; }
+.so-task-link { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; color:var(--ink); text-decoration:none; border-top:1px solid var(--portal-edge); }
+.so-task-link strong { font-size:12px; overflow-wrap:anywhere; }
+.so-task-link span { font-size:11px; color:var(--muted); flex-shrink:0; }
+.so-task-link:hover strong { color:var(--so-accent); text-decoration:underline; }
+[data-theme="dark"] .sector-summary { --so-accent:#f18b9b; --so-done:#6fc5a8; --so-active:#b5a7f5; }
+@keyframes so-enter { from { opacity:0; transform:translateY(7px); } to { opacity:1; transform:translateY(0); } }
+@media(prefers-reduced-motion:no-preference) { .so-hero,.so-stat,.so-card { animation:so-enter .28s ease-out both; } .so-stat:nth-child(2) { animation-delay:.035s; } .so-stat:nth-child(3) { animation-delay:.07s; } .so-stat:nth-child(4) { animation-delay:.105s; } }
+@media(max-width:550px) { .so-hero-actions { justify-items:start; } .so-task-link { align-items:flex-start; flex-wrap:wrap; } }
