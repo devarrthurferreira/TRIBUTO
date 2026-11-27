@@ -183,7 +183,12 @@ function makeTaskCard(item, { assignees, companies, today, openDetails }) {
   const assignee = assignees.find(({ id }) => id === item.assigneeId);
   const assignedName = assignee ? appendPersonName(node('span'), assignee.name, assignee.tenureYears)
     : item.assigneeId ? 'Responsável indisponível' : 'Sem responsável';
-  footer.append(labelIcon('person', assignedName));
+  const person = node('span', 'mt-person');
+  const initials = assignee ? String(assignee.name || '').trim().split(/\s+/).slice(0,2).map(word => word[0]).join('').toUpperCase() : '–';
+  const avatar = node('span', 'mt-person-avatar', initials);
+  avatar.setAttribute('aria-hidden', 'true');
+  person.append(avatar, assignedName);
+  footer.append(person);
   if (item.dueAt) {
     const due = labelIcon('clock-history', formatDate(item.dueAt));
     if (item.status !== 'done' && item.dueAt < today) due.classList.add('mt-overdue');
@@ -311,6 +316,37 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
   let teammates = [];
   let page = 0, more = false, loading = false, disposed = false;
   let activeItem = null, editing = false, saving = false, checklist = [], detailsRequest = 0, openTaskId = '';
+  let draggedId = '', moving = false;
+  function clearDrag() {
+    draggedId = '';
+    for (const el of ui.board.querySelectorAll('.mt-dragging,.mt-drop-target')) el.classList.remove('mt-dragging','mt-drop-target');
+  }
+  async function moveTask(id, status) {
+    const prior = items.get(id);
+    clearDrag();
+    if (!canUpdate || !prior || !Object.hasOwn(STATUSES, status) || prior.status === status || saving || moving || loading || disposed) return;
+    moving = true;
+    ui.board.setAttribute('aria-busy','true');
+    message(ui.error);
+    try {
+      const { item } = await request('/work-items/' + encodeURIComponent(id), {
+        method: 'PATCH', body: { status, expectedUpdatedAt: prior.updatedAt }
+      });
+      if (disposed) return;
+      items.set(item.id,item);
+      renderBoard();
+      message(ui.feedback, 'Tarefa movida para ' + STATUSES[status] + '.');
+      onChange?.();
+    } catch (error) {
+      if (!disposed) {
+        message(ui.error, error.message || 'Não foi possível mover a tarefa.');
+        if (error.status === 409) await load(1);
+      }
+    } finally {
+      moving = false;
+      if (!disposed) ui.board.removeAttribute('aria-busy');
+    }
+  }
   let step = 0, visitedStep = 0;
 
   const message = (target, text = '') => {
@@ -367,9 +403,49 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
       title.id = `marketingColumn-${status}`;
       column.setAttribute('aria-labelledby', title.id);
       head.append(title, node('span', 'mt-column-count', String(entries.length)));
+      if (canCreate) {
+        const add = node('button', 'mt-column-add', '+');
+        add.type = 'button';
+        add.setAttribute('aria-label', 'Nova tarefa em ' + STATUSES[status]);
+        add.disabled = loading && !page;
+        add.addEventListener('click', () => startNew(status));
+        head.append(add);
+      }
+      if (canUpdate) {
+        column.addEventListener('dragover', event => {
+          if (!draggedId || moving || loading || items.get(draggedId)?.status === status) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          column.classList.add('mt-drop-target');
+        });
+        column.addEventListener('dragleave', event => {
+          if (!column.contains(event.relatedTarget)) column.classList.remove('mt-drop-target');
+        });
+        column.addEventListener('drop', event => {
+          if (!draggedId) return;
+          event.preventDefault();
+          void moveTask(draggedId,status);
+        });
+      }
       const content = node('div', 'mt-column-content');
       if (!entries.length) content.append(node('p', 'mt-empty', loading && !page ? 'Carregando…' : 'Nenhuma tarefa nesta situação.'));
-      else for (const item of entries) content.append(makeTaskCard(item, { assignees: teammates, companies: portfolio, today, openDetails }));
+      else for (const [index,item] of entries.entries()) {
+        const card = makeTaskCard(item, { assignees: teammates, companies: portfolio, today, openDetails });
+        card.dataset.status = status;
+        card.dataset.motion = String(Math.min(index,4));
+        if (canUpdate) {
+          card.draggable = true;
+          card.addEventListener('dragstart', event => {
+            if (moving || loading || saving || ui.dialog.open) { event.preventDefault(); return; }
+            draggedId = item.id;
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', item.id);
+            card.classList.add('mt-dragging');
+          });
+          card.addEventListener('dragend',clearDrag);
+        }
+        content.append(card);
+      }
       column.append(head, content);
       return column;
     }));
@@ -586,16 +662,17 @@ export function mountMarketingTasks(root, { request, companies = [], canCreate, 
     renderStep(0);
   }
 
-  function startNew() {
-    if (!canCreate || saving || ui.dialog.open) return;
+  function startNew(status = 'open') {
+    if (!canCreate || saving || moving || ui.dialog.open) return;
     openTaskId = '';
     renderForm();
+    if (typeof status === 'string' && Object.hasOwn(STATUSES,status)) field('status').value = status;
     ui.dialog.showModal();
     field('title').focus();
   }
 
   async function openDetails(id) {
-    if (disposed || !TASK_ID.test(id) || ui.dialog.open) return;
+    if (disposed || moving || !TASK_ID.test(id) || ui.dialog.open) return;
     const serial = ++detailsRequest;
     openTaskId = id;
     ui.dialogTitle.textContent = 'Detalhes da tarefa';
