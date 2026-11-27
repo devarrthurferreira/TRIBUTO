@@ -46,6 +46,11 @@ export function createPeopleRouter(store) {
           const { recipientId, text } = noteFields(await readBody(req));
           return send(res, 201, { item: await store.createNote('feedback', userId, { recipientId, text, isRequest:true }) });
         }
+        const fulfill = /^\/people\/feedback\/([a-f\d-]{36})\/fulfill$/i.exec(route);
+        if (fulfill && req.method === 'POST') {
+          const fields = noteFields(await readBody(req));
+          return send(res, 201, { item: found(await store.createNote('feedback', userId, { ...fields, requestId:fulfill[1] })) });
+        }
         const reply = /^\/people\/feedback\/([a-f\d-]{36})\/reply$/i.exec(route);
         if (reply && req.method === 'POST') {
           const { text } = reviewResponseFields(await readBody(req));

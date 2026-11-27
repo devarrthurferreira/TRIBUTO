@@ -12,7 +12,7 @@ import { CLUB_PATHS, clubPageFromPath } from './club-routes.js';
 import { mountClubRhMood } from './club-rh-mood.js';
 import { MAXHUB_PATH, isMaxHubPath, legacyMaxHubUrl, mountMaxHub } from './maxhub.js';
 
-import { appendPersonName } from './person-name.js';
+import { profileTrigger, appendPersonName } from './person-name.js';
 import { mountClientWizard, renderClientProfile } from './client-wizard.js';
 import { mountDossierAdmin } from './dossier.js';
 import { mountSmtpNotifications } from './smtp-notifications.js';
@@ -1169,10 +1169,10 @@ function renderClientAccess() {
     const row = node('li', 'list-row client-access-row');
     const main = node('div', 'list-row-main');
     const info = node('div', 'client-access-info');
-    info.append(appendPersonName(node('strong'), member.name, member.tenureYears));
+    info.append(appendPersonName(node('strong'), member.name, member.tenureYears, member.id));
     if (member.email) info.append(node('small', '', member.email));
     if (!member.active) info.append(node('small', '', 'Usuário inativo'));
-    main.append(node('span', 'row-avatar', initials(member.name)), info);
+    main.append(profileTrigger(node('span', 'row-avatar', initials(member.name)),member), info);
     const action = node('button', 'button button-quiet');
     action.type = 'button';
     const updateActionLabel = () => {
@@ -1312,11 +1312,11 @@ async function loadUsers() {
     const main = node('div', 'list-row-main');
     const avatar = node('span', 'row-avatar teal', initials(user.name));
     const info = node('div');
-    info.append(appendPersonName(node('strong'), user.name, user.tenureYears));
+    info.append(appendPersonName(node('strong'), user.name, user.tenureYears, user.id));
     if (user.email) info.append(node('small', '', user.email));
     if (user.username) info.append(node('small', '', user.username));
     if (user.accessPending && !user.email && !user.username) info.append(node('small', '', `Cadastro ${user.id.slice(0, 8)}`));
-    main.append(avatar, info);
+    main.append(profileTrigger(avatar,user), info);
     const side = node('div', 'row-aside');
     side.append(node('strong', '', user.role === 'admin' ? 'Administrador' : 'Membro'));
     if (user.accessPending) side.append(node('span', 'status-pill status-warning', 'Acesso pendente'));

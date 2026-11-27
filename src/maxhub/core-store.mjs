@@ -153,6 +153,17 @@ export class MaxHubCoreStore {
     return row ?? null;
   }
 
+  async teamProfile(id) {
+    const [[row]] = await this.pool.execute(`SELECT u.name, u.module_grants, p.bio,
+      p.photo_mime IS NOT NULL AS has_avatar, d.skills_json, e.admission_date
+      FROM platform_users u LEFT JOIN platform_maxhub_profiles p ON p.user_id=u.id
+      LEFT JOIN platform_maxhub_profile_details d ON d.user_id=u.id
+      LEFT JOIN platform_user_employment e ON e.user_id=u.id WHERE u.id=? AND u.active=1`, [id]);
+    if (!row) return null;
+    return {name:row.name, bio:row.bio, hasAvatar:Boolean(Number(row.has_avatar)), skills:storedList(row.skills_json),
+      sector:sectors.find(s=>s.id===userSector(row.module_grants))?.label, tenureYears:completedTenureYears(row.admission_date)};
+  }
+
   async directory(query) {
     const pattern = `%${query.replace(/[=%_]/g, '=$&')}%`;
     const [rows] = await this.pool.execute(`SELECT person.id, person.name, person.module_grants, employment.admission_date,

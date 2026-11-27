@@ -180,3 +180,14 @@
 .maxpeople-feedback-sent > .maxpeople-confetti { position:absolute; inset:0; }
 .maxpeople-confetti i { height:12px; width:7px; }
 @media(max-width:700px){.fb-layout{grid-template-columns:1fr}.fb-row{gap:8px}.fb-tabs{gap:4px}}
+
+.maxpeople-heading-action { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.fb-tabs { padding:12px 18px 6px; gap:4px 12px; }
+.fb-controls { align-items:end; padding:16px 18px 10px; gap:14px; }
+.fb-controls input { height:42px; box-sizing:border-box; }
+.fb-controls .people-field { margin:0; }
+.fb-layout { gap:20px; padding:8px 18px 18px; }
+.fb-row { grid-template-columns:minmax(0,1fr) auto auto; gap:10px; }
+.fb-identity { display:inline-flex; align-items:center; gap:10px; text-align:start; }
+.people-dialog:is(.maxpeople-feedback-detail,.maxpeople-feedback-drawer) { width:70vw; max-width:none; }
+@media(max-width:760px){.people-dialog:is(.maxpeople-feedback-detail,.maxpeople-feedback-drawer){width:96vw}.fb-controls{align-items:stretch}.fb-controls input[type=search]{min-width:min(100%,220px)}}

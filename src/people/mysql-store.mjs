@@ -314,8 +314,21 @@ export class PeopleMySqlStore {
     return createHmac('sha256', this.#respondentSecret).update(`feedback-sender:${userId}`).digest();
   }
 
-  async createNote(kind, userId, { recipientId, title = null, text, description = '', anonymous = false, ratings = {}, isRequest = false }) {
+  async createNote(kind, userId, { recipientId, title = null, text, description = '', anonymous = false, ratings = {}, isRequest = false, requestId = null }) {
     return this.platformStore.transaction(async connection => {
+      if (requestId) {
+        const [[original]] = await connection.execute(`SELECT n.sender_id FROM platform_people_notes n
+          JOIN platform_people_feedback_requests r ON r.note_id = n.id
+          WHERE n.id = ? AND n.recipient_id = ? AND n.sender_id = ? FOR UPDATE`, [requestId,userId,recipientId]);
+        if (!original) return null;
+        try {
+          await connection.execute('INSERT INTO platform_people_feedback_replies (note_id,body,created_at) VALUES (?,?,?)',
+            [requestId,'Feedback enviado.',new Date()]);
+        } catch (error) {
+          if (error.code === 'ER_DUP_ENTRY') throw new ApiError(409,'ALREADY_REPLIED','Esta solicitação já foi atendida.');
+          throw error;
+        }
+      }
       await requireOtherParticipant(connection, userId, recipientId);
       const id = randomUUID();
       const now = new Date();

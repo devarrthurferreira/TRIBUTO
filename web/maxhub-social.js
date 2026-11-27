@@ -1,5 +1,5 @@
 import { mountMaxHubProfile } from './maxhub-profile.js';
-import { appendPersonName } from './person-name.js';
+import { appendPersonName, profileTrigger } from './person-name.js';
 
 const number = new Intl.NumberFormat('pt-BR');
 const timelineDate = new Intl.DateTimeFormat('pt-BR', {
@@ -595,7 +595,7 @@ function renderPostComments(post, { ctx, path, available, savedOnly, onSave }) {
     targetText.replaceChildren();
     if (comment) {
       targetText.append('Respondendo a ');
-      appendPersonName(targetText, comment.author.name, comment.author.tenureYears);
+      appendPersonName(targetText, comment.author.name, comment.author.tenureYears, comment.author.id);
     }
     const label = comment ? 'Escreva uma resposta' : 'Escreva um comentário';
     reply.placeholder = `${label}…`;
@@ -629,7 +629,7 @@ function renderPostComments(post, { ctx, path, available, savedOnly, onSave }) {
     const main = el('div', 'hub-comment-main');
     const content = el('div', 'hub-comment-content');
     const identity = el('div', 'hub-comment-identity');
-    identity.append(appendPersonName(el('strong'), comment.author.name, comment.author.tenureYears), stamp(comment.createdAt));
+    identity.append(appendPersonName(el('strong'), comment.author.name, comment.author.tenureYears, comment.author.id), stamp(comment.createdAt));
     const actions = el('div', 'hub-comment-actions');
     const like = feedAction('Curtir comentário', 'heart');
     const respond = feedAction('Responder comentário', 'reply');
@@ -640,7 +640,7 @@ function renderPostComments(post, { ctx, path, available, savedOnly, onSave }) {
     const context = el('span', 'hub-comment-context', 'Em resposta');
     context.hidden = true;
     content.append(identity, context, el('p', '', comment.text), actions);
-    main.append(avatar(comment.author), content);
+    main.append(profileTrigger(avatar(comment.author), comment.author), content);
     row.append(main, children);
 
     const model = { ...comment };
@@ -796,7 +796,7 @@ function renderPost(post, ctx, { onDelete, onSave, onCommentSave, onRepost, save
     repostInfo.hidden = !post.repostedBy;
     if (!post.repostedBy) return;
     const own = post.repostedBy.id === ctx.session?.user?.id;
-    const byline = appendPersonName(el('span'), own ? 'Você' : post.repostedBy.name, post.repostedBy.tenureYears);
+    const byline = appendPersonName(el('span'), own ? 'Você' : post.repostedBy.name, post.repostedBy.tenureYears, post.repostedBy.id);
     byline.append(' republicou');
     repostInfo.replaceChildren(icon('arrow-repeat'), byline);
   }
@@ -804,8 +804,8 @@ function renderPost(post, ctx, { onDelete, onSave, onCommentSave, onRepost, save
   const head = el('header', 'hub-post-heading');
   const identity = el('div', 'hub-post-identity');
   const names = el('div', 'hub-post-name');
-  names.append(appendPersonName(el('strong'), post.author.name, post.author.tenureYears), stamp(post.createdAt));
-  identity.append(avatar(post.author), names);
+  names.append(appendPersonName(el('strong'), post.author.name, post.author.tenureYears, post.author.id), stamp(post.createdAt));
+  identity.append(profileTrigger(avatar(post.author), post.author), names);
   head.append(identity);
 
   const meta = el('div', 'hub-post-meta');
@@ -1110,10 +1110,10 @@ function mountRanking(root, ctx, compact = false) {
       if (entry.rank >= 1 && entry.rank <= 3) item.dataset.position = entry.rank;
       if (entry.id === ctx.session?.user?.id) item.dataset.me = 'true';
       const position = el('span', 'hub-rank-position', `${entry.rank}º`);
-      const person = appendPersonName(el('span', 'hub-rank-person'), entry.name, entry.tenureYears);
+      const person = appendPersonName(el('span', 'hub-rank-person'), entry.name, entry.tenureYears, entry.id);
       const points = el('strong', 'hub-rank-points', number.format(entry.points));
       points.setAttribute('aria-label', `${number.format(entry.points)} Maxcoin`);
-      item.append(position, avatar(entry), person, points);
+      item.append(position, profileTrigger(avatar(entry), entry), person, points);
       list.append(item);
     }
     results.replaceChildren(current, list.childElementCount ? list : info('O ranking será preenchido conforme a equipe acumular Maxcoin.'));

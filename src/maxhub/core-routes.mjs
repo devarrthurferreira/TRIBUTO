@@ -73,6 +73,12 @@ export function createMaxHubCoreRouter(store, { clock = () => new Date() } = {})
       if (route === '/maxhub/profile' && method === 'PUT') {
         return send(res, 200, await store.updateProfile(user, profileFields(await readBody(req, 1_300_000))));
       }
+      const person = /^\/maxhub\/directory\/([a-f\d-]{36})$/i.exec(route);
+      if (person && method === 'GET') {
+        const profile = await store.teamProfile(person[1]);
+        if (!profile) throw new ApiError(404,'PROFILE_UNAVAILABLE','Perfil indisponível.');
+        return send(res,200,profile);
+      }
       const avatar = AVATAR.exec(route);
       if (avatar && (method === 'GET' || method === 'HEAD')) {
         const image = await store.avatar(avatar[1].toLowerCase());

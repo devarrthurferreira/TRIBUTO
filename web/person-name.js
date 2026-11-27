@@ -49,7 +49,49 @@ export function tenureBadge(years) {
   return badge;
 }
 
-export function appendPersonName(label, name, years) {
+export function profileTrigger(content, person) {
+  if (!person?.id) return content;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'team-profile-trigger';
+  button.setAttribute('aria-label','Ver perfil de '+person.name);
+  button.append(content);
+  button.addEventListener('click', async event => {
+    event.stopPropagation();
+    const dialog = document.createElement('dialog');
+    dialog.className = 'team-profile-card';
+    dialog.setAttribute('aria-label','Perfil de '+person.name);
+    const close = document.createElement('button');
+    close.type='button'; close.textContent='Fechar'; close.onclick=()=>dialog.close();
+    const body = document.createElement('div');
+    body.textContent='Carregando perfil…';
+    dialog.append(close,body); document.body.append(dialog);
+    dialog.onclose=()=>dialog.remove(); dialog.showModal();
+    try {
+      const url='/v1/platform/maxhub/directory/'+encodeURIComponent(person.id);
+      const response=await fetch(url,{credentials:'same-origin'});
+      if(!response.ok) throw Error();
+      const profile=await response.json();
+      const name=document.createElement('h2'); name.textContent=profile.name;
+      body.replaceChildren(name);
+      if(profile.hasAvatar){
+        const img=document.createElement('img'); img.alt=''; img.src='/v1/platform/maxhub/avatar/'+encodeURIComponent(person.id);
+        body.prepend(img);
+      }
+      for(const value of [profile.sector,tenureLabel(profile.tenureYears),profile.bio,(profile.skills||[]).join(' · ')]){
+        if(value){const line=document.createElement('p');line.textContent=value;body.append(line);}
+      }
+    } catch { body.textContent='Não foi possível abrir este perfil.'; }
+  });
+  return button;
+}
+
+export function appendPersonName(label, name, years, id) {
+  if (id) {
+    const content = appendPersonName(document.createElement('span'), name, years);
+    label.append(profileTrigger(content,{name,id}));
+    return label;
+  }
   const badge = tenureBadge(years);
   if (!badge) {
     label.append(document.createTextNode(name ?? ''));

@@ -1,4 +1,4 @@
-import { appendPersonName } from './person-name.js';
+import { profileTrigger, appendPersonName } from './person-name.js';
 
 const API = '/v1/platform/chat';
 const MAX_FILES = 3;
@@ -437,14 +437,14 @@ function messageElement(state, message) {
   time.dateTime = message.createdAt;
   const name = el('strong');
   const tenureYears = message.sender.tenureYears ?? (sentByMe ? state.session.user.tenureYears : undefined);
-  appendPersonName(name, sentByMe ? 'Você' : message.sender.name, tenureYears);
+  appendPersonName(name, sentByMe ? 'Você' : message.sender.name, tenureYears, message.sender.id);
   meta.append(name, time);
   const body = el('div', 'chat-bubble');
   if (message.deletedAt) {
     body.classList.add('chat-deleted');
     body.append(el('p', '', 'Mensagem excluída'));
     block.append(meta, body);
-    item.append(avatar, block);
+    item.append(profileTrigger(avatar,message.sender), block);
     return item;
   }
   if (message.editedAt) {
@@ -491,7 +491,7 @@ function messageElement(state, message) {
     }
     block.append(actions);
   }
-  item.append(avatar, block);
+  item.append(profileTrigger(avatar,message.sender), block);
   return item;
 }
 

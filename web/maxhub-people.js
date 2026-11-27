@@ -1,4 +1,4 @@
-import { appendPersonName, personOptionLabel } from './person-name.js';
+import { profileTrigger, appendPersonName, personOptionLabel } from './person-name.js';
 
 const sections = {
   reviews: { title: 'Avaliações', icon: 'journal-text', intro: 'Responda às avaliações enviadas pelo RH.', resource: 'reviews' },
@@ -517,14 +517,14 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     }
   }
 
-  function createFeedback(recipient) {
+  function createFeedback(recipient, requestId = null) {
     dialog({
       title: 'Enviar feedback', drawer: true, fields: [
-        node('p', 'people-meta', 'Para '+recipient.name),
+        appendPersonName(node('p', 'people-meta', 'Para '),recipient.name,recipient.tenureYears,recipient.id),
         field('Feedback', 'text', 'textarea', { required: true, rows: 5, maxLength: 4000 }),
         feedbackRatings(), feedbackPrivacy()],
       submit: 'Enviar feedback', success: '', afterSuccess: celebrateFeedback,
-      run: data => request(path, { method: 'POST', body: {
+      run: data => request(requestId ? path+'/'+requestId+'/fulfill' : path, { method: 'POST', body: {
         recipientId: recipient.id, text: text(data, 'text'), anonymous: data.has('anonymous'),
         ratings: Object.fromEntries(Object.keys(feedbackCriteria).filter(key => data.has(key)).map(key => [key, Number(data.get(key))])),
       } }),
@@ -635,7 +635,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
   function renderFeedback(item) {
     const outgoing = feedbackDirection(item, userId) === 'sent';
     const counterpart = outgoing ? item.recipient : item.sender;
-    const title = counterpart ? appendPersonName(node('span', '', outgoing ? 'Para ' : 'De '), counterpart.name, counterpart.tenureYears) : 'Feedback anônimo';
+    const title = counterpart ? appendPersonName(node('span', '', outgoing ? 'Para ' : 'De '), counterpart.name, counterpart.tenureYears, counterpart.id) : 'Feedback anônimo';
     const contents = [meta('clock-history', day(item.createdAt)), description(item.text)];
     if (item.anonymous && outgoing) contents.unshift(meta('shield-lock', 'Enviado anonimamente'));
     if (item.description) contents.push(description(item.description));
@@ -655,7 +655,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
   }
 
   function renderReview(item) {
-    const reviewMeta = appendPersonName(node('span'), item.reviewer.name, item.reviewer.tenureYears);
+    const reviewMeta = appendPersonName(node('span'), item.reviewer.name, item.reviewer.tenureYears, item.reviewer.id);
     reviewMeta.append(` · ${day(item.createdAt)}`);
     return card(item.title, 'pending', [meta('clock-history', reviewMeta), description(item.text)], [
       button('Responder', () => answerReview(item), { primary: true, icon: 'send', subject: item.title }),
@@ -673,7 +673,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
 
   function renderMeeting(item) {
     const counterpart = item.organizer.id === userId ? item.participant : item.organizer;
-    const name = appendPersonName(node('span', '', 'Com '), counterpart.name, counterpart.tenureYears);
+    const name = appendPersonName(node('span', '', 'Com '), counterpart.name, counterpart.tenureYears, counterpart.id);
     return card(item.title, item.status, [meta('person', name),
       meta('clock-history', `${day(item.date)}${item.time ? ` às ${item.time.slice(0, 5)}` : ''}`), item.notes && description(item.notes)],
     item.status === 'scheduled' ? [button('Finalizar reunião', () => finishMeeting(item), { primary: true, subject: item.title })] : []);
@@ -730,9 +730,10 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     function showDetails(item) {
       const canReply=feedbackDirection(item,userId)==='received' && !item.reply;
       const fields=[renderFeedback(item)];
-      if(canReply) fields.push(field(item.isRequest?'Seu retorno':'Responder feedback','reply','textarea',{required:true,maxLength:4000,rows:3}));
+      if(canReply && item.isRequest) fields.push(button('Responder com feedback',()=>createFeedback(item.sender,item.id),{primary:true}));
+      if(canReply && !item.isRequest) fields.push(field(item.isRequest?'Seu retorno':'Responder feedback','reply','textarea',{required:true,maxLength:4000,rows:3}));
       dialog({title:item.isRequest?'Solicitação de feedback':'Feedback',fields,submit:'Enviar resposta',success:'Resposta enviada.',
-        run:canReply ? data=>request(itemPath(item)+'/reply',{method:'POST',body:{text:text(data,'reply')}}) : undefined});
+        run:canReply && !item.isRequest ? data=>request(itemPath(item)+'/reply',{method:'POST',body:{text:text(data,'reply')}}) : undefined});
       ui.dialog.classList.add('maxpeople-feedback-detail');
     }
     const buttons=new Map();
@@ -754,13 +755,15 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
       const selected=visible.find(item=>item.id===selectedId)||visible[0];
       const layout=node('div','fb-layout'), list=node('div','fb-list'), preview=node('div','fb-preview');
       visible.forEach(item=>{
-        const row=button('',()=>{selectedId=item.id;drawFeedback();showDetails(item);});
-        row.className='fb-row'; row.dataset.selected=String(selected.id===item.id);
+        const row=node('div','fb-row'); row.dataset.selected=String(selected.id===item.id);
         const person=counterpart(item);
-        row.append(node('span','fb-avatar',person.split(/\s+/).slice(0,2).map(word=>word[0]).join('')),node('strong','',person),node('small','',day(item.createdAt)));
+        const account=feedbackDirection(item,userId)==='sent'?item.recipient:item.sender;
+        const identity=node('span','fb-identity');
+        identity.append(node('span','fb-avatar',person.split(/\s+/).slice(0,2).map(word=>word[0]).join('')),node('strong','',person));
+        row.append(profileTrigger(identity,account),node('small','',day(item.createdAt)),button('Abrir',()=>{selectedId=item.id;drawFeedback();showDetails(item);}));
         list.append(row);
       });
-      preview.append(renderFeedback(selected),button(feedbackDirection(selected,userId)==='received' && !selected.reply?'Responder':'Ver detalhes',()=>showDetails(selected)));
+      preview.append(renderFeedback(selected),button(feedbackDirection(selected,userId)==='received' && !selected.reply?'Responder':'Ver detalhes',()=>selected.isRequest && !selected.reply && feedbackDirection(selected,userId)==='received' ? createFeedback(selected.sender,selected.id) : showDetails(selected)));
       layout.append(list,preview);ui.items.replaceChildren(layout);
     };
     search.oninput=month.onchange=()=>{if(loaded)draw();};
