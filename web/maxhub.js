@@ -180,7 +180,8 @@ export function mountMaxHub(root, { request, onAuthError, onProfileChange }) {
     const visibleSections = sections?.filter(item => item.view !== 'reviews' || reviewsAvailable);
     const section = visibleSections?.find(item => item.id === requested) || visibleSections?.[0];
     const workspace = section?.view || view;
-    const url = areaUrl(area, section?.id);
+    const person = area === 'perfil' && params.get('usuario');
+    const url = areaUrl(area, section?.id) + (person ? '&usuario=' + encodeURIComponent(person) : '');
     if (`${location.pathname}${location.search}` !== url) history.replaceState(null, '', url);
     if (selectedUrl === url) return;
     unmountWorkspace();

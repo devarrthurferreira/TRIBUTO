@@ -10,9 +10,9 @@
 .hub-profile .bi-plus-lg::before { content: "\f64d"; }
 .hub-profile .bi-trash::before { content: "\f5de"; }
 .hub-profile .bi-pencil::before { content: "\f4cb"; }
-.hub-profile .bi-instagram::before { content: "\f437"; }
-.hub-profile .bi-linkedin::before { content: "\f472"; }
-.hub-profile .bi-tiktok::before { content: "\f6cc"; }
+.bi-instagram::before { content: "\f437"; }
+.bi-linkedin::before { content: "\f472"; }
+.bi-tiktok::before { content: "\f6cc"; }
 .hub-profile-overview {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -272,3 +272,19 @@
   .hub-profile-education-drawer[open] { animation: none; }
   .hub-profile-avatar-button { transition: none; }
 }
+
+.profile-pet {margin-inline-start:auto;display:grid;justify-items:center;gap:.25rem;color:var(--muted);padding:.6rem 1rem}
+.profile-section {padding:1.4rem}
+.hub-profile-edit {border-top:1px solid var(--border);padding-top:1rem}
+.public-bio {margin:0;font:16px system-ui;color:#34232a;background:#f8f3f4;min-height:100vh;display:grid;place-items:center}
+.public-bio main {box-sizing:border-box;width:min(94vw,440px);padding:2.5rem;text-align:center;background:white;border-radius:24px}
+.public-bio .bio-logo {width:145px;margin-bottom:2rem}
+.public-bio #identity img {width:96px;height:96px;border-radius:50%;object-fit:cover}
+.public-bio nav {display:grid;gap:12px;margin-top:2rem}
+.public-bio nav a {padding:.9rem;background:#80203c;color:white;text-decoration:none;border-radius:10px}
+.bio-socials {display:flex;flex-wrap:wrap;gap:12px;justify-content:center}
+.bio-socials a {padding:.65rem;color:#80203c;background:#f7edf0;border-radius:50%}
+
+.bio-socials .bi-telephone::before {content:"\f5c1"}
+.hub-profile-overview {grid-template-columns:auto minmax(0,1fr) auto auto}
+@media(max-width:700px){.hub-profile-overview {grid-template-columns:auto 1fr}.profile-pet{margin:0}}

@@ -47,7 +47,7 @@ function permitted(agent, companyCnpj, source) {
   if (!agent.companies.includes(companyCnpj) || !agent.sources.includes(source)) throw new ApiError(403, 'FORBIDDEN_SCOPE', 'CNPJ ou fonte fora do escopo do agente');
 }
 
-export function createApiServer({ store, agents, jobs = [], agentRegistry, platformRouter, whatsapp, publicCrm, clientPortal, publicDossier, clientSchedules, logger = console }) {
+export function createApiServer({ store, agents, jobs = [], agentRegistry, platformRouter, whatsapp, publicCrm, clientPortal, publicDossier, bioStore, clientSchedules, logger = console }) {
   if (agentRegistry) {
     if (agents) throw new Error('Escolha agentRegistry ou agents estáticos');
   } else validateConfig(agents, jobs);
@@ -56,6 +56,11 @@ export function createApiServer({ store, agents, jobs = [], agentRegistry, platf
       const pathname = new URL(req.url, 'http://localhost').pathname;
       if (req.method === 'GET' && pathname === '/healthz') return send(res, 200, { ok: true, service: 'tributo-api' });
       if (whatsapp && await whatsapp.handleWebhook(req, res, pathname)) return;
+      const bio = /^\/v1\/bio\/([a-f0-9-]{36})$/i.exec(pathname);
+      if (bioStore && bio && req.method === 'GET') {
+        const data = await bioStore.publicBio(bio[1]);
+        return send(res,data ? 200 : 404,data || {message:'Perfil indisponível.'});
+      }
       if (publicCrm && await publicCrm(req, res, pathname)) return;
       if (clientPortal && await clientPortal(req, res, pathname)) return;
       if (publicDossier && await publicDossier(req, res, pathname)) return;

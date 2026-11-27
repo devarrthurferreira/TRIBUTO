@@ -73,6 +73,12 @@ export function createMaxHubCoreRouter(store, { clock = () => new Date() } = {})
       if (route === '/maxhub/profile' && method === 'PUT') {
         return send(res, 200, await store.updateProfile(user, profileFields(await readBody(req, 1_300_000))));
       }
+      if (route === '/maxhub/share-bio' && method === 'POST') {
+        const {email='',phone=''} = await readBody(req);
+        if (typeof email !== 'string' || email.length > 254 || (email && !/^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(email)) ||
+            typeof phone !== 'string' || (phone && !/^[+0-9 ()-]{6,32}$/.test(phone))) throw new ApiError(400,'BIO_CONTACT','Confira os contatos públicos.');
+        return send(res,200,await store.shareBio(user._id,email,phone));
+      }
       const person = /^\/maxhub\/directory\/([a-f\d-]{36})$/i.exec(route);
       if (person && method === 'GET') {
         const profile = await store.teamProfile(person[1]);

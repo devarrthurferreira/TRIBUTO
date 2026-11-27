@@ -288,12 +288,13 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     return dialogVersion;
   }
 
-  function personalField(label = 'Pessoa', excludeSelf = true) {
+  function personalField(label = 'Pessoa', excludeSelf = true, initial = null) {
     const fieldset = node('fieldset', 'maxpeople-directory');
     const searchField = field('Buscar por nome', 'directoryQuery', 'search', { maxLength: 80, placeholder: 'Digite o nome de quem procura' });
     const selectField = field(label, 'recipientId', 'select', { choices: { '': 'Selecione uma pessoa' }, required: true });
     const search = searchField.querySelector('input');
     const select = selectField.querySelector('select');
+    if(initial) select.add(new Option(initial.name,initial.id,true,true));
     const status = node('p', 'people-meta');
     status.setAttribute('role', 'status');
     fieldset.append(searchField, selectField, status);
@@ -312,7 +313,8 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
         const prior = select.value;
         const people = (result.people || []).filter(person => !excludeSelf || person.id !== userId);
         select.replaceChildren(new Option('Selecione uma pessoa', ''), ...people.map(person => new Option(personOptionLabel(person), person.id)));
-        if (people.some(person => person.id === prior)) select.value = prior;
+        if(initial && !expression && !people.some(person=>person.id===initial.id)) select.add(new Option(initial.name,initial.id));
+        if ([...select.options].some(option=>option.value===prior)) select.value = prior;
         status.textContent = people.length ? '' : 'Nenhuma pessoa encontrada.';
       } catch (error) {
         if (disposed || expectedDialog !== dialogVersion || current !== searchVersion || !ui.dialog.open || readError(error)) return;
@@ -542,12 +544,56 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
 
   function editPlan(item) {
     const fields = goalFields(item, 3000);
-    if (!item) fields.push(field('Status inicial', 'status', 'select', { choices: { draft: 'Rascunho', active: 'Vigente' }, value: 'draft' }));
+    const s=item?.structure || {};
+    const blocks=structuredClone(s.blocks || []);
+    const blockEditor=node('section','plan-blocks');
+    function drawBlocks(){
+      blockEditor.replaceChildren();
+      for(const block of blocks){
+        const section=node('fieldset','maxpeople-directory');
+        const input=field('Nome do bloco','','text',{value:block.name,required:true,maxLength:120});
+        input.oninput=e=>{block.name=e.target.value;};
+        section.append(input,button('Remover bloco',()=>{blocks.splice(blocks.indexOf(block),1);drawBlocks();}));
+        for(const task of block.tasks){
+          const line=field('Tarefa','','text',{value:task.name,required:true,maxLength:160});
+          line.oninput=e=>{task.name=e.target.value;};
+          section.append(line,button('Remover tarefa',()=>{block.tasks.splice(block.tasks.indexOf(task),1);drawBlocks();}));
+        }
+        section.append(button('Adicionar tarefa',()=>{block.tasks.push({name:'',done:false});drawBlocks();}));
+        blockEditor.append(section);
+      }
+      blockEditor.append(button('Adicionar bloco',()=>{blocks.push({name:'',tasks:[]});drawBlocks();}));
+    }
+    drawBlocks();
+    const start=field('Início','start','date',{value:s.start || (item?.createdAt || new Date().toISOString()).slice(0,10),required:true});
+    const duration=field('Duração estimada','duration','number',{value:s.duration || 1,min:1,max:1000,required:true});
+    const unit=field('Unidade','unit','select',{value:s.unit || 'semanas',choices:{dias:'Dias',semanas:'Semanas',meses:'Meses'}});
+    const due=fields.pop();
+    function estimate(){
+      const date=new Date(start.lastChild.value+'T12:00:00Z');
+      const n=Number(duration.lastChild.value);
+      if(!Number.isFinite(+date) || n<1 || n>1000) return;
+      if(unit.lastChild.value==='meses'){
+        const day=date.getUTCDate(); date.setUTCDate(1);date.setUTCMonth(date.getUTCMonth()+n+1);date.setUTCDate(0);
+        date.setUTCDate(Math.min(day,date.getUTCDate()));
+      } else date.setUTCDate(date.getUTCDate()+n*(unit.lastChild.value==='semanas'?7:1));
+      due.lastChild.value=date.toISOString().slice(0,10);
+    }
+    for(const control of [start,duration,unit]) control.oninput=estimate;
+    if(!item?.dueAt) estimate();
+    fields.push(field('Tipo de desenvolvimento','type','text',{required:true,maxLength:80,value:s.type || '',placeholder:'Técnico, comportamental, liderança…'}),start,duration,unit,due);
+    if (!item) {
+      const previous=items.find(p=>p.ownerId===userId && p.leaderId);
+      fields.push(personalField('Liderança direta',true,previous && {id:previous.leaderId,name:previous.leaderName}),
+        field('Status inicial','status','select',{choices:{draft:'Rascunho',active:'Vigente'},value:'active'}));
+    }
+    fields.push(blockEditor);
     dialog({
       title: item ? 'Editar PDI' : 'Novo PDI', fields, submit: 'Salvar PDI', success: 'PDI salvo.',
       run: data => request(item ? itemPath(item) : path, { method: item ? 'PATCH' : 'POST', body: {
-        title: text(data, 'title'), description: text(data, 'description'), dueAt: text(data, 'dueAt') || null,
-        ...(!item ? { status: text(data, 'status') } : {}),
+        title:text(data,'title'),description:text(data,'description'),dueAt:text(data,'dueAt') || null,
+        structure:{type:text(data,'type'),start:text(data,'start'),duration:Number(data.get('duration')),unit:text(data,'unit'),blocks},
+        ...(item ? {version:item.updatedAt} : {status:text(data,'status'),leaderId:text(data,'recipientId')}),
       } }),
     });
   }
@@ -663,12 +709,34 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
   }
 
   function renderPlan(item) {
-    const actions = [];
-    if (item.status !== 'completed') actions.push(button('Editar', () => editPlan(item), { subject: item.title }));
-    if (item.status === 'draft') actions.unshift(button('Ativar PDI', () => changePlan(item, true), { primary: true, subject: item.title }));
-    if (item.status === 'active') actions.unshift(button('Concluir PDI', () => changePlan(item, false), { primary: true, subject: item.title }));
-    return card(item.title, item.status, [item.description && description(item.description),
-      item.dueAt && meta('clock-history', `Prazo ${day(item.dueAt)}`)], actions);
+    const s=item.structure;
+    const tasks=(s?.blocks || []).flatMap(b=>b.tasks);
+    const done=tasks.filter(t=>t.done).length;
+    const percent=tasks.length ? Math.round(100*done/tasks.length) : item.status==='completed' ? 100 : 0;
+    const dates=day(s?.start || item.createdAt)+' — '+(day(item.dueAt) || 'Sem prazo');
+    const editable=item.ownerId===userId && item.status!=='completed';
+    function openPlan(){
+      const fields=[description(item.description),meta('clock-history',dates),description(s ? s.type+' · '+s.duration+' '+s.unit : ''),
+        description('Colaborador: '+item.ownerName),description('Liderança direta: '+(item.leaderName || 'Não informada'))];
+      const blocks=structuredClone(s?.blocks || []);
+      for(const block of blocks){
+        fields.push(node('h3','',block.name));
+        for(const task of block.tasks){
+          const label=node('label','hub-profile-check');const check=node('input');
+          check.type='checkbox';check.checked=task.done;check.disabled=!editable;check.onchange=()=>{task.done=check.checked;};
+          label.append(check,document.createTextNode(task.name));fields.push(label);
+        }
+      }
+      dialog({title:item.title,fields,submit:'Salvar progresso',run:editable && tasks.length ? ()=>request(itemPath(item),{method:'PATCH',body:{structure:{...s,blocks},version:item.updatedAt}}) : undefined});
+    }
+    const actions=[button('Ver plano',openPlan,{primary:true})];
+    if(editable){
+      actions.push(button('Editar',()=>editPlan(item)));
+      actions.push(button(item.status==='draft'?'Ativar PDI':'Concluir PDI',()=>changePlan(item,item.status==='draft')));
+    }
+    const element=card(item.title,item.status,[meta('clock-history',dates),description(percent+'% · '+done+' de '+tasks.length+' tarefas'),meter(percent,'Progresso do plano')],actions);
+    element.onclick=e=>{if(!e.target.closest('button,a')) openPlan();};
+    return element;
   }
 
   function renderMeeting(item) {

@@ -4,6 +4,8 @@ import { clubPageFromPath } from '../../web/club-routes.js';
 
 const ALLOWED = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
+  ['/bio', ['bio.html','text/html; charset=utf-8']],
+  ['/bio.js', ['bio.js','text/javascript; charset=utf-8']],
   ['/home', ['index.html', 'text/html; charset=utf-8']],
   ['/maxhub', ['index.html', 'text/html; charset=utf-8']],
   ['/maxhub/', ['index.html', 'text/html; charset=utf-8']],
@@ -79,7 +81,7 @@ const ALLOWED = new Map([
 
 export async function serveStatic(req, res, pathname) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return false;
-  const asset = ALLOWED.get(clubPageFromPath(pathname) ? '/home' : pathname);
+  const asset = ALLOWED.get(clubPageFromPath(pathname) ? '/home' : /^\/bio\/[a-f0-9-]{36}$/i.test(pathname) ? '/bio' : pathname);
   if (!asset) return false;
   const file = new URL(`../../web/${asset[0]}`, import.meta.url);
   try {

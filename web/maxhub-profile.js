@@ -34,12 +34,10 @@ const markup = `
       <div class="hub-profile-name">
         <h2 id="maxHubProfileTitle">Meu perfil</h2>
         <strong data-profile="name"></strong>
-        <p data-profile="sector" hidden></p>
+        <p data-profile="sector" hidden></p><small>Perfil comportamental · Em breve</small>
       </div>
-      <div class="hub-profile-points" aria-label="Saldo de Maxcoins" data-profile="points" hidden>
-        <i class="bi bi-coin" aria-hidden="true"></i>
-        <strong data-profile="balance"></strong><span>Maxcoins</span>
-      </div>
+      <aside class="profile-pet"><i class="bi bi-stars"></i> Pet Maximum <small>Em breve</small></aside>
+      <button type="button" class="hub-btn" data-profile="share" hidden>Compartilhar perfil</button>
     </header>
 
     <div class="hub-info" role="status" data-profile="loadStatus">
@@ -272,8 +270,8 @@ export function mountMaxHubProfile(root, ctx, { avatar, readImage, sectorNames }
     appendPersonName(ui.name, current.name, current.tenureYears);
     ui.sector.textContent = sectorNames[current.sector] || '';
     ui.sector.hidden = !ui.sector.textContent;
-    ui.balance.textContent = number.format(current.points);
-    ui.avatar.hidden = ui.points.hidden = false;
+    ui.avatar.hidden = false;
+    ui.share.hidden = false;
   }
 
   function renderBadges() {
@@ -648,6 +646,30 @@ export function mountMaxHubProfile(root, ctx, { avatar, readImage, sectorNames }
     ui.retry.hidden = true;
     ui.loadStatus.classList.remove('hub-info-error');
     try {
+      const id = new URLSearchParams(location.search).get('usuario');
+      if (id && id !== (ctx.session.user.id || ctx.session.user._id)) {
+        current = await ctx.request('/maxhub/directory/'+encodeURIComponent(id));
+        if (!ctx.active()) return;
+        ui.avatar.replaceWith(avatar(current,{large:true}));
+        root.querySelector('#maxHubProfileTitle').textContent = 'Perfil da equipe';
+        appendPersonName(ui.name,current.name,current.tenureYears);
+        ui.sector.textContent = current.sector || '';
+        ui.sector.hidden = !current.sector;
+        ui.loadStatus.hidden = true;
+        ui.content.hidden = false;
+        ui.content.replaceChildren();
+        for (const [title,values] of [
+          ['Biografia',[current.bio]],['Habilidades',current.skills],
+          ['Educação',current.education.map(e=>[e.title,e.institution,e.startMonth,e.ongoing?'Em andamento':e.endMonth,e.description].filter(Boolean).join(' · '))],
+          ['Redes sociais',current.personalLinks.map(link=>{const a=el('a','',link.label || link.platform);a.href=link.url;return a;})]
+        ]) {
+          const section=el('section','hub-card profile-section'); section.append(el('h3','',title));
+          const items=values.filter(Boolean);
+          for(const value of items.length ? items : ['Ainda não informado.']) {const line=el('p');line.append(value);section.append(line);}
+          ui.content.append(section);
+        }
+        return;
+      }
       current = await ctx.request('/maxhub/profile');
       if (!ctx.active()) return;
       renderIdentity();
@@ -663,6 +685,33 @@ export function mountMaxHubProfile(root, ctx, { avatar, readImage, sectorNames }
       ui.retry.hidden = false;
     }
   }
+  ui.share.onclick = () => {
+    const panel=el('dialog','hub-profile-dialog');
+    panel.setAttribute('aria-label','Compartilhar link-bio');
+    panel.innerHTML=`<form class="hub-profile-dialog-form"><header class="hub-profile-dialog-header"><h3>Compartilhar link-bio</h3></header>
+      <div class="hub-profile-dialog-body"><p>Sua foto, seu nome e as redes salvas no perfil ficarão disponíveis para quem tiver o link.</p>
+      <label class="hub-field">E-mail público (opcional)<input class="hub-input" name="email" type="email" maxlength="254"></label>
+      <label class="hub-field">Telefone público (opcional)<input class="hub-input" name="phone" type="tel" maxlength="32"></label>
+      <output aria-live="polite"></output></div><footer class="hub-profile-dialog-footer"><button type="button" class="hub-btn">Fechar</button>
+      <button class="hub-btn hub-btn-primary">Gerar e copiar link</button></footer></form>`;
+    const form=panel.querySelector('form');
+    const out=form.querySelector('output');
+    form.querySelector('[type=button]').onclick=()=>panel.close();
+    panel.onclose=()=>panel.remove();
+    root.append(panel);panel.showModal();
+    form.onsubmit=async event=>{
+      event.preventDefault();
+      const submit=form.querySelector('.hub-btn-primary');
+      submit.disabled=true;
+      try {
+        const {path}=await ctx.request('/maxhub/share-bio',{method:'POST',body:Object.fromEntries(new FormData(form))});
+        const link=el('a','',new URL(path,location.origin).href);
+        link.href=path;link.target='_blank';link.rel='noopener';
+        out.replaceChildren(link);
+        try {await navigator.clipboard.writeText(link.href);submit.textContent='Link copiado';} catch {submit.textContent='Copiar link';}
+      } catch(error){out.textContent=error.message;} finally{submit.disabled=false;}
+    };
+  };
   ui.retry.addEventListener('click', load);
   void load();
   return () => {

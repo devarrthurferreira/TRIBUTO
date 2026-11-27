@@ -94,7 +94,7 @@ const platformRouter = createPlatformRouter({ store: platformStore, chat, whatsa
   maxhubCore: createMaxHubCoreRouter(maxhubCore), maxhubFeed: createMaxHubFeedRouter(maxhubFeed),
   bootstrapTokenSha256, secureCookies, clientAdmin, dossierRouter, smtpNotifications });
 const server = createApiServer({ store, agentRegistry: platformStore, platformRouter, whatsapp,
-  publicCrm: createPublicCrmRouter(marketingCrmStore, crmMail), clientPortal, publicDossier,
+  publicCrm: createPublicCrmRouter(marketingCrmStore, crmMail), clientPortal, publicDossier, bioStore:maxhubCore,
   clientSchedules: documents => clients.collectionSchedules(documents) });
 const io = chat.attach(server);
 const stopCrmDelivery = startCrmDelivery(marketingCrmStore, crmMail);

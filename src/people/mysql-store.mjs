@@ -85,6 +85,11 @@ const SCHEMA = [
     created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL,
     KEY idx_people_plans_owner (owner_id, updated_at, id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS platform_plan_details (
+    plan_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+    leader_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL, structure_json LONGTEXT NULL,
+    KEY plan_leader (leader_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS platform_people_meetings (
     id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
     organizer_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -174,8 +179,14 @@ function reviewRecord(row) {
   };
 }
 
+const planSelect = `SELECT p.*, d.structure_json, d.leader_id, leader.name AS leader_name, owner.name AS owner_name
+  FROM platform_people_plans p LEFT JOIN platform_plan_details d ON d.plan_id=p.id
+  LEFT JOIN platform_users leader ON leader.id=d.leader_id LEFT JOIN platform_users owner ON owner.id=p.owner_id`;
+
 function planRecord(row) {
   return {
+    ownerId:row.owner_id, ownerName:row.owner_name, leaderId:row.leader_id, leaderName:row.leader_name,
+    structure:row.structure_json ? JSON.parse(row.structure_json) : null,
     id: row.id, title: row.title, description: row.description, dueAt: row.due_at, status: row.status,
     createdAt: iso(row.created_at), updatedAt: iso(row.updated_at),
   };
@@ -384,16 +395,22 @@ export class PeopleMySqlStore {
   }
 
   async listPlans(userId) {
-    const rows = await this.platformStore.rows('SELECT * FROM platform_people_plans WHERE owner_id = ? ORDER BY updated_at DESC, id', [userId]);
+    const rows = await this.platformStore.rows(`${planSelect} WHERE p.owner_id=? OR d.leader_id=? ORDER BY p.created_at DESC,p.id`, [userId,userId]);
     return rows.map(planRecord);
   }
 
-  async createPlan(userId, { title, description, dueAt, status }) {
+  async createPlan(userId, { title, description, dueAt, status, leaderId, structure }) {
     return this.platformStore.transaction(async connection => {
       const id = randomUUID();
       const now = new Date();
       await connection.execute(`INSERT INTO platform_people_plans (id, owner_id, title, description, due_at, status, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [id, userId, title, description, dueAt, status, now, now]);
+      if (leaderId) {
+        const [[leader]]=await connection.execute('SELECT id FROM platform_users WHERE id=? AND active=1',[leaderId]);
+        if(!leader || leaderId===userId) throw new ApiError(400,'INVALID_LEADER','Selecione uma liderança ativa.');
+      }
+      if(structure || leaderId) await connection.execute('INSERT INTO platform_plan_details (plan_id,leader_id,structure_json) VALUES (?,?,?)',
+        [id,leaderId || null,structure ? JSON.stringify(structure) : null]);
       if (status === 'active') await awardMaxcoin(connection, userId, 'pdi_active', id);
       return { id, title, description, dueAt, status, createdAt: iso(now), updatedAt: iso(now) };
     });
@@ -404,6 +421,9 @@ export class PeopleMySqlStore {
       const [[row]] = await connection.execute('SELECT * FROM platform_people_plans WHERE id = ? AND owner_id = ? FOR UPDATE', [id, userId]);
       if (!row) return null;
       const current = planRecord(row);
+      if(changes.version && changes.version!==current.updatedAt) throw new ApiError(409,'PLAN_VERSION','O plano mudou. Reabra para atualizar.');
+      if(changes.structure) await connection.execute(`INSERT INTO platform_plan_details (plan_id,structure_json) VALUES (?,?)
+        ON DUPLICATE KEY UPDATE structure_json=VALUES(structure_json)`,[id,JSON.stringify(changes.structure)]);
       const plan = { ...current, ...changes };
       const transition = current.status !== plan.status;
       if (transition && !((current.status === 'draft' && plan.status === 'active') || (current.status === 'active' && plan.status === 'completed'))) {

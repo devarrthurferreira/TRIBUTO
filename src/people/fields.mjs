@@ -124,6 +124,25 @@ export function planFields(input, { partial = false } = {}) {
     if (!PLAN_STATUSES.has(input.status) || (!partial && input.status === 'completed')) invalid('status do plano');
     changes.status = input.status;
   }
+  if (input.leaderId !== undefined && !partial) changes.leaderId=participant(input.leaderId,'liderança');
+  if (input.structure !== undefined) {
+    const s=input.structure;
+    fieldsObject(s);
+    const start=dateField(s.start,'início');
+    if (!start || !Number.isInteger(s.duration) || s.duration<1 || s.duration>1000 ||
+        !['dias','semanas','meses'].includes(s.unit) || !Array.isArray(s.blocks) || s.blocks.length>30) invalid('estrutura do plano');
+    changes.structure={start,type:text(s.type,'tipo',80,true),duration:s.duration,unit:s.unit,blocks:s.blocks.map(block=>{
+      fieldsObject(block);
+      if(!Array.isArray(block.tasks) || block.tasks.length>100) invalid('tarefas');
+      return {name:text(block.name,'bloco',120,true),tasks:block.tasks.map(task=>{
+        fieldsObject(task);
+        if(typeof task.done !== 'boolean') invalid('conclusão da tarefa');
+        return {name:text(task.name,'tarefa',160,true),done:task.done};
+      })};
+    })};
+    if(changes.dueAt && changes.dueAt < start) invalid('prazo');
+  }
+  if (input.version !== undefined) changes.version=text(input.version,'versão',32,true);
   if (!Object.keys(changes).length) invalid('alterações');
   return changes;
 }

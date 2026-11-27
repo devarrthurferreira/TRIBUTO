@@ -3,6 +3,9 @@ import { completedTenureYears } from '../platform/employment.mjs';
 import { awardMaxcoin, MAXCOIN_RULES, maxcoinLabel } from './points.mjs';
 
 const SCHEMAS = [
+  `CREATE TABLE IF NOT EXISTS platform_public_bios (
+    user_id CHAR(36) PRIMARY KEY, token CHAR(36) NOT NULL UNIQUE, email VARCHAR(254) NOT NULL, phone VARCHAR(32) NOT NULL
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS platform_maxhub_profiles (
     user_id CHAR(36) NOT NULL PRIMARY KEY,
     bio VARCHAR(600) NOT NULL, photo_mime VARCHAR(16) CHARACTER SET ascii NULL, photo_data MEDIUMBLOB NULL
@@ -153,14 +156,31 @@ export class MaxHubCoreStore {
     return row ?? null;
   }
 
+  async shareBio(id, email, phone) {
+    await this.pool.execute(`INSERT INTO platform_public_bios (user_id,token,email,phone) VALUES (?,UUID(),?,?)
+      ON DUPLICATE KEY UPDATE email=VALUES(email), phone=VALUES(phone)`, [id,email,phone]);
+    const [[row]] = await this.pool.execute('SELECT token FROM platform_public_bios WHERE user_id=?',[id]);
+    return {path:'/bio/'+row.token};
+  }
+
+  async publicBio(token) {
+    const [[row]] = await this.pool.execute(`SELECT u.name,b.email,b.phone,d.links_json,p.photo_mime,p.photo_data
+      FROM platform_public_bios b JOIN platform_users u ON u.id=b.user_id AND u.active=1
+      LEFT JOIN platform_maxhub_profiles p ON p.user_id=u.id LEFT JOIN platform_maxhub_profile_details d ON d.user_id=u.id
+      WHERE b.token=?`,[token]);
+    if (!row) return null;
+    return {name:row.name, email:row.email, phone:row.phone, links:storedList(row.links_json),
+      photo:row.photo_data ? 'data:'+row.photo_mime+';base64,'+row.photo_data.toString('base64') : null};
+  }
+
   async teamProfile(id) {
     const [[row]] = await this.pool.execute(`SELECT u.name, u.module_grants, p.bio,
-      p.photo_mime IS NOT NULL AS has_avatar, d.skills_json, e.admission_date
+      p.photo_mime IS NOT NULL AS has_avatar, d.skills_json, d.links_json, d.education_json, e.admission_date
       FROM platform_users u LEFT JOIN platform_maxhub_profiles p ON p.user_id=u.id
       LEFT JOIN platform_maxhub_profile_details d ON d.user_id=u.id
       LEFT JOIN platform_user_employment e ON e.user_id=u.id WHERE u.id=? AND u.active=1`, [id]);
     if (!row) return null;
-    return {name:row.name, bio:row.bio, hasAvatar:Boolean(Number(row.has_avatar)), skills:storedList(row.skills_json),
+    return {id, education:storedList(row.education_json), personalLinks:storedList(row.links_json), name:row.name, bio:row.bio, hasAvatar:Boolean(Number(row.has_avatar)), skills:storedList(row.skills_json),
       sector:sectors.find(s=>s.id===userSector(row.module_grants))?.label, tenureYears:completedTenureYears(row.admission_date)};
   }
 
