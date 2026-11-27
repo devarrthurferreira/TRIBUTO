@@ -11,7 +11,7 @@ const clientSchema = 'CREATE TABLE IF NOT EXISTS platform_client_profiles (' +
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const documentKey = /^(?:[0-9]{11}|[A-Z0-9]{12}[0-9]{2})$/;
 const numericCnpj = /^\d{14}$/;
-const baseProfileColumns = 'profile.id AS profile_id, profile.nickname, profile.trade_name, profile.legal_name, profile.state_code';
+const baseProfileColumns = 'profile.id AS profile_id, profile.nickname, profile.trade_name, profile.legal_name, profile.state_code, JSON_UNQUOTE(JSON_EXTRACT(profile.detail_json, \'$.code\')) AS client_code';
 const linkedColumns = "company.id, 'pj' AS client_type, company.cnpj AS document_number, company.cnpj AS fiscal_cnpj, " +
   'company.name AS client_name, company.active, company.created_at, ' + baseProfileColumns;
 const separateColumns = 'profile.id, profile.client_type, profile.document_number, profile.fiscal_cnpj, ' +
@@ -36,7 +36,7 @@ function clientSummary(row) {
   const legalName = cnpj && name !== dataName ? name : row.legal_name ?? null;
   return {
     id: row.id, type: row.client_type, document: row.document_number, cnpj: cnpj ?? null, fiscalEligible: Boolean(cnpj),
-    name, nickname: nickname ?? name, tradeName: tradeName ?? null, legalName, state: row.state_code ?? null,
+    code: row.client_code === 'null' ? null : row.client_code ?? null, name, nickname: nickname ?? name, tradeName: tradeName ?? null, legalName, state: row.state_code ?? null,
     active: Number(row.active) === 1, createdAt: isoDate(row.created_at), profileComplete: Boolean(profileId),
   };
 }
@@ -47,7 +47,7 @@ function clientDetail(row) {
     ...clientSummary(row), taxRegime: details.taxRegime ?? null, cnae: details.cnae ?? null,
     stateRegistrations: details.stateRegistrations ?? [], municipalRegistrations: details.municipalRegistrations ?? [],
     contacts: details.contacts ?? [], modules: details.modules ?? [],
-    invoiceSchedule: details.invoiceSchedule ?? inactiveSchedule,
+    consumerSchedule: details.consumerSchedule ?? inactiveSchedule, invoiceSchedule: details.invoiceSchedule ?? inactiveSchedule,
     serviceInvoiceSchedule: details.serviceInvoiceSchedule ?? inactiveSchedule,
   };
 }
@@ -180,7 +180,7 @@ export class ClientMySqlStore {
     );
     return new Map(rows.map(row => {
       const details = detailsOf(row);
-      return [row.cnpj, { active: Number(row.active) === 1, invoiceSchedule: details.invoiceSchedule ?? inactiveSchedule,
+      return [row.cnpj, { active: Number(row.active) === 1, consumerSchedule: details.consumerSchedule ?? inactiveSchedule, invoiceSchedule: details.invoiceSchedule ?? inactiveSchedule,
         serviceInvoiceSchedule: details.serviceInvoiceSchedule ?? inactiveSchedule }];
     }));
   }

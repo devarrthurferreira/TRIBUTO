@@ -129,6 +129,8 @@ export function clientFields(input, { partial = false } = {}) {
   const supplied = key => !partial || Object.hasOwn(input, key);
   if (supplied('type')) data.type = clientType(input.type);
   if (supplied('document')) data.document = documentNumber(input.document, data.type);
+  if (supplied('code')) data.code = text(input.code, 'Código', 24);
+  if (supplied('consumerSchedule')) data.consumerSchedule = schedule(input.consumerSchedule, 'NFC-e');
   if (supplied('nickname')) data.nickname = text(input.nickname, 'Apelido', 120, true);
   if (supplied('tradeName')) data.tradeName = data.type === 'pf' ? null : text(input.tradeName, 'Nome fantasia', 160);
   if (supplied('legalName')) data.legalName = text(input.legalName, data.type === 'pf' ? 'Nome completo' : 'Razão social', 160, data.type === 'pf');

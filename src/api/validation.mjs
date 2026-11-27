@@ -11,7 +11,7 @@ export class ApiError extends Error {
 const CNPJ = /^\d{14}$/;
 const NSU = /^(0|[1-9]\d{0,14})$/;
 const SHA256 = /^[a-f0-9]{64}$/;
-const SOURCES = new Set(['NFE', 'NFSE']);
+const SOURCES = new Set(['NFE', 'NFSE', 'NFCE']);
 const STATUSES = new Set(['active', 'cancelled', 'substituted', 'unknown']);
 const EVENTS = new Set(['issued', 'cancelled', 'substituted', 'other']);
 
@@ -40,6 +40,7 @@ export function validateBatch(body) {
     required(entry, Object.keys(entry).every(key => allowed.has(key)), `documents[${index}] (somente metadados; XML não é aceito)`);
     const nsu = required(entry.nsu, NSU.test(entry.nsu) && BigInt(entry.nsu) >= BigInt(firstNsu) && BigInt(entry.nsu) <= BigInt(lastNsu), `documents[${index}].nsu`);
     const documentKey = required(entry.documentKey, typeof entry.documentKey === 'string' && (source === 'NFSE' ? /^\d{50}$/ : /^\d{44}$/).test(entry.documentKey), `documents[${index}].documentKey`);
+    if (source === 'NFCE') required(documentKey, documentKey.slice(20, 22) === '65', 'NFC-e modelo 65');
     const eventType = required(entry.eventType, EVENTS.has(entry.eventType), `documents[${index}].eventType`);
     // Distribution can deliver a cancellation event before the full invoice.
     // Keep its NSU and key, but never invent the invoice's number or amount.

@@ -15,14 +15,14 @@ const regimes = new Map([
 
 const steps = [
   ['Adicionar dados', 'person-badge'], ['Certificado', 'shield-lock'], ['Módulos de acesso', 'grid'],
-  ['Consultas de NF', 'receipt'], ['Notas de serviço', 'file-earmark'], ['Dados de acesso', 'key'],
+  ['NFC-e', scheduleSummary(client.consumerSchedule)], ['Consultas de NF', 'receipt'], ['Notas de serviço', 'file-earmark'], ['Dados de acesso', 'key'],
 ];
 
 const schedules = new Map([
   ['disabled', ['Desativada', '']], ['day', ['Diurno', '08:00']], ['night', ['Noturno', '22:00']],
 ]);
 
-const scheduleTitles = ['Consultas de NF', 'Notas de serviço'];
+const scheduleTitles = ['NFC-e', scheduleSummary(client.consumerSchedule)], ['Consultas de NF', 'Notas de serviço'];
 const accessStatuses = {
   unconfigured: 'Acesso ainda não configurado',
   activation_pending: 'Aguardando definição da senha',
@@ -149,7 +149,7 @@ export function renderClientProfile(target, client, { modules = CLIENT_MODULES }
     ['Inscrições municipais', (client.municipalRegistrations || []).map(({ number, municipality }) => [number, municipality].filter(Boolean).join(' · ')).join(', ')],
     ['Certificado A1', client.certificate?.fileName || 'Não cadastrado'],
     ['Módulos no Portal do Cliente', enabledModules.join(', ') || 'Nenhum módulo liberado'],
-    ['Consultas de NF', scheduleSummary(client.invoiceSchedule)], ['Notas de serviço', scheduleSummary(client.serviceInvoiceSchedule)],
+    ['NFC-e', scheduleSummary(client.consumerSchedule)], ['Consultas de NF', scheduleSummary(client.invoiceSchedule)], ['Notas de serviço', scheduleSummary(client.serviceInvoiceSchedule)],
   ]);
   target.append(details);
   if (!client.contacts?.length) return;
@@ -334,6 +334,7 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
   documentInput.autocomplete = 'off';
   documentInput.spellcheck = false;
   const documentField = field('CNPJ da empresa *', documentInput);
+  const code = input('code', { placeholder: '999', maxLength: 24 });
   const nickname = input('nickname', { required: true, placeholder: 'Apelido' });
   const tradeName = input('tradeName', { placeholder: 'Nome fantasia' });
   const legalName = input('legalName', { placeholder: 'Razão social' });
@@ -347,7 +348,7 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
   cnae.inputMode = 'numeric';
   const cnaeField = field('CNAE principal', cnae);
   const tradeField = field('Nome fantasia', tradeName);
-  identity.append(documentField, field('Apelido *', nickname), tradeField, legalField, field('Estado *', state), taxField, cnaeField);
+  identity.append(documentField, field('Código', code), field('Apelido *', nickname), tradeField, legalField, field('Estado *', state), taxField, cnaeField);
   const status = select([['true', 'Ativo'], ['false', 'Inativo']]);
   const statusField = field('Status do cliente', status);
   identity.append(statusField);
@@ -457,9 +458,10 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
   availableModules.addEventListener('change', updateModuleCount);
   panels[2].append(moduleHeader, availableModules);
 
+  const consumer = schedulePanel(2);
   const invoice = schedulePanel(0);
   const serviceInvoice = schedulePanel(1);
-  panels[3].append(el('p', 'client-wizard-description', 'Defina o período previsto para consultar notas fiscais.'), ...invoice.elements);
+  panels[3].append(el('p', 'client-wizard-description', 'Defina o período previsto para consultar notas fiscais.'), ...invoice.elements, el('h3', '', 'Captura de NFC-e'), ...consumer.elements);
   panels[4].append(el('p', 'client-wizard-description', 'Defina o período previsto para consultar notas fiscais de serviço (NFS-e).'), ...serviceInvoice.elements);
 
   const login = input('client-login');
@@ -504,6 +506,7 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
     legalName.required = pf;
     const fiscalEligible = !pf && !/[A-Z]/.test(currentDocument());
     invoice.updateEligibility(fiscalEligible);
+    consumer.updateEligibility(fiscalEligible);
     serviceInvoice.updateEligibility(fiscalEligible);
   }
 
@@ -594,6 +597,7 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
     company.control.disabled = person.control.disabled = Boolean(record);
     documentInput.value = record?.document || record?.cnpj || '';
     documentInput.readOnly = Boolean(record);
+    code.value = record?.code || '';
     nickname.value = record?.nickname || record?.name || '';
     tradeName.value = record?.tradeName || '';
     legalName.value = record?.legalName || (record?.profileComplete === false ? record.name : '') || '';
@@ -605,6 +609,7 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
     stateRegistrations.set(record?.stateRegistrations);
     municipalRegistrations.set(record?.municipalRegistrations);
     contacts.set(record?.contacts);
+    consumer.set(record?.consumerSchedule || undefined);
     invoice.set(record?.invoiceSchedule || undefined);
     serviceInvoice.set(record?.serviceInvoiceSchedule || undefined);
     for (const module of moduleInputs) module.checked = Boolean(record?.modules?.includes(module.value));
@@ -726,18 +731,18 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
 
   function validateStep(index) {
     showError();
-    return [validateIdentity, validateCertificate, () => true, invoice.validate, serviceInvoice.validate, () => true][index]();
+    return [validateIdentity, validateCertificate, () => true, () => invoice.validate() && consumer.validate(), serviceInvoice.validate, () => true][index]();
   }
 
   async function requestBody() {
     const type = selectedType();
     const body = {
-      type, document: currentDocument(), nickname: nickname.value.trim(),
+      type, document: currentDocument(), code: code.value.trim(), nickname: nickname.value.trim(),
       tradeName: type === 'pj' ? tradeName.value.trim() : '', legalName: legalName.value.trim(),
       state: state.value, taxRegime: type === 'pj' ? taxRegime.value : '', cnae: type === 'pj' ? digits(cnae.value) : '',
       stateRegistrations: stateRegistrations.values(), municipalRegistrations: municipalRegistrations.values(),
       contacts: contacts.values(), modules: moduleInputs.filter(module => module.checked).map(module => module.value),
-      invoiceSchedule: invoice.value(), serviceInvoiceSchedule: serviceInvoice.value(), active: status.value === 'true',
+      consumerSchedule: consumer.value(), invoiceSchedule: invoice.value(), serviceInvoiceSchedule: serviceInvoice.value(), active: status.value === 'true',
     };
     const file = certificateFile.files[0];
     if (file) {

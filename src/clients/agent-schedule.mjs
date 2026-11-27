@@ -5,7 +5,7 @@ const clock = new Intl.DateTimeFormat('pt-BR', {
 /** The job schedule gates future collections. Queued batches keep their original authorization. */
 export function scheduleAgentJob(job, profile, now = new Date()) {
   if (!profile) return job;
-  const schedule = job.source === 'NFE' ? profile.invoiceSchedule : profile.serviceInvoiceSchedule;
+  const schedule = job.source === 'NFCE' ? profile.consumerSchedule : job.source === 'NFE' ? profile.invoiceSchedule : profile.serviceInvoiceSchedule;
   if (!profile.active || !schedule || schedule.period === 'disabled') return { ...job, schedule: schedule ?? null, inCollectionWindow: false };
   const current = clock.format(now);
   const day = current >= '06:00' && current < '18:00';

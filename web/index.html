@@ -413,11 +413,11 @@
         </section>
 
         <section class="view" id="view-companies" aria-labelledby="companiesTitle" hidden>
-          <div class="page-heading"><div><h1 id="companiesTitle">Empresas e clientes</h1><p>Cadastros e acessos da carteira da Maximum.</p></div><button id="newCompanyButton" class="button button-primary" type="button"><i class="bi bi-plus-lg" aria-hidden="true"></i> Adicionar Cliente</button></div>
-          <article class="surface"><div class="list-toolbar"><label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">Buscar cliente</span><input id="companySearch" type="search" placeholder="Buscar por nome, CNPJ ou CPF"></label><span id="companiesCount" class="list-count">— clientes</span></div><p id="clientListError" class="form-message" role="alert" hidden></p><button id="clientListRetry" class="button button-quiet" type="button" hidden>Tentar novamente</button><div id="companiesList" class="list-content" aria-live="polite"><p>Carregando clientes…</p></div></article>
+          <div class="page-heading"><div><h1 id="companiesTitle">Empresas &amp; Clientes</h1><p>Cadastros e acessos da carteira da Maximum.</p></div><button id="newCompanyButton" class="button button-primary" type="button"><i class="bi bi-plus-lg" aria-hidden="true"></i> Adicionar Cliente</button></div>
+          <article class="surface"><div class="list-toolbar"><label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">Buscar cliente</span><input id="companySearch" type="search" placeholder="Buscar por código, nome, CNPJ ou CPF"></label><select id="companyOrder" aria-label="Ordenar empresas"><option value="asc">A – Z</option><option value="desc">Z – A</option></select><span id="companiesCount" class="list-count">— clientes</span></div><p id="clientListError" class="form-message" role="alert" hidden></p><button id="clientListRetry" class="button button-quiet" type="button" hidden>Tentar novamente</button><h2 class="companies-label">Empresas</h2><div id="companiesList" class="list-content" aria-live="polite"><p>Carregando clientes…</p></div></article>
         </section>
 
-        <section class="view client-admin" id="view-client-detail" aria-labelledby="clientDetailTitle" hidden>
+        <dialog class="view client-admin" id="view-client-detail" aria-labelledby="clientDetailTitle" hidden>
           <a class="text-button client-back" href="/home#companies">← Voltar a Empresas e clientes</a>
           <div class="page-heading client-heading">
             <div><h1 id="clientDetailTitle">Ficha do cliente</h1><p id="clientDetailCnpj" hidden></p></div>
@@ -440,7 +440,7 @@
               <dl class="client-record-data"><div><dt id="clientRecordDocumentLabel">CNPJ</dt><dd id="clientRecordCnpj"></dd></div><div><dt>Cadastrado em</dt><dd id="clientRecordSince"></dd></div></dl>
               <div class="client-record-actions"><a class="text-button" id="clientFiscalLink" href="/setor/fiscal">Consultar NFS-e ↗</a></div>
             </section>
-            <div id="clientProfile"></div>
+            <section class="surface" id="clientRecentNotes" aria-live="polite" hidden></section><div id="clientProfile"></div>
             <section id="clientStaffPortfolio" class="surface client-access" aria-labelledby="clientAccessHeading">
               <div class="surface-header"><div><h2 id="clientAccessHeading">Acessos à empresa</h2><p>Vincule membros à carteira da empresa. Cada pessoa usa as permissões dos seus módulos.</p></div><span id="clientAccessCount" class="list-count"></span></div>
               <div class="list-toolbar"><label class="search-field"><i class="bi bi-search" aria-hidden="true"></i><span class="sr-only">Buscar pessoas</span><input id="clientAccessSearch" type="search" placeholder="Buscar por nome ou e-mail" autocomplete="off"></label></div>
@@ -449,7 +449,7 @@
               <p id="clientAccessFeedback" class="sr-only" role="status"></p>
             </section>
           </div>
-        </section>
+        </dialog>
 
         <section class="view" id="view-company-detail" aria-labelledby="companyDetailTitle" hidden>
           <div class="company-back"><button id="backToCompanies" type="button" class="text-button">← Voltar às empresas</button></div>
@@ -577,7 +577,7 @@
       <p class="dialog-description">Crie o token do servidor Windows. Ele aparecerá uma vez após salvar.</p>
       <div class="field"><label for="agentName">Identificação</label><input id="agentName" name="name" required maxlength="100" placeholder="Servidor fiscal Maximum"></div>
       <fieldset class="access-fieldset"><legend>Empresas deste servidor</legend><button id="selectAllAgentCompanies" type="button" class="text-button">Selecionar todas</button><div id="agentCompanyOptions" class="checkbox-grid"></div></fieldset>
-      <fieldset class="access-fieldset"><legend>Fontes</legend><div class="checkbox-grid"><label><input type="checkbox" name="agentSource" value="NFE" checked> NF-e</label><label><input type="checkbox" name="agentSource" value="NFSE"> NFS-e</label></div></fieldset>
+      <fieldset class="access-fieldset"><legend>Fontes</legend><div class="checkbox-grid"><label><input type="checkbox" name="agentSource" value="NFE" checked> NF-e</label><label><input type="checkbox" name="agentSource" value="NFSE"> NFS-e</label><label><input type="checkbox" name="agentSource" value="NFCE"> NFC-e</label></div></fieldset>
       <p id="agentPairCount" class="small-muted">Selecione empresas e fontes para criar os vínculos.</p>
       <div class="field"><label for="agentStartNsu">Último NSU já tratado</label><input id="agentStartNsu" name="startNsu" inputmode="numeric" pattern="[0-9]+" value="0" required><small>Use 0 para começar na primeira posição disponível. A consulta fiscal real depende do conector.</small></div>
       <p id="agentError" class="form-message" role="alert" hidden></p>

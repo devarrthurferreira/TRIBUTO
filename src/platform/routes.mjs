@@ -516,7 +516,7 @@ export function createPlatformRouter({ store, chat, whatsapp, club, crm, people,
         const seen = new Set();
         for (const entry of input.assignments) {
           const companyCnpj = cnpj(entry?.companyCnpj);
-          check(['NFE', 'NFSE'].includes(entry?.source), 'assignments.source');
+          check(['NFE', 'NFSE', 'NFCE'].includes(entry?.source), 'assignments.source');
           check(NSU.test(entry?.startNsu), 'assignments.startNsu');
           if (!await store.companyExists(companyCnpj)) fail(400, 'UNKNOWN_COMPANY', 'Empresa não cadastrada');
           const key = `${companyCnpj}:${entry.source}`;

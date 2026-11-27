@@ -399,3 +399,17 @@
 .person-tenure-badge[data-milestone="28"] { --tenure-color: #0c5367; --tenure-background: #e1f3f8; --tenure-border: #83b4c2; }
 .person-tenure-badge[data-milestone="29"] { --tenure-color: #633149; --tenure-background: #fae7ee; --tenure-border: #ca9eaf; }
 .person-tenure-badge[data-milestone="30"] { --tenure-color: #fff4d2; --tenure-background: #63263b; --tenure-border: #a86b51; }
+
+.app-shell:is([data-view="companies"], [data-view="client-detail"]) :is(.sidebar, .portal-menu) { display: none; }
+#view-companies { max-width: 1080px; margin-inline: auto; }
+.companies-label { margin: 0; padding: 18px 22px 6px; border-top: 1px solid var(--line); font-size: 14px; }
+#companyOrder { padding: 8px; border-radius: 8px; color: var(--ink); background: var(--portal-surface); }
+.company-code { padding: 6px 10px; background: var(--portal-hover); border-radius: 7px; font-weight: 600; font-variant-numeric: tabular-nums; }
+dialog#view-client-detail { position: fixed; inset: 0 0 0 auto; width: 65vw; max-width: none; height: 100dvh; max-height: none; margin: 0; box-sizing: border-box; padding: clamp(16px, 3vw, 44px); border: 0; color: var(--ink); background: var(--portal-floor); overflow: auto; }
+#view-client-detail::backdrop { background: rgb(25 14 18 / 42%); }
+#clientRecentNotes { padding: 18px; overflow-wrap: anywhere; }
+@media(max-width: 760px) { dialog#view-client-detail { width: 100vw; } }
+@media(prefers-reduced-motion: no-preference) {
+  dialog#view-client-detail[open] { animation: company-slide-in .22s ease-out; }
+  @keyframes company-slide-in { from { transform: translateX(12%); opacity: .5; } }
+}

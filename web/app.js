@@ -476,6 +476,7 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   state.selectedClientKey = null;
   state.clients = null;
   activeClient = undefined;
+  $('clientRecentNotes').hidden = true;
   $('clientProfile').replaceChildren();
   $('companiesList').replaceChildren();
   $('companiesCount').textContent = '— clientes';
@@ -588,7 +589,7 @@ function applySession(session) {
   if (surface) {
     $('appView').hidden = false;
     $('sessionLoading').hidden = true;
-    $('conteudo').focus({ preventScroll: true });
+    if (state.view !== 'client-detail') $('conteudo').focus({ preventScroll: true });
     initChat(session, { surface, notify: updateChatBadges });
     const url = new URL(location.href);
     if (state.view === 'overview' && url.searchParams.has('talk')) {
@@ -673,6 +674,12 @@ function navigate(view, { replace = false } = {}) {
   state.selectedClientKey = clientDetail ? clientRoute[1] : null;
   const viewId = `view-${state.view}`;
   for (const section of document.querySelectorAll('.view')) section.hidden = section.id !== viewId;
+  const drawer = $('view-client-detail');
+  if (clientDetail) {
+    $('view-companies').hidden = false;
+    if (!state.clients) void loadClients();
+    if (!drawer.open) drawer.showModal();
+  } else if (drawer.open) drawer.close();
   const activeView = state.view === 'client-detail' || (state.view === 'company-detail' && isAdmin()) ? 'companies'
     : state.view === 'company-detail' ? 'fiscal' : state.view;
   for (const button of document.querySelectorAll('.nav-link')) {
@@ -705,7 +712,7 @@ function navigate(view, { replace = false } = {}) {
       showSectorSummary(sector, panel);
     },
   } : null, { home: state.view === 'overview' });
-  $('conteudo').focus({ preventScroll: true });
+  if (!clientDetail) $('conteudo').focus({ preventScroll: true });
   if (previousView !== state.view && ['maxhub', 'club'].includes(state.view)) window.scrollTo({ top: 0, behavior: 'instant' });
   if (clubPage) void club.open({ isAdmin: isAdmin(), page: clubPage });
   else club.close();
@@ -1060,8 +1067,10 @@ function renderCompanies() {
   const text = normalizedClientSearch($('companySearch').value.trim());
   const document = text.replace(/[.\s/-]/g, '');
   const clients = base.filter(client => [client.name, client.nickname, client.legalName, client.tradeName].some(name =>
-    normalizedClientSearch(name || '').includes(text)) || (document && client.document.toLowerCase().includes(document)));
-  $('companiesCount').textContent = `${base.length} ${base.length === 1 ? 'cliente' : 'clientes'}`;
+    normalizedClientSearch(name || '').includes(text)) || String(client.code || '999').includes(text) || (document && client.document.toLowerCase().includes(document)));
+  const direction = $('companyOrder').value === 'desc' ? -1 : 1;
+  clients.sort((a, b) => direction * a.name.localeCompare(b.name, 'pt-BR', { numeric: true, sensitivity: 'base' }));
+  $('companiesCount').textContent = `${clients.length} ${base.length === 1 ? 'cliente' : 'clientes'}`;
   const target = $('companiesList');
   target.replaceChildren();
   if (!clients.length) return appendEmpty(target, base.length ? 'Nenhum cliente encontrado' : 'Nenhum cliente cadastrado',
@@ -1071,10 +1080,10 @@ function renderCompanies() {
     const main = node('div', 'list-row-main');
     const info = node('div');
     info.append(node('strong', '', client.name), node('small', '', `${client.type === 'pf' ? 'CPF' : 'CNPJ'} ${clientDocumentLabel(client.document)}`));
-    main.append(node('span', 'row-avatar', initials(client.name)), info);
+    main.append(node('span', 'company-code', client.code || '999'), info);
     const actions = node('div', 'company-row-actions');
     const status = client.active === false ? ['status-warning', 'Inativo'] : ['status-ok', 'Ativo'];
-    const open = node('a', 'button button-quiet company-open', 'Abrir ficha ↗');
+    const open = node('a', 'button button-quiet company-open', 'Ver Empresa');
     open.href = viewUrl(`client-${client.id}`);
     actions.append(node('span', `status-pill ${status[0]}`, status[1]), open);
     row.append(main, actions);
@@ -1116,6 +1125,7 @@ function renderClientHeading(client) {
   $('clientDetailCnpj').hidden = !client;
   $('clientDetailActions').hidden = !client;
   $('clientDetailContent').hidden = !client;
+  $('clientRecentNotes').hidden = true;
   $('clientProfile').replaceChildren();
   if (!client) return;
   $('clientRecordDocumentLabel').textContent = kind;
@@ -1190,6 +1200,40 @@ function renderClientAccess() {
   }
 }
 
+async function loadClientNotes(cnpj, key, serial) {
+  const target = $('clientRecentNotes');
+  target.hidden = false;
+  target.replaceChildren(node('h2', '', 'Notas fiscais recentes'));
+  const list = node('div', 'list-content');
+  target.append(list);
+  let page = 1;
+  async function load() {
+    const button = target.querySelector('button');
+    if (button) button.disabled = true;
+    try {
+      const result = await request('/fiscal/documents?companyCnpj=' + cnpj + '&limit=5&page=' + page);
+      if (serial !== clientRequest || !clientIsVisible(key)) return;
+      button?.remove();
+      for (const doc of result.documents) {
+        const row = node('div', 'list-row');
+        row.append(node('strong', '', doc.source), node('small', '', doc.documentKey || 'Sem chave informada'),
+          node('small', '', doc.receivedAt ? dateLabel(doc.receivedAt) : ''));
+        list.append(row);
+      }
+      if (!list.childElementCount) list.textContent = 'Nenhuma nota recebida para esta empresa.';
+      if (result.hasMore) {
+        page++;
+        target.append(summaryButton('Ver mais notas', load));
+      }
+    } catch {
+      if (serial !== clientRequest || !clientIsVisible(key)) return;
+      button?.remove();
+      target.append(summaryButton('Falha ao consultar. Tentar novamente', load));
+    }
+  }
+  await load();
+}
+
 async function loadClientDetail(key) {
   const serial = ++clientRequest;
   activeClient = undefined;
@@ -1207,6 +1251,7 @@ async function loadClientDetail(key) {
     const fiscal = fiscalCnpj(client);
     activeClient = { client, fiscal, key, members: [] };
     renderClientHeading(client);
+    if (fiscal && canUse('fiscal', 'fiscalDocumentsRead')) void loadClientNotes(fiscal, key, serial);
     if (fiscal) {
       const { members } = await request(`/companies/${fiscal}`);
       if (serial !== clientRequest || !clientIsVisible(key)) return;
@@ -1839,6 +1884,11 @@ function setupEvents() {
   $('menuBackdrop').addEventListener('click', closeMenu);
   for (const button of document.querySelectorAll('button.nav-link')) button.addEventListener('click', () => navigate(button.dataset.view));
   for (const button of document.querySelectorAll('button[data-go]')) button.addEventListener('click', () => navigate(button.dataset.go));
+  $('view-client-detail').addEventListener('cancel', event => {
+    event.preventDefault();
+    navigate('companies');
+  });
+  $('companyOrder').addEventListener('change', renderCompanies);
   $('companySearch').addEventListener('input', renderCompanies);
   $('clientListRetry').addEventListener('click', () => void loadClients());
   for (const control of $('view-marketing').querySelectorAll('[data-marketing-go]')) {

@@ -72,6 +72,60 @@ function copyLink(control, status) {
   }
 }
 
+function historicalEmails(text) {
+  const chunks = text.split(/^Protocolo:\s*\*\*(?=DOS-)/m).slice(1);
+  if (!chunks.length) throw new Error('Cole as tabelas dos e-mails com o protocolo original.');
+  return chunks.map(chunk => {
+    const match = /^(DOS-(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})-[A-Z0-9]+)\*\*/.exec(chunk);
+    if (!match) throw new Error('Protocolo inválido.');
+    const [, protocolo,y,m,d,h,min,s] = match;
+    const values = new Map();
+    const filiais = [], contatos = [], notes = [], promises = [];
+    let section = '', columns = [];
+    const clean = value => value.trim().replaceAll('**','').replaceAll('&#xA;', '\n').replaceAll('&#x20;', ' ').replaceAll('\\|','|').replaceAll('\\*','*').replace(/\[([^\]]+)\]\(mailto:[^)]+\)/g,'$1');
+    for (const raw of chunk.split('\n')) {
+      if (raw.startsWith('- ') && /Motivo e promessas/i.test(section)) promises.push(clean(raw.slice(2)));
+      if (!raw.startsWith('|')) continue;
+      const cells = raw.trim().replace(/^\||\|$/g,'').split(/(?<!\\)\|/).map(clean);
+      if (/^\d+\./.test(cells[0])) { section = cells[0]; columns = []; continue; }
+      if (!cells[0] || /^-+$/.test(cells[0])) continue;
+      if (cells.length === 2) { values.set(cells[0], cells[1]); continue; }
+      if (['Nome','Tipo'].includes(cells[0])) { columns = cells; continue; }
+      const row = Object.fromEntries(columns.map((k,i) => [k,cells[i] === 'Não informado' ? '' : cells[i]]));
+      if (row.Nome && /Filiais/i.test(section)) {
+        filiais.push({nome:row.Nome, cnpj:row.CNPJ, cidade:row.Cidade, estado:row.Estado,
+          tipo:row.Tipo?.startsWith('Coligada') ? 'coligada':'filial', regimeTributario:row['Regime tributário'] || 'Não informado'});
+      }
+      if (row.Nome && /Contatos/i.test(section)) {
+        const emails = (row['E-mail'] || '').split(/;\s*/);
+        const email = emails.find(address => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address));
+        if (row['E-mail'] && row['E-mail'] !== email) notes.push(row.Nome + ' — ' + row['E-mail']);
+        contatos.push({nome:row.Nome,papel:row['Quem é'],telefone:row.Telefone,email,setor:row.Setor});
+      }
+    }
+    const get = (...labels) => labels.map(label=>values.get(label)).find(Boolean) || '';
+    const yes = label => get(label) === 'Sim';
+    const [cidade,estado] = get('Cidade/Estado').split(/\s+-\s+/);
+    const employees = get('Número de funcionários');
+    if (employees && !/^\d+$/.test(employees)) notes.push('Número de funcionários — ' + employees);
+    if (get('Ação') === 'Dossiê atualizado') notes.push('Última movimentação no sistema de origem — ' + get('Data/hora da movimentação'));
+    const dossier = {
+      dataInicio:get('Data de início').split('/').reverse().join('-'), grupo:get('Grupo pertencente','Grupo'),
+      empresa:{nome:get('Empresa'),regimeTributario:get('Regime tributário'),cnpj:get('CNPJ'),cidade,estado},
+      retificacao:yes('Terá retificação?'), mesesRetificacao:get('Meses de retificação','Meses da retificação'),
+      possuiFiliais:filiais.length > 0, filiais, contatos, negociacaoCom:get('Negociação realizada com'), origem:get('Origem'),
+      indicacao:{temIndicacao:yes('Indicação?'),nomeIndicador:get('Nome do indicador')},
+      informacoesGerais:{faturamentoMedioMensal:get('Faturamento médio mensal'),setorAtuacao:get('Setor de atuação'),atuacaoEstados:get('Atuação em quais estados'),possuiEcommerce:yes('Possui e-commerce?'),licitacoesContratosPublicos:yes('Atua com licitações/contratos públicos?'),auditoriasRecorrentes:yes('Há auditorias recorrentes?')},
+      informacoesOperacionais:{sistemasUtilizados:get('Sistemas utilizados'),periodicidadeBalanco:get('Periodicidade de entrega do balanço'),numeroFuncionarios:/^\d+$/.test(employees)?employees:'',separacaoCentroCusto:yes('Separação por centro de custo?'),contasBancarias:get('Contas bancárias / bancos'),regimeEspecial:yes('Regime especial?'),parcelamentosEmprestimos:get('Parcelamentos e empréstimos ativos?')},
+      motivoTrocaContabilidade:get('Motivo da troca de contabilidade'),promessasRealizadas:promises,
+      consideracoesSetores:Object.fromEntries(Object.entries({societario:'Societário',pessoal:'Pessoal',fiscal:'Fiscal',contabil:'Contábil',sucessoCliente:'Sucesso do Cliente',programacao:'Programação',diretoria:'Diretoria'}).map(([key,label])=>[key,get(label)])),
+      demaisObservacoes:[get('Demais observações'),...notes].filter(Boolean).join('\n')
+    };
+    if (!dossier.empresa.nome || !estado || !get('Data de início') || Number(get('Quantidade')) !== filiais.length) throw new Error('Confira as tabelas de ' + protocolo);
+    return {protocolo,createdAt:y+'-'+m+'-'+d+'T'+h+':'+min+':'+s+'Z',dossier};
+  });
+}
+
 export function mountDossierAdmin(root, {
   request, canCreate = false, canLink = false, canFeesRead = false, canFees = false,
   allowUnboundLinks = false, companies = [], sector, sectorLabel = 'Sucesso do Cliente', onAuthError,
@@ -95,6 +149,39 @@ export function mountDossierAdmin(root, {
   const links = button('Links de preenchimento');
   if (canCreate) headActions.append(create);
   if (canLink) headActions.append(links);
+  if (allowUnboundLinks) {
+    const opener = button('Importar histórico');
+    headActions.append(opener);
+    opener.addEventListener('click', () => {
+      showPanel('Importar dossiês históricos', opener);
+      const source = input('E-mails em formato de tabela Markdown', { type: 'textarea', rows: 12 });
+      const preview = button('Conferir protocolos');
+      const save = button('Importar dossiês', true);
+      save.hidden = true;
+      let items = [];
+      source.control.addEventListener('input', () => { save.hidden = true; setNotice(panelStatus, ''); });
+      preview.addEventListener('click', () => {
+        try {
+          items = historicalEmails(source.control.value);
+          setNotice(panelStatus, items.map(item => item.protocolo + ' · ' + item.dossier.empresa.nome).join(' / '));
+          save.hidden = false;
+        } catch (error) { showFailure(panelStatus, error); }
+      });
+      save.addEventListener('click', async () => {
+        save.disabled = true;
+        changeBusy(true);
+        try {
+          const response = await request('/dossiers/import', { method:'POST', body:{items} });
+          const total = response.items.filter(item => item.imported).length;
+          setNotice(panelStatus, total + ' importados · ' + (items.length-total) + ' já cadastrados.');
+          save.hidden = true;
+          await loadList(1);
+        } catch (error) { showFailure(panelStatus,error); }
+        finally { changeBusy(false); save.disabled = false; }
+      });
+      panel.append(source.wrapper, preview, save);
+    });
+  }
   header.append(headTitle, headActions);
 
   const card = el('section', 'dossier-card');
