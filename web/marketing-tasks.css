@@ -482,3 +482,33 @@
   .mt-form-grid { grid-template-columns: 1fr; }
   .mt-dialog-footer .mt-primary { min-height: 42px; }
 }
+
+
+/* Compact board inspired by the reference: quiet columns, crisp cards and movement feedback. */
+.mt-board { gap:14px; }
+.mt-column { padding:9px; border-radius:12px; background:var(--mt-floor); border-color:transparent; transition:background .18s,border-color .18s; }
+.mt-column-header { margin-bottom:11px; padding-inline:4px; gap:6px; }
+.mt-column-header h3 { font-size:12px; text-transform:uppercase; letter-spacing:.045em; }
+.mt-column-header > .mt-column-count { margin-inline-start:auto; }
+.mt-column-add { display:grid; place-items:center; width:26px; height:26px; flex:none; padding:0; font-size:18px; line-height:1; border:0; border-radius:6px; background:transparent; color:var(--muted); cursor:pointer; }
+.mt-column-add:hover { background:var(--mt-column-tint); color:var(--mt-column-dot); }
+.mt-card { padding:14px; border-radius:12px; gap:10px; min-height:112px; box-shadow:0 2px 8px rgb(62 23 33 / 4%); transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease,opacity .2s ease; }
+.mt-card:hover { border-color:var(--mt-accent); box-shadow:0 8px 22px var(--portal-aura); }
+.mt-card[draggable="true"] { cursor:grab; }
+.mt-card[draggable="true"]:active { cursor:grabbing; }
+.mt-card.mt-dragging { opacity:.45; border-style:dashed; box-shadow:none; }
+.mt-column.mt-drop-target { border:1px dashed var(--mt-accent); background:var(--mt-rose); }
+.mt-card-footer { justify-content:space-between; }
+.mt-person { display:inline-flex; align-items:center; gap:6px; min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.mt-person-avatar { display:grid; place-items:center; border-radius:50%; width:25px; height:25px; flex:0 0 25px; background:var(--mt-rose); color:var(--mt-accent); font-size:10px; font-weight:700; box-shadow:0 0 0 2px var(--mt-surface); }
+@keyframes mt-card-appear { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+@media(prefers-reduced-motion:no-preference) {
+  .mt-card { animation:mt-card-appear .22s ease-out backwards; }
+  .mt-card[data-motion="1"] { animation-delay:.035s; }
+  .mt-card[data-motion="2"] { animation-delay:.07s; }
+  .mt-card[data-motion="3"] { animation-delay:.105s; }
+  .mt-card[data-motion="4"] { animation-delay:.14s; }
+  .mt-card:not(.mt-dragging):hover { transform:translateY(-2px); }
+  .mt-column-add:active { transform:scale(.93); }
+}
+@media(prefers-reduced-motion:reduce) { .mt-card,.mt-column,.mt-column-add { animation:none; transition:none; } }
