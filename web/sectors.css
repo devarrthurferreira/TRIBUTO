@@ -201,3 +201,44 @@
 #dossierPanel .dossier-list-item { border-inline-start:3px solid var(--blue); padding:16px; border-radius:10px; }
 #dossierPanel .dossier-list-item h3 { margin:0 0 4px; }
 @media(max-width:720px){.cs-board,.cs-charts{grid-template-columns:1fr}.cs-drawer{width:100vw}.cs-board-head{flex-wrap:wrap}}
+
+.tech-app-divider { border:0; border-top:1px solid var(--portal-edge); width:100%; margin:8px 0; }
+.tech-app { display:grid; gap:20px; color:var(--ink); }
+.tech-app-head,.tech-access-status,.tech-app-actions,.tech-app-tabs { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.tech-app-head,.tech-access-status { justify-content:space-between; }
+.tech-app h1,.tech-app h2,.tech-app h3,.tech-app p { margin:0; }
+.tech-app h1 { font-size:clamp(24px,3vw,36px); }
+.tech-app h2 { font-size:clamp(18px,2vw,25px); }
+.tech-app-grid { display:grid; grid-template-columns:minmax(235px,.7fr) minmax(0,1.7fr); gap:18px; align-items:start; }
+.tech-app-directory,.tech-app-detail,.tech-publish,.tech-work-item { min-width:0; border:1px solid var(--portal-edge); border-radius:14px; background:var(--portal-surface); }
+.tech-app-directory,.tech-app-detail { display:grid; align-content:start; gap:14px; padding:clamp(15px,2vw,24px); }
+.tech-app-note,.tech-module-option small { color:var(--muted); font-size:12px; }
+.tech-app [role=status]:empty { display:none; }
+.tech-app-companies { display:grid; gap:3px; max-height:65vh; overflow-y:auto; }
+.tech-company { width:100%; display:grid; gap:4px; border:1px solid transparent; border-radius:8px; text-align:left; padding:11px; color:var(--ink); background:transparent; cursor:pointer; }
+.tech-company[aria-pressed=true],.tech-company:hover,.tech-app-tabs [aria-pressed=true] { border-color:var(--portal-edge); background:var(--portal-hover); color:var(--portal-accent,var(--blue)); }
+.tech-company small {color:var(--muted);}
+.tech-app-identity { display:grid; gap:5px; }
+.tech-tab-content,.tech-modules,.tech-work-list { display:grid; gap:14px; }
+.tech-app-tabs { border-bottom:1px solid var(--portal-edge); padding-bottom:12px; }
+.tech-field { display:grid; gap:5px; min-width:0; font-size:13px; }
+.tech-field :is(input,select,textarea) { box-sizing:border-box; min-width:0; width:100%; color:var(--ink); background:var(--portal-surface); border:1px solid var(--portal-edge); border-radius:8px; padding:9px; font:inherit; }
+.tech-field textarea {min-height:70px;}
+.tech-module-options,.tech-publish-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.tech-module-option { display:flex; gap:9px; align-items:flex-start; padding:10px; border:1px solid var(--portal-edge); border-radius:8px; }
+.tech-module-option span,.tech-work-item { display:grid; gap:5px; }
+.tech-module-option input { accent-color:var(--blue); }
+.tech-publish,.tech-work-item { padding:14px; }
+.tech-publish summary { cursor:pointer; font-weight:600; }
+.tech-publish-form { margin-top:12px; align-items:end; }
+.tech-publish-form :is(.tech-app-note,.tech-field:has(textarea),.tech-field:has([type=file])) { grid-column:1/-1; }
+.tech-app-actions {align-items:end;}
+.tech-download { color:var(--blue); overflow-wrap:anywhere; }
+.tech-work-item p { white-space:pre-wrap; overflow-wrap:anywhere; }
+@media (max-width:850px) {
+  .tech-app-grid { grid-template-columns:1fr; }
+  .tech-app-companies { max-height:230px; }
+}
+@media (max-width:480px) {
+  .tech-module-options,.tech-publish-form { grid-template-columns:1fr; }
+}

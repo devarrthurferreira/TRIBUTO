@@ -1,6 +1,8 @@
 import { ApiError, sha256 } from '../api/validation.mjs';
 import { hashPassword, newSecret, safeEqualHex, verifyPassword } from '../platform/auth.mjs';
 import { clientAccessView, clientLoginAttemptKey, prepareClientActivation } from './access-store.mjs';
+import { sendAttachment } from '../chat/attachments.mjs';
+import { WORKSPACE_MODULES, WORKSPACE_BODY_LIMIT } from './workspace-store.mjs';
 import { grantedClientModules } from './profile-fields.mjs';
 
 const PREFIX = '/v1/client/';
@@ -21,6 +23,7 @@ function fail(status, code, message) { throw new ApiError(status, code, message)
 export function normalizeClientUsername(value) {
   if (typeof value !== 'string') return null;
   const username = value.trim().toUpperCase();
+  if (/^\d{3}\.\d{3}\.\d{3}\/\d{3}-\d{2}$/.test(username)) return username;
   if (RAW_DOCUMENT.test(username)) return username;
   return MASKED_DOCUMENT.test(username) ? username.replace(/[./-]/g, '') : null;
 }
@@ -40,13 +43,13 @@ function sameOrigin(req) {
   } catch { return false; }
 }
 
-async function readBody(req) {
+async function readBody(req, limit = 8000) {
   if (!/^application\/json(?:\s*;|\s*$)/i.test(req.headers['content-type'] || '')) fail(415, 'CONTENT_TYPE', 'Use application/json.');
   const parts = [];
   let size = 0;
   for await (const part of req) {
     size += part.length;
-    if (size > 8000) fail(413, 'BODY_TOO_LARGE', 'Solicitação muito grande.');
+    if (size > limit) fail(413, 'BODY_TOO_LARGE', 'Solicitação muito grande.');
     parts.push(part);
   }
   try {
@@ -86,7 +89,9 @@ function documentPage(req) {
 function portalIdentity(client) {
   return {
     type: client.type, document: client.document, nickname: client.nickname, legalName: client.legalName,
-    tradeName: client.tradeName, state: client.state,
+    tradeName: client.tradeName, state: client.state, code: client.code, groupName: client.groupName,
+    street: client.street, streetNumber: client.streetNumber, complement: client.complement, district: client.district,
+    city: client.city, postalCode: client.postalCode, phones: client.phones, website: client.website,
     contacts: client.contacts?.map(({ name, role, phone, email }) => ({ name, role, phone, email })) ?? [],
   };
 }
@@ -100,6 +105,7 @@ function portalDocumentView(document, cnpj) {
 async function moduleData(req, clientStore, client, id) {
   if (id === 'cadastro') return portalIdentity(client);
   if (id === 'societario') return {
+    nire: client.nire, registrationExempt: client.registrationExempt,
     stateRegistrations: client.stateRegistrations ?? [], municipalRegistrations: client.municipalRegistrations ?? [],
   };
   if (id === 'contabil') return { taxRegime: client.taxRegime, cnae: client.cnae };
@@ -142,7 +148,7 @@ export function createClientAccessAdminRouter({ accessStore, clientStore }) {
   };
 }
 
-export function createClientPortalRouter({ accessStore, clientStore, secureCookies = true, clock = () => Date.now() }) {
+export function createClientPortalRouter({ accessStore, clientStore, workspaceStore, secureCookies = true, clock = () => Date.now() }) {
   const cookieName = secureCookies ? '__Secure-maximumClient' : 'maximumClient';
 
   function sessionCookie(res, token, lifeMs = 0) {
@@ -172,7 +178,7 @@ export function createClientPortalRouter({ accessStore, clientStore, secureCooki
     const input = await readBody(req);
     const username = normalizeClientUsername(input.username);
     const password = normalizedPassword(input.password);
-    if (!username || !password) fail(400, 'INVALID_CREDENTIALS_INPUT', 'Informe o CPF ou CNPJ e a senha.');
+    if (!username || !password) fail(400, 'INVALID_CREDENTIALS_INPUT', 'Informe o CPF, CNPJ ou CAEPF e a senha.');
     const attemptKey = clientLoginAttemptKey(username);
     await reserve(res, sha256(`client-login:ip:${req.socket.remoteAddress || 'unknown'}`), 300);
     await reserve(res, attemptKey, 5);
@@ -227,12 +233,30 @@ export function createClientPortalRouter({ accessStore, clientStore, secureCooki
       return send(res, 200, auth ? sessionView(auth.client, auth.session) : NO_SESSION);
     }
     const moduleRoute = PORTAL_MODULE.exec(route);
-    if (req.method === 'GET' && moduleRoute) {
+    const fileRoute = /^modules\/(guias|financeiro|documentos)\/([a-f\d-]{36})\/arquivo$/i.exec(route);
+    const listModule = req.method === 'GET' && moduleRoute;
+    const download = ['GET', 'HEAD'].includes(req.method) && fileRoute;
+    const upload = req.method === 'POST' && route === 'modules/documentos';
+    if (listModule || download || upload) {
       const auth = await currentSession(req);
       if (!auth) noSession();
-      const module = auth.session.purpose === 'active' && grantedClientModules(auth.client).find(item => item.id === moduleRoute[1]);
+      const moduleId = upload ? 'documentos' : (download || listModule)[1];
+      const module = auth.session.purpose === 'active' && grantedClientModules(auth.client).find(item => item.id === moduleId);
       if (!module) fail(403, 'CLIENT_MODULE_FORBIDDEN', 'Este módulo não está disponível para o seu acesso.');
-      return send(res, 200, { module, data: await moduleData(req, clientStore, auth.client, module.id) });
+      if (download) {
+        const file = await workspaceStore.getFile(auth.client.id, module.id, download[2]);
+        if (!file) fail(404, 'CLIENT_FILE_NOT_FOUND', 'Arquivo não encontrado.');
+        return sendAttachment(res, file, req.method === 'HEAD');
+      }
+      if (upload) {
+        if (!safeEqualHex(auth.session.csrfToken, req.headers['x-csrf-token'])) fail(403, 'CSRF', 'Token de proteção inválido.');
+        const input = await readBody(req, WORKSPACE_BODY_LIMIT);
+        return send(res, 201, { item: await workspaceStore.upload(auth.client.id, input) });
+      }
+      const data = WORKSPACE_MODULES.has(module.id)
+        ? await workspaceStore.list(auth.client.id, module.id, documentPage(req))
+        : await moduleData(req, clientStore, auth.client, module.id);
+      return send(res, 200, { module, data });
     }
     if (req.method === 'POST' && (route === 'change-password' || route === 'logout')) {
       const auth = await currentSession(req);

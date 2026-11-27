@@ -1,9 +1,10 @@
 import { ApiError } from '../api/validation.mjs';
 import { validCnpj, validCpf } from '../platform/brazilian-documents.mjs';
+import { CLIENT_REGIMES, formatCaepf, validCaepf } from '../../web/client-registration.js';
 import { CLIENT_MODULES } from '../../web/client-modules.js';
 
 export const CLIENT_STATES = Object.freeze('AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' '));
-export const CLIENT_TAX_REGIMES = Object.freeze(['simples-nacional', 'mei', 'lucro-presumido', 'lucro-real', 'lucro-arbitrado', 'imune-isenta', 'outro']);
+export const CLIENT_TAX_REGIMES = Object.freeze([...CLIENT_REGIMES.keys()]);
 const clientModules = new Set(CLIENT_MODULES.map(module => module.id));
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const clockPattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -30,13 +31,17 @@ function text(value, label, limit, required = false) {
 }
 
 function clientType(value) {
-  check(value === 'pj' || value === 'pf', 'Selecione Pessoa Jurídica ou Pessoa Física.');
+  check(['pj', 'pf', 'caepf'].includes(value), 'Selecione CNPJ, CPF ou CAEPF.');
   return value;
 }
 
 function documentNumber(value, type) {
   const raw = text(value, 'CPF ou CNPJ', 24, true);
   const document = raw.toUpperCase().replace(/[.\/\s-]/g, '');
+  if (type === 'caepf' || (type == null && /^\d{3}\.\d{3}\.\d{3}\/\d{3}-\d{2}$/.test(raw))) {
+    check(validCaepf(document), 'Informe um CAEPF válido.');
+    return formatCaepf(document);
+  }
   const isCompany = type === 'pj' || (type == null && document.length === 14);
   check(isCompany ? validCnpj(document) : validCpf(document), isCompany ? 'Informe um CNPJ válido.' : 'Informe um CPF válido.');
   return document;
@@ -123,6 +128,20 @@ function schedule(value, name) {
   return { period, time: clock };
 }
 
+function websiteUrl(value) {
+  const raw = text(value, 'Website', 500);
+  if (!raw) return null;
+  let url;
+  try { url = new URL(raw); } catch { check(false, 'Informe o endereço completo do website.'); }
+  check(['http:', 'https:'].includes(url.protocol) && !url.username && !url.password, 'Informe um website HTTP ou HTTPS.');
+  return url.href;
+}
+
+export function companyGroupNames(value) {
+  return [...new Set(list(value, {min: 1, max: 500, message: 'Informe de 1 a 500 grupos.'})
+    .map(group => text(group, 'Grupo de empresas', 120, true)))];
+}
+
 export function clientFields(input, { partial = false } = {}) {
   object(input, 'Revise os dados do cliente.');
   const data = {};
@@ -132,9 +151,24 @@ export function clientFields(input, { partial = false } = {}) {
   if (supplied('code')) data.code = text(input.code, 'Código', 24);
   if (supplied('consumerSchedule')) data.consumerSchedule = schedule(input.consumerSchedule, 'NFC-e');
   if (supplied('nickname')) data.nickname = text(input.nickname, 'Apelido', 120, true);
-  if (supplied('tradeName')) data.tradeName = data.type === 'pf' ? null : text(input.tradeName, 'Nome fantasia', 160);
-  if (supplied('legalName')) data.legalName = text(input.legalName, data.type === 'pf' ? 'Nome completo' : 'Razão social', 160, data.type === 'pf');
+  if (supplied('tradeName')) data.tradeName = data.type && data.type !== 'pj' ? null : text(input.tradeName, 'Nome fantasia', 160);
+  if (supplied('legalName')) data.legalName = text(input.legalName, data.type && data.type !== 'pj' ? 'Nome completo' : 'Razão social', 160, Boolean(data.type && data.type !== 'pj'));
   if (supplied('state')) data.state = uf(input.state, true);
+  const registrationFields = { groupName: 120, street: 180, streetNumber: 24, complement: 120, district: 100, city: 100, nire: 24 };
+  for (const [key, limit] of Object.entries(registrationFields)) {
+    if (supplied(key)) data[key] = text(input[key], key, limit);
+  }
+  if (supplied('postalCode')) {
+    const postalCode = text(input.postalCode, 'CEP', 9)?.replace('-', '') || null;
+    check(!postalCode || /^\d{8}$/.test(postalCode), 'Informe os oito dígitos do CEP.');
+    data.postalCode = postalCode;
+  }
+  if (supplied('website')) data.website = websiteUrl(input.website);
+  if (supplied('phones')) data.phones = list(input.phones ?? [], {max: 8, message: 'Informe até oito telefones.'}).map(contactPhone).filter(Boolean);
+  if (supplied('registrationExempt')) {
+    check(input.registrationExempt == null || typeof input.registrationExempt === 'boolean', 'Revise a isenção da empresa.');
+    data.registrationExempt = input.registrationExempt ?? null;
+  }
   if (supplied('taxRegime')) data.taxRegime = taxRegime(input.taxRegime);
   if (supplied('cnae')) data.cnae = cnaeNumber(input.cnae);
   if (supplied('stateRegistrations')) data.stateRegistrations = registrations(input.stateRegistrations ?? [], 'state', 'inscrição estadual', value => uf(value));

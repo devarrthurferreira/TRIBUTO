@@ -96,3 +96,16 @@
   .client-module-link { transition: none; }
   .client-module-link:hover { transform: none; }
 }
+
+.client-upload-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px 20px; align-items:end; }
+.client-upload-form > :is(:first-child, :nth-child(2), :nth-child(5), [role=status]) { grid-column:1/-1; }
+.client-upload-form [type=file], .client-upload-form textarea { max-width:100%; }
+.client-upload-form > .button { justify-self:start; }
+.client-upload-form small, .client-upload-form [role=status] { color:var(--muted); font-size:13px; margin:0; }
+.client-entry-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 10px; }
+.client-entry-heading h3 { margin:0; }
+.client-entry-status { padding:4px 9px; font-weight:650; font-size:12px; border-radius:8px; background:#f6eded; color:#782637; }
+.client-entry-status:is([data-status=pago],[data-status=conferido]) { color:#165b40; background:#e1f2e9; }
+.client-entry-description { white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; margin:0 0 12px; }
+.client-file-download { display:inline-block; margin-top:12px; overflow-wrap:anywhere; font-size:14px; }
+@media(max-width:580px) { .client-upload-form { grid-template-columns:minmax(0,1fr); } }

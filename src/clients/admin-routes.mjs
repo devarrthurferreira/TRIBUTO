@@ -1,11 +1,12 @@
+import { handleTechClientApp, requireClientAppManager } from './tech-admin.mjs';
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '../api/validation.mjs';
 import { prepareClientActivation } from './access-store.mjs';
-import { clientFields } from './profile-fields.mjs';
+import { clientFields, companyGroupNames } from './profile-fields.mjs';
 
 const CLIENT = /^\/clients\/(\d{11}|[a-z\d]{12}\d{2}|[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})$/i;
 
-export function createClientAdminRouter({ clients, certificates, accessStore, accessAdmin }) {
+export function createClientAdminRouter({ clients, certificates, accessStore, accessAdmin, workspaceStore }) {
   async function withCertificate(client) {
     return { ...client, certificate: await certificates.status(client.id) };
   }
@@ -18,9 +19,23 @@ export function createClientAdminRouter({ clients, certificates, accessStore, ac
     disableAccess,
     async handleHttp(context) {
       const { req, res, route, user, send, readBody, requireAdmin, logger } = context;
+      if (route === '/clients/app' || route.startsWith('/clients/app/')) {
+        return handleTechClientApp(context, clients, workspaceStore);
+      }
+      if (/^\/clients\/[^/]+\/access(?:\/reset)?$/.test(route)) {
+        const result = await accessAdmin.handleHttp({ ...context, requireAdmin: requireClientAppManager });
+        if (result !== false) return result;
+      }
       requireAdmin(user);
       const { method } = req;
       try {
+        if (route === '/clients/groups') {
+          if (method === 'GET') return send(res, 200, { groups: await clients.listGroups() });
+          if (method === 'POST') {
+            const { groups } = await readBody(req);
+            return send(res, 200, { groups: await clients.saveGroups(companyGroupNames(groups), user._id) });
+          }
+        }
         if (method === 'GET' && route === '/clients/config') {
           return send(res, 200, { certificateUploadConfigured: certificates.configured });
         }

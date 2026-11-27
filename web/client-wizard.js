@@ -1,3 +1,4 @@
+import { CLIENT_REGIMES as regimes, formatCaepf, validCaepf } from './client-registration.js';
 import { CLIENT_MODULES } from './client-modules.js';
 
 const states = new Map([
@@ -6,11 +7,6 @@ const states = new Map([
   ['MS', 'Mato Grosso do Sul'], ['MG', 'Minas Gerais'], ['PA', 'Pará'], ['PB', 'Paraíba'], ['PR', 'Paraná'],
   ['PE', 'Pernambuco'], ['PI', 'Piauí'], ['RJ', 'Rio de Janeiro'], ['RN', 'Rio Grande do Norte'], ['RS', 'Rio Grande do Sul'],
   ['RO', 'Rondônia'], ['RR', 'Roraima'], ['SC', 'Santa Catarina'], ['SP', 'São Paulo'], ['SE', 'Sergipe'], ['TO', 'Tocantins'],
-]);
-
-const regimes = new Map([
-  ['simples-nacional', 'Simples Nacional'], ['mei', 'MEI'], ['lucro-presumido', 'Lucro Presumido'],
-  ['lucro-real', 'Lucro Real'], ['lucro-arbitrado', 'Lucro Arbitrado'], ['imune-isenta', 'Imune ou isenta'], ['outro', 'Outro'],
 ]);
 
 const steps = [
@@ -34,11 +30,12 @@ const accessStatuses = {
 const dateTime = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' });
 const maxCertificateBytes = 512 * 1024;
 const digits = value => String(value ?? '').replace(/\D/g, '');
-const documentValue = (type, value) => type === 'pf' ? digits(value) : String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const documentValue = (type, value) => type !== 'pj' ? digits(value) : String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const clientPath = client => '/clients/' + encodeURIComponent(client.id || client.document || client.cnpj);
 
 export function clientDocumentLabel(type, value) {
   const text = documentValue(type, value).slice(0, type === 'pf' ? 11 : 14);
+  if (type === 'caepf') return formatCaepf(text);
   if (type === 'pf') {
     return text.replace(/^(\d{3})(\d)/, '$1.$2').replace(/^(\d{3}\.\d{3})(\d)/, '$1.$2')
       .replace(/^(\d{3}\.\d{3}\.\d{3})(\d)/, '$1-$2');
@@ -54,6 +51,7 @@ function cnaeLabel(value) {
 }
 
 function validDocument(type, value) {
+  if (type === 'caepf') return validCaepf(digits(value));
   const format = type === 'pf' ? /^\d{11}$/ : /^[A-Z0-9]{12}\d{2}$/;
   if (!format.test(value) || /^(\d)\1+$/.test(value)) return false;
   function checkDigit(base) {
@@ -138,13 +136,17 @@ export function renderClientProfile(target, client, { modules = CLIENT_MODULES }
   target.replaceChildren();
   if (!client) return;
   const details = el('dl', 'client-wizard-record');
-  const type = client.type === 'pf' ? 'Pessoa física' : 'Pessoa jurídica';
+  const type = {pj: 'Pessoa jurídica', pf: 'Pessoa física', caepf: 'Atividade econômica da pessoa física (CAEPF)'}[client.type];
   const enabledModules = modules.filter(({ id }) => client.modules?.includes(id)).map(({ label }) => label);
   appendDetails(details, [
-    ['Tipo de cliente', type], ['Apelido', client.nickname], ['Nome fantasia', client.tradeName],
-    [client.type === 'pf' ? 'Nome completo' : 'Razão social', client.legalName],
+    ['Tipo de cliente', type], ['ID Empresa (código)', client.code || '999'], ['Grupo de empresas', client.groupName],
+    ['Ativa', client.active ? 'Sim' : 'Não'], ['Apelido e-Contínuo', client.nickname], ['Nome fantasia', client.tradeName],
+    [client.type !== 'pj' ? 'Nome completo' : 'Razão social', client.legalName],
     ['Estado', states.get(client.state) || client.state], ['Regime tributário', regimes.get(client.taxRegime)],
-    ['CNAE principal', cnaeLabel(client.cnae)],
+    ['CNAE principal', cnaeLabel(client.cnae)], ['Endereço', [client.street, client.streetNumber].filter(Boolean).join(', ')],
+    ['Complemento', client.complement], ['CEP', client.postalCode], ['Bairro', client.district], ['Cidade', client.city],
+    ['NIRE', client.nire], ['Fones', client.phones?.join(' · ')], ['Website da empresa', client.website],
+    ['Empresa isenta', client.registrationExempt == null ? '' : client.registrationExempt ? 'Sim' : 'Não'],
     ['Inscrições estaduais', (client.stateRegistrations || []).map(({ number, state }) => [number, state].filter(Boolean).join(' · ')).join(', ')],
     ['Inscrições municipais', (client.municipalRegistrations || []).map(({ number, municipality }) => [number, municipality].filter(Boolean).join(' · ')).join(', ')],
     ['Certificado A1', client.certificate?.fileName || 'Não cadastrado'],
@@ -326,7 +328,8 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
   const company = personTypeChoice('pj', 'Pessoa Jurídica', 'buildings');
   const person = personTypeChoice('pf', 'Pessoa Física', 'person');
   const types = el('div', 'client-wizard-type-choices');
-  types.append(company.card, person.card);
+  const economicActivity = personTypeChoice('caepf', 'CAEPF', 'briefcase');
+  types.append(company.card, person.card, economicActivity.card);
   selection.append(types);
 
   const identity = el('div', 'client-wizard-fields');
@@ -334,7 +337,7 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
   documentInput.autocomplete = 'off';
   documentInput.spellcheck = false;
   const documentField = field('CNPJ da empresa *', documentInput);
-  const code = input('code', { placeholder: '999', maxLength: 24 });
+  const code = input('code', { placeholder: '999', length: 24 });
   const nickname = input('nickname', { required: true, placeholder: 'Apelido' });
   const tradeName = input('tradeName', { placeholder: 'Nome fantasia' });
   const legalName = input('legalName', { placeholder: 'Razão social' });
@@ -348,10 +351,58 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
   cnae.inputMode = 'numeric';
   const cnaeField = field('CNAE principal', cnae);
   const tradeField = field('Nome fantasia', tradeName);
-  identity.append(documentField, field('Código', code), field('Apelido *', nickname), tradeField, legalField, field('Estado *', state), taxField, cnaeField);
-  const status = select([['true', 'Ativo'], ['false', 'Inativo']]);
-  const statusField = field('Status do cliente', status);
+  const groupName = input('groupName', {length: 120, placeholder: 'Selecione ou digite um grupo'});
+  const groupList = el('datalist');
+  groupList.id = 'client-company-groups';
+  groupName.setAttribute('list', groupList.id);
+  const groupImport = el('details', 'client-wizard-registration-section');
+  const groupText = el('textarea');
+  groupText.rows = 4;
+  const importAction = button('Importar grupos');
+  const importResult = el('p', 'client-wizard-note');
+  importResult.setAttribute('role', 'status');
+  groupImport.append(el('summary', '', 'Importar grupos de empresas'), field('Nomes dos grupos, separados por linha ou tabulação', groupText), importAction, importResult);
+  function setGroups(names) {
+    groupList.replaceChildren(...names.map(name => new Option(name, name)));
+  }
+  importAction.onclick = async () => {
+    const names = groupText.value.split(/[\r\n\t]+/).map(name => name.trim()).filter(Boolean);
+    if (!names.length) { importResult.textContent = 'Informe ao menos um grupo.'; return; }
+    const version = accessVersion;
+    importAction.disabled = true;
+    try {
+      const result = await request('/clients/groups', {method: 'POST', body: {groups: names}});
+      if (!isCurrent(version)) return;
+      setGroups(result.groups);
+      groupText.value = '';
+      importResult.textContent = 'Grupos disponíveis no cadastro.';
+    } catch (error) { if (isCurrent(version)) importResult.textContent = error.message; }
+    finally { importAction.disabled = false; }
+  };
+  identity.append(documentField, field('ID Empresa (código)', code), legalField, tradeField, field('Apelido e-Contínuo *', nickname),
+    field('Grupo de empresas', groupName), groupList, field('UF *', state), taxField, cnaeField);
+  const status = select([['true', 'Sim'], ['false', 'Não']]);
+  const statusField = field('Ativa?', status);
   identity.append(statusField);
+
+  const addressDetails = el('details', 'client-wizard-registration-section');
+  const addressGrid = el('div', 'client-wizard-fields');
+  const extra = {};
+  const registrationLabels = [
+    ['street','Endereço',180], ['streetNumber','Número',24], ['complement','Complemento',120],
+    ['postalCode','CEP',9], ['district','Bairro',100], ['city','Cidade',100],
+    ['nire','NIRE',24], ['phones','Fones (separados por vírgula)',260], ['website','Website da empresa',500],
+  ];
+  for (const [key,label,length] of registrationLabels) {
+    const control = input(key, {length, type:key === 'website' ? 'url' : 'text'});
+    if (key === 'postalCode') { control.placeholder = '00000-000'; control.inputMode = 'numeric'; }
+    if (key === 'website') control.placeholder = 'https://';
+    extra[key] = control;
+    addressGrid.append(field(label, control));
+  }
+  const exempt = select([['','Não informado'],['true','Sim'],['false','Não']]);
+  addressGrid.append(field('Empresa isenta', exempt));
+  addressDetails.append(el('summary', '', 'Endereço e dados complementares'), addressGrid);
 
   const stateRegistrations = repeatedSection({
     title: 'Inscrição estadual', empty: 'Nenhuma inscrição estadual adicionada. Clique em “Inscrição estadual” para adicionar.',
@@ -393,7 +444,7 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
       };
     },
   });
-  panels[0].append(selection, el('p', 'client-wizard-required', '* Campos obrigatórios'), identity,
+  panels[0].append(selection, el('p', 'client-wizard-required', '* Campos obrigatórios'), identity, groupImport, addressDetails,
     stateRegistrations.group, municipalRegistrations.group, contacts.group);
 
   const currentCertificate = el('div', 'client-wizard-summary');
@@ -481,8 +532,9 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
   let accessMode = false;
   let accessVersion = 0;
   let opener;
-  const selectedType = () => person.control.checked ? 'pf' : 'pj';
-  const currentDocument = () => documentValue(selectedType(), documentInput.value);
+  const selectedType = () => economicActivity.control.checked ? 'caepf' : person.control.checked ? 'pf' : 'pj';
+  const currentDocument = () => selectedType() === 'caepf'
+    ? formatCaepf(digits(documentInput.value)) : documentValue(selectedType(), documentInput.value);
   const stepAction = () => step < steps.length - 1 ? 'Continuar' : client ? 'Salvar alterações' : 'Salvar cliente';
   const isCurrent = version => dialog.open && version === accessVersion;
 
@@ -492,15 +544,16 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
   }
 
   function updateType({ clearDocument = false } = {}) {
-    const pf = selectedType() === 'pf';
+    const pf = selectedType() !== 'pj';
+    const caepf = selectedType() === 'caepf';
     if (clearDocument) documentInput.value = '';
-    documentField.firstChild.textContent = pf ? 'CPF *' : 'CNPJ da empresa *';
-    documentInput.placeholder = pf ? '000.000.000-00' : '00.000.000/0000-00';
+    documentField.firstChild.textContent = caepf ? 'CAEPF *' : pf ? 'CPF *' : 'CNPJ da empresa *';
+    documentInput.placeholder = caepf ? '000.000.000/000-00' : pf ? '000.000.000-00' : '00.000.000/0000-00';
     documentInput.inputMode = pf ? 'numeric' : 'text';
     documentInput.autocapitalize = pf ? 'off' : 'characters';
-    documentInput.maxLength = pf ? 14 : 18;
+    documentInput.maxLength = pf && !caepf ? 14 : 18;
     replaceValue(documentInput, clientDocumentLabel(selectedType(), documentInput.value));
-    tradeField.hidden = taxField.hidden = cnaeField.hidden = pf;
+    tradeField.hidden = cnaeField.hidden = pf;
     legalField.firstChild.textContent = pf ? 'Nome completo *' : 'Razão social';
     legalName.placeholder = pf ? 'Nome completo' : 'Razão social';
     legalName.required = pf;
@@ -561,7 +614,7 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
     refs.back.hidden = step === 0;
     refs.next.textContent = stepAction();
     login.value = currentDocument();
-    accessNote.textContent = client
+    accessNote.textContent = status.value === 'false' ? 'O acesso ao portal fica desativado enquanto a empresa estiver inativa.' : client
       ? 'A situação da senha e a geração de um novo código ficam em “Dados de acesso” na ficha do cliente.'
       : 'O código de ativação é gerado ao salvar. Ele é exibido uma vez e deve ser entregue ao cliente para que defina a própria senha.';
     showError();
@@ -592,9 +645,10 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
     removedCertificate = false;
     certificateConfigured = undefined;
     resetCertificateVerification();
-    company.control.checked = record?.type !== 'pf';
+    company.control.checked = !record || record.type === 'pj';
+    economicActivity.control.checked = record?.type === 'caepf';
     person.control.checked = record?.type === 'pf';
-    company.control.disabled = person.control.disabled = Boolean(record);
+    company.control.disabled = person.control.disabled = economicActivity.control.disabled = Boolean(record);
     documentInput.value = record?.document || record?.cnpj || '';
     documentInput.readOnly = Boolean(record);
     code.value = record?.code || '';
@@ -605,7 +659,12 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
     taxRegime.value = record?.taxRegime || '';
     cnae.value = cnaeLabel(record?.cnae);
     status.value = String(record?.active !== false);
-    statusField.hidden = !record;
+    groupName.value = record?.groupName || '';
+    for (const [key,control] of Object.entries(extra)) control.value = key === 'phones' ? (record?.phones || []).join(', ') : record?.[key] || '';
+    exempt.value = record?.registrationExempt == null ? '' : String(record.registrationExempt);
+    groupImport.open = addressDetails.open = false;
+    groupText.value = importResult.textContent = '';
+    setGroups([]);
     stateRegistrations.set(record?.stateRegistrations);
     municipalRegistrations.set(record?.municipalRegistrations);
     contacts.set(record?.contacts);
@@ -621,6 +680,9 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
     dialog.showModal();
     panels[0].querySelector('h3').focus({ preventScroll: true });
     const version = accessVersion;
+    void request('/clients/groups').then(result => {
+      if (isCurrent(version)) setGroups(result.groups);
+    }).catch(error => { if (isCurrent(version)) importResult.textContent = error.message; });
     void request('/clients/config').then(result => {
       if (!isCurrent(version) || accessMode) return;
       certificateConfigured = result.certificateUploadConfigured;
@@ -635,11 +697,16 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
   function validateIdentity() {
     const type = selectedType();
     if (!validDocument(type, currentDocument())) {
-      return showControlError(documentInput, type === 'pf' ? 'Informe um CPF válido.' : 'Informe um CNPJ válido.');
+      return showControlError(documentInput, type === 'caepf' ? 'Informe um CAEPF válido.' : type === 'pf' ? 'Informe um CPF válido.' : 'Informe um CNPJ válido.');
     }
     if (!nickname.value.trim()) return showControlError(nickname, 'Informe o apelido.');
-    if (type === 'pf' && !legalName.value.trim()) return showControlError(legalName, 'Informe o nome completo.');
+    if (type !== 'pj' && !legalName.value.trim()) return showControlError(legalName, 'Informe o nome completo.');
     if (!state.reportValidity()) return false;
+    if (extra.postalCode.value.trim() && !/^\d{5}-?\d{3}$/.test(extra.postalCode.value.trim())) {
+      addressDetails.open = true;
+      return showControlError(extra.postalCode, 'Informe um CEP de oito dígitos.');
+    }
+    if (!extra.website.validity.valid) { addressDetails.open = true; return extra.website.reportValidity(); }
     if (!cnaeField.hidden && cnae.value && digits(cnae.value).length !== 7) {
       return showControlError(cnae, 'Digite os 7 dígitos do CNAE.');
     }
@@ -739,7 +806,10 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
     const body = {
       type, document: currentDocument(), code: code.value.trim(), nickname: nickname.value.trim(),
       tradeName: type === 'pj' ? tradeName.value.trim() : '', legalName: legalName.value.trim(),
-      state: state.value, taxRegime: type === 'pj' ? taxRegime.value : '', cnae: type === 'pj' ? digits(cnae.value) : '',
+      ...Object.fromEntries(Object.entries(extra).map(([key, control]) => [key, control.value.trim()])),
+      phones: extra.phones.value.split(/[,;\n]/).map(phone => phone.trim()).filter(Boolean),
+      groupName: groupName.value.trim(), registrationExempt: exempt.value === '' ? null : exempt.value === 'true',
+      state: state.value, taxRegime: taxRegime.value, cnae: type === 'pj' ? digits(cnae.value) : '',
       stateRegistrations: stateRegistrations.values(), municipalRegistrations: municipalRegistrations.values(),
       contacts: contacts.values(), modules: moduleInputs.filter(module => module.checked).map(module => module.value),
       consumerSchedule: consumer.value(), invoiceSchedule: invoice.value(), serviceInvoiceSchedule: serviceInvoice.value(), active: status.value === 'true',
@@ -971,6 +1041,7 @@ export function mountClientWizard({ request, modules = CLIENT_MODULES, onSaved, 
     if (!saving) close();
   });
   company.control.addEventListener('change', () => updateType({ clearDocument: true }));
+  economicActivity.control.addEventListener('change', () => updateType({ clearDocument: true }));
   person.control.addEventListener('change', () => updateType({ clearDocument: true }));
   documentInput.addEventListener('input', () => updateType());
   cnae.addEventListener('input', () => replaceValue(cnae, cnaeLabel(cnae.value)));

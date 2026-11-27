@@ -29,8 +29,9 @@
           <button id="clientRetry" class="button button-quiet" type="button" hidden>Tentar novamente</button>
           <form id="clientLogin" method="post" action="/v1/client/login" hidden>
             <div class="field">
-              <label for="clientUsername">CPF ou CNPJ</label>
-              <input id="clientUsername" name="username" type="text" required autocomplete="username" autocapitalize="characters" spellcheck="false" maxlength="18" placeholder="Sem pontos, barras ou traços">
+              <label for="clientUsername">CNPJ, CPF ou CAEPF</label>
+              <input id="clientUsername" name="username" type="text" required autocomplete="username" autocapitalize="characters" spellcheck="false" maxlength="18" aria-describedby="clientDocumentHelp">
+              <small id="clientDocumentHelp">Para CAEPF, inclua os pontos, a barra e o traço.</small>
             </div>
             <div class="field">
               <label for="clientPassword">Senha ou código temporário</label>

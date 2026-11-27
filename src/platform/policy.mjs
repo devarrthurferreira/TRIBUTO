@@ -13,7 +13,7 @@ const MODULE_ACTIONS = Object.freeze({
 const FISCAL_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, fiscalDocumentsRead: 'view' });
 const MARKETING_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, marketingCrmRead: 'edit', marketingCrmManage: 'edit' });
 const RH_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, clubMoodRead: 'manage' });
-const TECHNOLOGY_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, smtpManage: 'manage' });
+const TECHNOLOGY_ACTIONS = Object.freeze({ ...MODULE_ACTIONS, smtpManage: 'manage', clientAppManage: 'manage' });
 const DOSSIER_MODULES = Object.freeze(['sucesso-do-cliente', 'diretoria']);
 const DOSSIER_ACTIONS = Object.freeze({
   dossierRead: 'view', dossierCreate: 'edit', dossierLink: 'edit',

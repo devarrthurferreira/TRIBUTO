@@ -428,7 +428,7 @@ test('Tecnologia aceita demandas internas e aplica bloqueios por ação', async 
   assert.equal(loggedIn.body.permissions.tecnologia, 'edit');
   assert.deepEqual(loggedIn.body.capabilities.tecnologia, {
     workItemRead: true, workItemCreate: true, workItemUpdate: false,
-    sectorTalkRead: true, sectorTalkSend: true, whatsappRead: true, whatsappReply: true, whatsappTicketUpdate: true, smtpManage: false
+    sectorTalkRead: true, sectorTalkSend: true, whatsappRead: true, whatsappReply: true, whatsappTicketUpdate: true, smtpManage: false, clientAppManage: false
   });
 
   const requestItem = (access, item) => request(url, `${path}/work-items`, { method: 'POST', ...access, data: item });
@@ -455,7 +455,7 @@ test('Tecnologia aceita demandas internas e aplica bloqueios por ação', async 
   const refreshed = await request(url, `${path}/session`, member);
   assert.deepEqual(refreshed.body.capabilities.tecnologia, {
     workItemRead: false, workItemCreate: false, workItemUpdate: false,
-    sectorTalkRead: false, sectorTalkSend: false, whatsappRead: false, whatsappReply: false, whatsappTicketUpdate: false, smtpManage: true
+    sectorTalkRead: false, sectorTalkSend: false, whatsappRead: false, whatsappReply: false, whatsappTicketUpdate: false, smtpManage: true, clientAppManage: true
   });
   assert.equal((await request(url, `${path}/work-items?module=tecnologia`, member)).status, 403);
   assert.deepEqual((await request(url, `${path}/work-items`, member)).body.items, []);

@@ -15,6 +15,7 @@ import { MAXHUB_PATH, isMaxHubPath, legacyMaxHubUrl, mountMaxHub } from './maxhu
 import { profileTrigger, appendPersonName } from './person-name.js';
 import { mountClientWizard, renderClientProfile } from './client-wizard.js';
 import { mountDossierAdmin } from './dossier.js';
+import { mountTechClientApp } from './tech-client.js';
 import { mountSmtpNotifications } from './smtp-notifications.js';
 
 const API = '/v1/platform';
@@ -73,6 +74,7 @@ const actionLabels = {
   dossierLink: 'Gerar e revogar links de dossiê',
   dossierFeesRead: 'Visualizar honorários',
   dossierFees: 'Gerenciar e enviar honorários',
+  clientAppManage: 'Gerenciar o APP Cliente e os acessos das empresas',
   smtpManage: 'Configurar e verificar o SMTP',
 };
 const actionDependencies = {
@@ -82,7 +84,7 @@ const actionDependencies = {
   dossierCreate: 'dossierRead', dossierLink: 'dossierRead', dossierFeesRead: 'dossierRead', dossierFees: 'dossierFeesRead',
 };
 const editLevelActions = new Set(['workItemCreate', 'workItemUpdate', 'whatsappReply', 'whatsappTicketUpdate', 'marketingCrmRead', 'marketingCrmManage', 'dossierCreate', 'dossierLink', 'dossierFees']);
-const manageLevelActions = new Set(['clubMoodRead', 'smtpManage']);
+const manageLevelActions = new Set(['clubMoodRead', 'smtpManage', 'clientAppManage']);
 const taskStatusLabels = { open: 'Aberta', in_progress: 'Em andamento', done: 'Concluída' };
 const state = { session: null, view: 'overview', companies: [], clients: null, users: [], agents: [], selectedCompanyCnpj: null, nfsePage: 1, nfseHasMore: false, nfseRequest: 0 };
 
@@ -248,6 +250,9 @@ function showSectorSummary(sector, panel) {
       cards.append(summaryCard('Documentos recentes', documents.length, 'Até 50 registros recebidos pela API'));
       if (groups.size) charts.append(summaryChart('Documentos por fonte', [...groups].map(([label, value]) => [label, value, 'primary']), 'Amostra dos 50 registros mais recentes'));
     });
+  }
+  if (id === 'tecnologia' && allowed('clientAppManage')) {
+    addShortcut('APP Cliente', () => sectorNavigation.selectPanel('app-cliente'));
   }
   if (id === 'tecnologia' && allowed('smtpManage')) {
     addShortcut('Notificações e envios', () => sectorNavigation.selectPanel('notifications'));
@@ -463,7 +468,7 @@ function preservePortalLink(query = new URLSearchParams(location.search)) {
   return isMaxHubPath(location.pathname) || Boolean(clubPageFromPath(location.pathname)) || isRhMoodLink(query)
     || (location.pathname.startsWith(SECTOR_PREFIX) && panel === 'dossier'
       && Object.hasOwn(dossierWorkspaces, location.pathname.slice(SECTOR_PREFIX.length)))
-    || (location.pathname === `${SECTOR_PREFIX}tecnologia` && panel === 'notifications');
+    || (location.pathname === `${SECTOR_PREFIX}tecnologia` && ['notifications', 'app-cliente'].includes(panel));
 }
 
 function showAuth(setupRequired, message = '', preserveRoute = false) {
@@ -471,6 +476,7 @@ function showAuth(setupRequired, message = '', preserveRoute = false) {
   club.close();
   maxhub.close();
   destroyChat();
+  closeTechClientApp();
   sectorNavigation.leave();
   updateChatBadges();
   state.session = null;
@@ -700,6 +706,7 @@ function navigate(view, { replace = false } = {}) {
   if (`${location.pathname}${location.hash}` !== targetUrl) history.replaceState(null, '', targetUrl);
   closeMenu();
   const sector = allModules.find(({ id }) => id === state.view);
+  if (sector?.id !== 'tecnologia') closeTechClientApp();
   const surface = sectorNavigation.activate(sector ? {
     id: sector.id, label: sector.label, session: state.session, admin: isAdmin(),
     content: $(`view-${sector.id}`), activities: canUse(sector.id, 'workItemRead'),
@@ -707,6 +714,7 @@ function navigate(view, { replace = false } = {}) {
     clubMood: sector.id === 'rh' && canUse('rh', 'clubMoodRead'),
     fiscalDocuments: sector.id === 'fiscal' && canUse('fiscal', 'fiscalDocumentsRead'),
     dossier: Object.hasOwn(dossierWorkspaces, sector.id) && canUse(sector.id, 'dossierRead'),
+    clientApp: sector.id === 'tecnologia' && canUse('tecnologia', 'clientAppManage'),
     notifications: sector.id === 'tecnologia' && canUse('tecnologia', 'smtpManage'),
     talk: canUse(sector.id, 'sectorTalkRead'), whatsapp: canUse(sector.id, 'whatsappRead'),
     onPanelChange: panel => {
@@ -742,6 +750,12 @@ function syncProfileAvatar(profile) {
 
 let dossierCleanup;
 let smtpWorkspace;
+let cleanupTechClientApp;
+function closeTechClientApp() {
+  cleanupTechClientApp?.();
+  cleanupTechClientApp = undefined;
+  $('technologyClientApp').hidden = true;
+}
 
 function showDossierPanel(module, panel) {
   const { heading, shortcut, root: rootId, label } = dossierWorkspaces[module];
@@ -781,7 +795,14 @@ function showCustomerSuccessPanel(panel) {
 function showTechnologyPanel(panel) {
   const active = panel === 'notifications' && canUse('tecnologia', 'smtpManage');
   const overview = panel === 'overview';
-  $('technologyHeading').hidden = active;
+  const appOpen = panel === 'app-cliente' && canUse('tecnologia', 'clientAppManage');
+  if (appOpen) {
+    const appRoot = $('technologyClientApp');
+    appRoot.hidden = false;
+    document.title = 'APP Cliente | Tecnologia';
+    cleanupTechClientApp ??= mountTechClientApp(appRoot, {request, openAccess: client => clientWizard.openAccess(client)});
+  } else closeTechClientApp();
+  $('technologyHeading').hidden = active || appOpen;
   $('technologyOverview').hidden = !overview || !canUse('tecnologia', 'workItemRead');
   $('technologyRestricted').hidden = !overview || canUse('tecnologia', 'workItemRead');
   $('smtpShortcut').hidden = !overview || !canUse('tecnologia', 'smtpManage');
@@ -1037,6 +1058,9 @@ async function loadCompanies() {
   fillAgentCompanyOptions();
   for (const select of document.querySelectorAll('.work-company-filter')) fillCompanySelect(select, true);
 }
+function clientDocumentKind(client) {
+  return ({pf:'CPF', caepf:'CAEPF', pj:'CNPJ'})[client?.type] || 'Documento';
+}
 function clientDocumentLabel(document) {
   const value = String(document || '');
   return value.length === 11
@@ -1044,7 +1068,7 @@ function clientDocumentLabel(document) {
     : value.replace(/^([A-Z0-9]{2})([A-Z0-9]{3})([A-Z0-9]{3})([A-Z0-9]{4})(\d{2})$/, '$1.$2.$3/$4-$5');
 }
 function fiscalCnpj(client) {
-  return /^\d{14}$/.test(client?.document ?? '') ? client.document : null;
+  return client?.type === 'pj' && /^\d{14}$/.test(client.document) ? client.document : null;
 }
 function normalizedClientSearch(value = '') {
   return value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
@@ -1075,7 +1099,7 @@ function renderCompanies() {
   const text = normalizedClientSearch($('companySearch').value.trim());
   const document = text.replace(/[.\s/-]/g, '');
   const clients = base.filter(client => [client.name, client.nickname, client.legalName, client.tradeName].some(name =>
-    normalizedClientSearch(name || '').includes(text)) || String(client.code || '999').includes(text) || (document && client.document.toLowerCase().includes(document)));
+    normalizedClientSearch(name || '').includes(text)) || String(client.code || '999').includes(text) || (document && client.document.toLowerCase().replace(/[.\s/-]/g, '').includes(document)));
   const direction = $('companyOrder').value === 'desc' ? -1 : 1;
   clients.sort((a, b) => direction * a.name.localeCompare(b.name, 'pt-BR', { numeric: true, sensitivity: 'base' }));
   $('companiesCount').textContent = `${clients.length} ${base.length === 1 ? 'cliente' : 'clientes'}`;
@@ -1087,7 +1111,7 @@ function renderCompanies() {
     const row = node('div', 'list-row');
     const main = node('div', 'list-row-main');
     const info = node('div');
-    info.append(node('strong', '', client.name), node('small', '', `${client.type === 'pf' ? 'CPF' : 'CNPJ'} ${clientDocumentLabel(client.document)}`));
+    info.append(node('strong', '', client.name), node('small', '', `${clientDocumentKind(client)} ${clientDocumentLabel(client.document)}`));
     main.append(node('span', 'company-code', client.code || '999'), info);
     const actions = node('div', 'company-row-actions');
     const status = client.active === false ? ['status-warning', 'Inativo'] : ['status-ok', 'Ativo'];
@@ -1127,7 +1151,7 @@ const clientIsVisible = (key) => isAdmin() && state.view === 'client-detail' && 
 
 function renderClientHeading(client) {
   const fiscal = fiscalCnpj(client);
-  const kind = client?.type === 'pf' ? 'CPF' : 'CNPJ';
+  const kind = clientDocumentKind(client);
   $('clientDetailTitle').textContent = client?.name || 'Ficha do cliente';
   $('clientDetailCnpj').textContent = client ? `${kind} ${clientDocumentLabel(client.document)}` : '';
   $('clientDetailCnpj').hidden = !client;
@@ -1355,7 +1379,7 @@ function renderUserGrants(user, target = $('userGrantOptions')) {
       if (action === 'clubMoodRead' && id !== 'rh') continue;
       if (action.startsWith('dossier') && !Object.hasOwn(dossierWorkspaces, id)) continue;
       if (action.startsWith('dossierFees') && id !== 'diretoria') continue;
-      if (action === 'smtpManage' && id !== 'tecnologia') continue;
+      if (['smtpManage', 'clientAppManage'].includes(action) && id !== 'tecnologia') continue;
       if (legacyModules.some(module => module.id === id) && /^(sectorTalk|whatsapp)/.test(action)) continue;
       const input = node('input');
       input.type = 'checkbox';

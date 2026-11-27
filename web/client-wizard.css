@@ -374,3 +374,8 @@
   @keyframes client-wizard-entry { from { transform: translateX(-100%); } to { transform: translateX(0); } }
   @keyframes client-wizard-panel-entry { from { opacity: .45; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 }
+
+.client-wizard-registration-section { margin-block: 12px; padding: 14px; border: 1px solid var(--portal-edge, #e7dcdf); border-radius: 10px; }
+.client-wizard-registration-section summary { cursor: pointer; font-weight: 600; }
+.client-wizard-registration-section[open] > :not(summary) { margin-top: 12px; }
+.client-wizard-registration-section textarea { width: 100%; resize: vertical; }

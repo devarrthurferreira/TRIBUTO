@@ -5,7 +5,7 @@ import { setWhatsAppNotification } from './portal.js';
 const get = (id) => document.getElementById(id);
 const areas = ['setor', 'talk', 'whatsapp'];
 const titles = { setor: 'Setor', talk: 'Talk', whatsapp: 'WhatsApp' };
-const icons = { overview: 'grid', activities: 'list-task', tasks: 'list-task', metrics: 'graph-up', crm: 'envelope', humor: 'graph-up', fiscal: 'receipt', users: 'people', agents: 'broadcast', dossier: 'folder2-open', notifications: 'envelope' };
+const icons = { 'app-cliente':'person-badge', overview: 'grid', activities: 'list-task', tasks: 'list-task', metrics: 'graph-up', crm: 'envelope', humor: 'graph-up', fiscal: 'receipt', users: 'people', agents: 'broadcast', dossier: 'folder2-open', notifications: 'envelope' };
 const crmSections = [
   { key: 'subscribers', slug: 'contatos', label: 'Contatos', icon: 'people' },
   { key: 'campaigns', slug: 'campanhas', label: 'Campanhas', icon: 'envelope' },
@@ -31,6 +31,7 @@ function activityPanel(sector) {
 
 function sectionOptions(sector) {
   const options = [{ id: 'overview', label: 'Visão geral' }];
+  if (sector.id === 'tecnologia' && sector.clientApp) options.push({id:'app-cliente', label:'APP Cliente', divider:true});
   if (sector.activities) options.push({ id: activityPanel(sector), label: activityPanel(sector) === 'tasks' ? 'Tarefas' : 'Atividades' });
   if (sector.id === 'marketing') {
     if (sector.activities) options.push({ id: 'metrics', label: 'Métricas' });
@@ -128,7 +129,8 @@ export function mountSectorNavigation() {
     const list = get('sectorSubnavList');
     get('sectorSubnavTitle').textContent = context.label;
     list.replaceChildren();
-    for (const { id, label, href } of sectionOptions(context)) {
+    for (const { id, label, href, divider } of sectionOptions(context)) {
+      if (divider) { const line = document.createElement('hr'); line.className = 'tech-app-divider'; list.append(line); }
       const control = document.createElement(href ? 'a' : 'button');
       control.className = 'sector-subnav-link';
       const icon = document.createElement('i');

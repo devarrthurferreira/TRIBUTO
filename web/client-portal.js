@@ -1,3 +1,5 @@
+import { CLIENT_REGIMES } from './client-registration.js';
+
 const $ = id => document.getElementById(id);
 const login = $('clientLogin');
 const change = $('clientChange');
@@ -9,10 +11,6 @@ const logout = $('clientLogout');
 const accountLogout = $('clientAccountLogout');
 const documentDate = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeZone: 'America/Sao_Paulo' });
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-const taxRegimes = {
-  'simples-nacional': 'Simples Nacional', mei: 'MEI', 'lucro-presumido': 'Lucro Presumido', 'lucro-real': 'Lucro Real',
-  'lucro-arbitrado': 'Lucro Arbitrado', 'imune-isenta': 'Imune ou isenta', outro: 'Outro',
-};
 const noteStatuses = { active: 'Ativa', cancelled: 'Cancelada', substituted: 'Substituída', unknown: 'Sem informação' };
 let session;
 let view;
@@ -53,7 +51,7 @@ function show(nextView, { focus = true, notice = '', error = '' } = {}) {
   const copy = {
     loading: ['Portal do Cliente', 'Verificando seu acesso…'],
     retry: ['Portal do Cliente', ''],
-    login: ['Entrar no portal', 'Use o CPF ou CNPJ do cadastro e sua senha ou código de primeiro acesso.'],
+    login: ['Entrar no portal', 'Use o CNPJ, CPF ou CAEPF do cadastro e sua senha ou código de primeiro acesso.'],
     activate: ['Definir sua primeira senha', 'Crie uma senha pessoal para acessar o portal.'],
     change: ['Alterar senha', 'Confirme sua senha atual e escolha uma nova senha.'],
     account: ['Seu acesso está ativo', 'Você está no Portal do Cliente Maximum.'],
@@ -131,9 +129,15 @@ function moduleGroup(title, ...content) {
 const empty = text => element('p', text, 'client-portal-empty');
 
 function organization(data) {
-  const fields = [['Apelido', data.nickname], [data.type === 'pf' ? 'Nome completo' : 'Razão social', data.legalName],
-    [data.type === 'pf' ? 'CPF' : 'CNPJ', data.document], ['Estado', data.state]];
-  if (data.type === 'pj') fields.splice(2, 0, ['Nome fantasia', data.tradeName]);
+  const fields = [
+    ['ID da empresa', data.code || '999'], [data.type === 'pf' ? 'Nome completo' : 'Razão social', data.legalName],
+    [{ pj: 'CNPJ', pf: 'CPF', caepf: 'CAEPF' }[data.type], data.document], ['Apelido e-Contínuo', data.nickname],
+    ['Grupo de empresas', data.groupName],
+  ];
+  if (data.type !== 'pf') fields.push(['Nome fantasia', data.tradeName]);
+  const address = [data.street, data.streetNumber, data.complement].filter(Boolean).join(', ');
+  fields.push(['Endereço', address], ['Bairro', data.district], ['Cidade / UF', [data.city, data.state].filter(Boolean).join(' / ')],
+    ['CEP', data.postalCode], ['Telefones', data.phones?.join(' · ')], ['Website', data.website]);
   const contacts = data.contacts.map(contact => fieldRows([
     ['Nome', contact.name], ['Cargo ou vínculo', contact.role], ['E-mail', contact.email], ['Telefone', contact.phone],
   ]));
@@ -145,6 +149,7 @@ function registrations(data) {
   const state = data.stateRegistrations.map(entry => fieldRows([['Número', entry.number], ['Estado', entry.state]]));
   const municipality = data.municipalRegistrations.map(entry => fieldRows([['Número', entry.number], ['Município', entry.municipality]]));
   return [
+    moduleGroup('Registro empresarial', fieldRows([['NIRE', data.nire], ['Empresa isenta', data.registrationExempt === true ? 'Sim' : data.registrationExempt === false ? 'Não' : null]])),
     moduleGroup('Inscrições estaduais', ...(state.length ? state : [empty('Nenhuma inscrição estadual cadastrada.')])),
     moduleGroup('Inscrições municipais', ...(municipality.length ? municipality : [empty('Nenhuma inscrição municipal cadastrada.')])),
   ];
@@ -177,20 +182,115 @@ function noteList(data, module) {
   const list = element('ul', '', 'client-portal-invoices');
   list.append(...invoices);
   const block = moduleGroup('Documentos coletados', invoices.length ? list : empty('Nenhum documento disponível nesta página.'));
-  if (data.page > 1 || data.hasMore) {
-    const pagination = element('div', '', 'client-portal-pagination');
-    const previous = element('button', 'Anterior', 'button button-quiet');
-    previous.type = 'button';
-    previous.disabled = data.page === 1;
-    previous.addEventListener('click', () => { void openModule(module, data.page - 1, true); });
-    const next = element('button', 'Próxima', 'button button-quiet');
-    next.type = 'button';
-    next.disabled = !data.hasMore;
-    next.addEventListener('click', () => { void openModule(module, data.page + 1, true); });
-    pagination.append(previous, element('span', 'Página ' + data.page), next);
-    block.append(pagination);
-  }
+  appendPagination(block, data, module);
   return [collection, block];
+}
+
+function appendPagination(block, data, module) {
+  if (data.page <= 1 && !data.hasMore) return;
+  const pagination = element('div', '', 'client-portal-pagination');
+  for (const [label, target, disabled] of [['Anterior', data.page - 1, data.page === 1], ['Próxima', data.page + 1, !data.hasMore]]) {
+    if (label === 'Próxima') pagination.append(element('span', 'Página ' + data.page));
+    const button = element('button', label, 'button button-quiet');
+    button.type = 'button';
+    button.disabled = disabled;
+    button.onclick = () => { void openModule(module, target, true); };
+    pagination.append(button);
+  }
+  block.append(pagination);
+}
+
+const workspaceLabels = { aberto: 'Em aberto', pago: 'Pago', cancelado: 'Cancelado', disponivel: 'Disponível',
+  recebido: 'Recebido', 'em-analise': 'Em análise', conferido: 'Conferido' };
+
+function uploadForm(module) {
+  const form = element('form', '', 'client-upload-form');
+  function addField(label, input) {
+    const field = element('label', label, 'field');
+    field.append(input);
+    form.append(field);
+    return input;
+  }
+  const file = addField('Arquivo', element('input'));
+  file.type = 'file'; file.required = true;
+  file.accept = '.pdf,.docx,.xlsx,.csv,.txt,.png,.jpg,.jpeg,.webp';
+  const help = element('small', 'PDF, Word (.docx), Excel (.xlsx), CSV, TXT ou imagem PNG, JPEG ou WebP. Até 2 MB por envio.');
+  file.after(help);
+  const title = addField('Título (opcional)', element('input'));
+  title.maxLength = 160;
+  const competence = addField('Competência (opcional)', element('input'));
+  competence.type = 'month';
+  const description = addField('Observações (opcional)', element('textarea'));
+  description.maxLength = 2000; description.rows = 2;
+  const send = element('button', 'Enviar documento', 'button button-primary');
+  send.type = 'submit';
+  const message = element('p'); message.setAttribute('role','status');
+  form.append(send, message);
+  form.onsubmit = async event => {
+    event.preventDefault();
+    if (send.disabled) return;
+    const document = file.files[0];
+    if (!document?.size || document.size > 2 * 1024 * 1024) {
+      message.textContent = 'Escolha um arquivo de até 2 MB.'; return;
+    }
+    send.disabled = true;
+    message.textContent = 'Enviando documento…';
+    const version = moduleVersion;
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = () => reject(new Error('Não foi possível ler o arquivo.'));
+        reader.readAsDataURL(document);
+      });
+      if (version !== moduleVersion) return;
+      await request('modules/documentos', { title: title.value.trim() || document.name.slice(0,160),
+        competence: competence.value, description: description.value, file: { name: document.name, base64 } });
+      if (version !== moduleVersion) return;
+      await openModule(module, 1, false, 'Documento enviado à Maximum.');
+    } catch (error) {
+      if (version !== moduleVersion) return;
+      if (error.code === 'CLIENT_MODULE_FORBIDDEN') await refreshAfterPermissionChange(version, error.message);
+      else if (error.status === 401) present(error);
+      else message.textContent = error.message;
+    } finally { send.disabled = false; }
+  };
+  return moduleGroup('Enviar documentação', form);
+}
+
+function workspaceList(module, data) {
+  const isDocument = module.id === 'documentos';
+  const list = element('ul', '', 'client-portal-invoices');
+  for (const item of data.items) {
+    const row = element('li', '', 'client-portal-invoice');
+    const header = element('div', '', 'client-entry-heading');
+    const badge = element('span', workspaceLabels[item.status] || item.status, 'client-entry-status');
+    badge.dataset.status = item.status;
+    header.append(element('h3', item.title), badge);
+    row.append(header);
+    if (item.description) row.append(element('p', item.description, 'client-entry-description'));
+    const summary = [];
+    if (item.competence) summary.push(['Competência', item.competence.slice(5) + '/' + item.competence.slice(0, 4)]);
+    if (isDocument) {
+      summary.push(['Enviado por', item.origin === 'cliente' ? 'Sua empresa' : 'Maximum'], ['Data de envio', documentDate.format(new Date(item.createdAt))]);
+    } else {
+      summary.push(['Vencimento', item.dueDate?.split('-').reverse().join('/')], ['Valor', amountLabel(item.amountCents)]);
+    }
+    row.append(fieldRows(summary));
+    if (item.filename) {
+      const download = element('a', 'Baixar ' + item.filename, 'client-file-download');
+      download.href = '/v1/client/modules/' + module.id + '/' + encodeURIComponent(item.id) + '/arquivo';
+      download.download = item.filename;
+      row.append(download);
+    }
+    list.append(row);
+  }
+  const titles = { guias: 'Guias disponíveis', financeiro: 'Lançamentos financeiros', documentos: 'Documentos da empresa' };
+  const noItems = { guias:'Nenhuma guia disponível nesta página.', financeiro:'Nenhum lançamento disponível nesta página.',
+    documentos:'Nenhum documento disponível nesta página.' };
+  const block = moduleGroup(titles[module.id], data.items.length ? list : empty(noItems[module.id]));
+  appendPagination(block, data, module);
+  return isDocument ? [uploadForm(module), block] : [block];
 }
 
 function renderModule(module, data) {
@@ -198,12 +298,13 @@ function renderModule(module, data) {
   if (module.id === 'societario') return registrations(data);
   if (module.id === 'contabil') {
     const cnae = data.cnae?.replace(/^(\d{2})(\d{2})(\d)(\d{2})$/, '$1.$2-$3/$4');
-    return [moduleGroup('Enquadramento', fieldRows([['Regime tributário', taxRegimes[data.taxRegime]], ['CNAE principal', cnae]]))];
+    return [moduleGroup('Enquadramento', fieldRows([['Regime tributário', CLIENT_REGIMES.get(data.taxRegime)], ['CNAE principal', cnae]]))];
   }
+  if (['guias', 'financeiro', 'documentos'].includes(module.id)) return workspaceList(module, data);
   return noteList(data, module);
 }
 
-async function openModule(module, page, focus) {
+async function openModule(module, page, focus, notice = '') {
   const version = ++moduleVersion;
   $('clientOverview').hidden = true;
   $('clientModule').hidden = false;
@@ -217,7 +318,7 @@ async function openModule(module, page, focus) {
     const { data } = await request('modules/' + module.id + (page > 1 ? '?page=' + page : ''));
     if (version !== moduleVersion) return;
     $('clientModuleData').replaceChildren(...renderModule(module, data));
-    feedback('clientModuleStatus', '');
+    feedback('clientModuleStatus', notice);
   } catch (error) {
     if (version !== moduleVersion) return;
     feedback('clientModuleStatus', '');
