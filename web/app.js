@@ -85,6 +85,187 @@ const manageLevelActions = new Set(['clubMoodRead', 'smtpManage']);
 const taskStatusLabels = { open: 'Aberta', in_progress: 'Em andamento', done: 'Concluída' };
 const state = { session: null, view: 'overview', companies: [], clients: null, users: [], agents: [], selectedCompanyCnpj: null, nfsePage: 1, nfseHasMore: false, nfseRequest: 0 };
 
+
+let sectorSummaryVersion = 0;
+const summaryNumber = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 });
+function summaryValue(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? summaryNumber.format(value) : typeof value === 'string' ? value : '—';
+}
+function summaryDay(date = new Date()) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date).map(({type, value}) => [type, value]));
+  return [p.year, p.month, p.day].join('-');
+}
+function summaryDate(value) {
+  if (!value) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : summaryDay(date);
+}
+function summaryButton(label, handler, className = 'button button-quiet') {
+  const button = node('button', className, label);
+  button.type = 'button';
+  button.addEventListener('click', handler);
+  return button;
+}
+function summaryCard(title, value, note) {
+  const card = node('article', 'so-stat');
+  card.append(node('span', '', title), node('strong', '', summaryValue(value)), node('small', '', note));
+  return card;
+}
+function summaryChart(title, rows, note = '', max = null) {
+  const card = node('article', 'so-card');
+  card.append(node('h3', '', title));
+  const ceiling = max || Math.max(1, ...rows.map(row => Number(row[1]) || 0));
+  for (const [label, value, tone] of rows) {
+    const line = node('div', 'so-chart-row');
+    const text = node('div', 'so-chart-label');
+    text.append(node('span', '', label), node('strong', '', summaryValue(value)));
+    const bar = node('progress', 'so-bar');
+    bar.dataset.tone = tone || 'primary';
+    bar.max = ceiling;
+    bar.value = Math.max(0, Number(value) || 0);
+    bar.setAttribute('aria-label', label + ': ' + summaryValue(value));
+    line.append(text, bar);
+    card.append(line);
+  }
+  if (note) card.append(node('small', 'so-note', note));
+  return card;
+}
+async function summaryPages(path, key, limit = 20) {
+  const result = new Map();
+  let partial = false;
+  for (let page = 1; page <= limit; page++) {
+    const data = await request(path + (path.includes('?') ? '&' : '?') + 'page=' + page);
+    for (const [index, item] of (data[key] || []).entries()) result.set(item.id || item.documentKey || page + ':' + index, item);
+    partial = data.hasMore === true;
+    if (!partial) break;
+  }
+  return { items: [...result.values()], partial };
+}
+function showSectorSummary(sector, panel) {
+  const parent = $('view-' + sector.id);
+  let root = parent.querySelector(':scope > .sector-summary');
+  const version = ++sectorSummaryVersion;
+  if (panel !== 'overview' || !canView(sector.id)) {
+    if (root) { root.hidden = true; root.replaceChildren(); }
+    return;
+  }
+  if (!root) {
+    root = node('section', 'sector-summary');
+    root.setAttribute('aria-label', 'Visão geral de ' + sector.label);
+    parent.prepend(root);
+  }
+  root.hidden = false;
+  root.replaceChildren();
+  const hero = node('header', 'so-hero');
+  const heading = node('div');
+  heading.append(node('p', 'so-kicker', sector.label + ' / Visão geral'),
+    node('h2', '', 'Olá, ' + firstName(state.session?.user?.name) + '!'),
+    node('p', '', 'Acompanhe as entregas, indicadores e recursos disponíveis no seu setor.'));
+  const actions = node('div', 'so-hero-actions');
+  actions.append(node('span', '', new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Sao_Paulo' }).format(new Date())),
+    summaryButton('↻ Atualizar', () => showSectorSummary(sector, 'overview')));
+  hero.append(heading, actions);
+  const shortcuts = node('div', 'so-shortcuts');
+  const cards = node('div', 'so-stats');
+  const charts = node('div', 'so-charts');
+  const details = node('div', 'so-details');
+  const feedback = node('p', 'so-note', 'Consultando os dados do setor…');
+  feedback.setAttribute('role', 'status');
+  root.append(hero, shortcuts, cards, charts, details, feedback);
+  const id = sector.id;
+  const allowed = action => canUse(id, action);
+  const addShortcut = (label, action) => shortcuts.append(summaryButton(label + ' ↗', action, 'so-shortcut'));
+  const taskPanel = id === 'marketing' ? 'tasks' : 'activities';
+  if (allowed('workItemRead')) addShortcut(id === 'marketing' ? 'Tarefas' : 'Atividades', () => sectorNavigation.selectPanel(taskPanel));
+  if (allowed('sectorTalkRead')) addShortcut('Talk', () => sectorNavigation.open('talk'));
+  if (allowed('whatsappRead')) addShortcut('WhatsApp', () => sectorNavigation.open('whatsapp'));
+  const jobs = [];
+  const current = () => version === sectorSummaryVersion && state.view === id && canView(id) && !root.hidden && root.isConnected;
+  const job = (label, promise, render) => {
+    jobs.push(promise.then(data => { if (current()) render(data); }).catch(() => {
+      if (current()) details.append(node('p', 'so-note', label + ': não foi possível consultar os dados. Use Atualizar para tentar novamente.'));
+    }));
+  };
+  if (allowed('workItemRead')) job('Atividades', summaryPages('/work-items?module=' + encodeURIComponent(id), 'items'), ({items, partial}) => {
+    const today = summaryDay();
+    const open = items.filter(x => x.status === 'open').length;
+    const progress = items.filter(x => x.status === 'in_progress').length;
+    const done = items.filter(x => x.status === 'done').length;
+    const late = items.filter(x => x.status !== 'done' && summaryDate(x.dueAt) && summaryDate(x.dueAt) < today).length;
+    const note = partial ? 'Amostra: limite de 20 páginas' : 'Atividades retornadas pela API';
+    cards.prepend(summaryCard('A fazer', open, note), summaryCard('Em andamento', progress, note),
+      summaryCard('Concluídas', done, note), summaryCard('Em atraso', late, 'Prazo vencido • ' + note));
+    charts.prepend(summaryChart('Distribuição das atividades', [['A fazer', open, 'neutral'], ['Em andamento', progress, 'active'], ['Concluídas', done, 'done']], note, Math.max(1, open + progress + done)));
+    const days = Array.from({length: 7}, (_, i) => summaryDay(new Date(Date.now() - (6-i)*86400000)));
+    const rows = days.map(day => [day.slice(8) + '/' + day.slice(5,7), items.filter(x => summaryDate(x.createdAt) === day).length, 'primary']);
+    charts.append(summaryChart('Novas atividades · 7 dias', rows, note));
+    const upcoming = items.filter(x => x.status !== 'done').sort((a,b) => (a.dueAt || '9999').localeCompare(b.dueAt || '9999')).slice(0,5);
+    const recent = node('article','so-card so-recent');
+    recent.append(node('h3','','Próximos prazos'));
+    if (!upcoming.length) recent.append(node('p','so-note','Nenhuma pendência retornada.'));
+    for (const item of upcoming) {
+      const link = node('a','so-task-link');
+      link.href = '/setor/' + id + '?painel=' + taskPanel + '&atividade=' + encodeURIComponent(item.id);
+      link.append(node('strong','',item.title),node('span','',item.dueAt ? dateLabel(item.dueAt) : 'Sem prazo'));
+      recent.append(link);
+    }
+    details.prepend(recent);
+  });
+  if (id === 'marketing' && allowed('workItemRead')) {
+    addShortcut('Métricas', () => sectorNavigation.selectPanel('metrics'));
+    job('Métricas', summaryPages('/marketing/metrics','items'), ({items, partial}) => cards.append(summaryCard('Métricas de conteúdo', items.length, partial ? 'Amostra: até 20 páginas' : 'Registros disponíveis')));
+  }
+  if (id === 'marketing' && allowed('marketingCrmRead')) {
+    addShortcut('CRM', () => sectorNavigation.selectPanel('crm'));
+    job('CRM', request('/marketing/crm'), data => {
+      const totals = data.totals || {};
+      cards.append(summaryCard('Inscritos no CRM', totals.subscribed, 'Contatos inscritos'), summaryCard('Campanhas', totals.campaigns, 'CRM de Marketing'), summaryCard('Leads confirmados', totals.leads, 'CRM de Marketing'));
+    });
+  }
+  if (id === 'rh' && allowed('clubMoodRead')) {
+    addShortcut('Humor e presença', () => sectorNavigation.selectPanel('humor'));
+    job('Indicadores de RH', request('/club/check-in/rh?days=30'), data => {
+      const totals = data.totals || {};
+      cards.append(summaryCard('Check-ins', totals.checkIns, 'Últimos 30 dias'), summaryCard('Média de humor', totals.average, 'Escala de 1 a 5 • 30 dias'));
+      const rows = (data.trend || []).filter(day => day.average != null).slice(-7).map(day => [day.date.slice(8) + '/' + day.date.slice(5,7), day.average, 'active']);
+      if (rows.length) charts.append(summaryChart('Humor · últimos registros diários', rows, 'Apenas médias compartilhadas', 5));
+    });
+  }
+  if (Object.hasOwn(dossierWorkspaces,id) && allowed('dossierRead')) {
+    addShortcut('Dossiês', () => sectorNavigation.selectPanel('dossier'));
+    job('Dossiês', request('/dossiers?sector=' + encodeURIComponent(id) + '&page=1&limit=20'), data => {
+      cards.append(summaryCard('Dossiês ativos', Number.isFinite(data.total) ? data.total : (data.items || []).length, Number.isFinite(data.total) ? 'Carteira autorizada' : 'Registros da primeira página'));
+    });
+  }
+  if (id === 'fiscal' && allowed('fiscalDocumentsRead')) {
+    addShortcut('Documentos fiscais', () => sectorNavigation.selectPanel('fiscal'));
+    job('Documentos fiscais', request('/fiscal/documents?page=1&limit=50'), data => {
+      const documents = data.documents || [];
+      const groups = new Map();
+      for (const doc of documents) groups.set(doc.source || 'Outros', (groups.get(doc.source || 'Outros') || 0) + 1);
+      cards.append(summaryCard('Documentos recentes', documents.length, 'Até 50 registros recebidos pela API'));
+      if (groups.size) charts.append(summaryChart('Documentos por fonte', [...groups].map(([label, value]) => [label, value, 'primary']), 'Amostra dos 50 registros mais recentes'));
+    });
+  }
+  if (id === 'tecnologia' && allowed('smtpManage')) {
+    addShortcut('Notificações e envios', () => sectorNavigation.selectPanel('notifications'));
+    job('Fila de e-mails', request('/notifications/smtp'), data => {
+      const queue = data.queue || {};
+      const labels = [['Na fila','queued','neutral'],['Em envio','sending','active'],['Aceitos pelo SMTP','sent','done'],['Com falha','failed','late'],['A confirmar','uncertain','neutral']];
+      charts.append(summaryChart('Fila de notificações', labels.map(([label,key,tone]) => [label, Number(queue[key] || 0),tone]), 'Aceite pelo SMTP não confirma entrega final.'));
+    });
+  }
+  if (id === 'tecnologia' && isAdmin()) {
+    addShortcut('Equipe e acessos', () => navigate('users'));
+    addShortcut('Agentes de coleta', () => navigate('agents'));
+  }
+  if (!jobs.length) feedback.textContent = 'Nenhum indicador numérico autorizado ou integrado neste módulo. Os atalhos disponíveis continuam acessíveis.';
+  else void Promise.all(jobs).then(() => {
+    if (current()) feedback.textContent = 'Consultas finalizadas • dados conforme as permissões e as fontes disponíveis.';
+  });
+}
+
 function node(tag, className, value) {
   const element = document.createElement(tag);
   if (className) element.className = className;
@@ -518,8 +699,11 @@ function navigate(view, { replace = false } = {}) {
     dossier: Object.hasOwn(dossierWorkspaces, sector.id) && canUse(sector.id, 'dossierRead'),
     notifications: sector.id === 'tecnologia' && canUse('tecnologia', 'smtpManage'),
     talk: canUse(sector.id, 'sectorTalkRead'), whatsapp: canUse(sector.id, 'whatsappRead'),
-    onPanelChange: { marketing: showMarketingPanel, rh: showRhPanel, 'sucesso-do-cliente': showCustomerSuccessPanel,
-      tecnologia: showTechnologyPanel, diretoria: panel => showDossierPanel('diretoria', panel) }[sector.id],
+    onPanelChange: panel => {
+      ({ marketing: showMarketingPanel, rh: showRhPanel, 'sucesso-do-cliente': showCustomerSuccessPanel,
+        tecnologia: showTechnologyPanel, diretoria: value => showDossierPanel('diretoria', value) }[sector.id])?.(panel);
+      showSectorSummary(sector, panel);
+    },
   } : null, { home: state.view === 'overview' });
   $('conteudo').focus({ preventScroll: true });
   if (previousView !== state.view && ['maxhub', 'club'].includes(state.view)) window.scrollTo({ top: 0, behavior: 'instant' });
