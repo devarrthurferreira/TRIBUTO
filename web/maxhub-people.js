@@ -273,6 +273,7 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
 
   function dialog({ title, fields, submit = 'Salvar', run, success = 'Registro atualizado.', afterSuccess, drawer = false }) {
     dialogVersion++;
+    ui.dialog.classList.remove('maxpeople-feedback-sent');
     activeDialog = { run, success, afterSuccess };
     ui.dialog.classList.toggle('maxpeople-feedback-drawer', drawer);
     ui.dialogTitle.textContent = title;
@@ -351,19 +352,9 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     directory.append(searchField, results);
     let matches = [];
     let activeIndex = -1;
-    let selected;
     let timer;
     let searchVersion = 0;
-    const send = button('Enviar feedback', () => {
-      if (selected) createFeedback(selected, () => {
-        selected = undefined;
-        search.value = '';
-        send.disabled = true;
-        search.focus();
-      });
-    }, { primary: true, icon: 'send' });
-    send.disabled = true;
-    wrapper.append(directory, send);
+    wrapper.append(directory);
 
     function cancelSearch() {
       searchVersion++;
@@ -388,17 +379,14 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     }
 
     function selectPerson(person) {
-      selected = person;
-      search.value = person.name;
-      send.disabled = false;
       cancelSearch();
-      search.focus();
+      createFeedback(person);
     }
 
     function suggest() {
       cancelSearch();
       const query = search.value.trim();
-      if (!query || selected || disposed) return;
+      if (disposed || !search.isConnected) return;
       results.hidden = false;
       search.setAttribute('aria-expanded', 'true');
       status.textContent = 'Buscando pessoas…';
@@ -427,8 +415,6 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     }
 
     search.addEventListener('input', () => {
-      selected = undefined;
-      send.disabled = true;
       suggest();
     });
     search.addEventListener('focus', suggest);
@@ -445,16 +431,15 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
           event.preventDefault();
           const step = event.key === 'ArrowDown' ? 1 : -1;
           activate(activeIndex < 0 && step < 0 ? matches.length - 1 : (activeIndex + step + matches.length) % matches.length);
-        } else if (results.hidden && !selected) {
+        } else if (results.hidden) {
           suggest();
         }
       } else if (event.key === 'Enter') {
         if (matches.length) {
           event.preventDefault();
           selectPerson(matches[Math.max(activeIndex, 0)]);
-        } else if (selected) {
+        } else {
           event.preventDefault();
-          send.click();
         }
       }
     });
@@ -508,15 +493,37 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     }
   }
 
-  function createFeedback(recipient, afterSuccess) {
+  function startFeedback() {
+    cancelFeedbackSearch?.();
+    dialog({ title: 'Enviar feedback', fields: [feedbackRecipientControl()], drawer: true });
+  }
+
+  function celebrateFeedback() {
+    const confetti = node('div', 'maxpeople-confetti');
+    confetti.setAttribute('aria-hidden', 'true');
+    dialog({ title: 'Parabéns! Seu feedback foi enviado.', fields: [confetti] });
+    ui.dialog.classList.add('maxpeople-feedback-sent');
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    for (let i = 0; i < 46; i++) {
+      const piece = node('i');
+      confetti.append(piece);
+      const x = Math.random() * confetti.clientWidth;
+      piece.animate([
+        { transform: 'translate('+x+'px,-20px) rotate(0deg)', opacity: 1 },
+        { transform: 'translate('+(x + Math.random()*64-32)+'px,'+(confetti.clientHeight+20)+'px) rotate(300deg)', opacity: 0 }
+      ], { duration: 1150 + Math.random()*800, delay: Math.random()*400, fill: 'both' });
+    }
+  }
+
+  function createFeedback(recipient) {
     dialog({
       title: 'Enviar feedback', drawer: true, fields: [
-        field('Seu feedback', 'text', 'textarea', { required: true, rows: 5, maxLength: 4000 }),
-        field('Descrição', 'description', 'textarea', { rows: 4, maxLength: 4000 }),
+        node('p', 'people-meta', 'Para '+recipient.name),
+        field('Feedback', 'text', 'textarea', { required: true, rows: 5, maxLength: 4000 }),
         feedbackRatings(), feedbackPrivacy()],
-      submit: 'Enviar feedback', success: 'Feedback enviado.', afterSuccess,
+      submit: 'Enviar feedback', success: '', afterSuccess: celebrateFeedback,
       run: data => request(path, { method: 'POST', body: {
-        recipientId: recipient.id, text: text(data, 'text'), description: text(data, 'description'), anonymous: data.has('anonymous'),
+        recipientId: recipient.id, text: text(data, 'text'), anonymous: data.has('anonymous'),
         ratings: Object.fromEntries(Object.keys(feedbackCriteria).filter(key => data.has(key)).map(key => [key, Number(data.get(key))])),
       } }),
     });
@@ -697,7 +704,10 @@ export function mountMaxHubPeople(root, { area, request, onAuthError, session })
     meetings: renderMeeting, objectives: renderGoal, surveys: renderSurvey };
   const canCreate = section.action && (area !== 'surveys' || admin);
   if (canCreate) ui.headingAction.append(button(section.action, () => creators[area](), { primary: true, icon: 'plus-lg' }));
-  if (area === 'feedback') ui.feedback.after(feedbackRecipientControl());
+  if (area === 'feedback') {
+    ui.headingAction.append(button('Enviar feedback', startFeedback, { primary: true, icon: 'send' }));
+    startFeedback();
+  }
   if (usesFilter) for (const [value, label] of Object.entries(filters[area])) ui.filter.add(new Option(label, value));
 
   function visibleItems() {
